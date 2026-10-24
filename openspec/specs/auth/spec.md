@@ -2,7 +2,6 @@
 
 ## Purpose
 The auth capability covers sign-in for admins, finance users and members: password login, sessions, TOTP that is mandatory for finance roles, e-mailed one-time codes for members and invitations (B M33, with the portal login rules of M29). Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Password login
 The system SHALL accept passwords of 12 to 128 characters, store them as Argon2id hashes, and reject any password found in the bundled breached-password list; an online k-anonymity check SHALL be optional and off by default.
@@ -101,3 +100,15 @@ The system SHALL write logins, logouts, failed logins, lockouts, TOTP enrolment 
 #### Scenario: Failed login logged
 - **WHEN** a login fails
 - **THEN** an audit event records the account, the hashed IP and the time, without the attempted password
+
+### Requirement: First-run setup
+The system SHALL let the first visitor of an empty installation create the club (organisation name) and the first admin account (name, e-mail, password of at least 12 characters) in one step, sign them in, and refuse any further setup once an organisation exists.
+
+#### Scenario: Setup creates club and admin
+- **WHEN** a visitor submits the setup form on an empty installation
+- **THEN** the organisation and an active admin account exist, the visitor is signed in and an audit event `organization.setup` is written
+
+#### Scenario: Setup only once
+- **WHEN** anyone calls the setup endpoint after an organisation exists
+- **THEN** the API answers 409 with a problem document and nothing is created
+

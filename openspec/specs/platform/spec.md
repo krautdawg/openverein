@@ -2,7 +2,6 @@
 
 ## Purpose
 The platform capability covers the app shell, the German-first UI that addresses users with "Du", accessibility at WCAG 2.2 AA, the fixed dashboard (B M40), the background job tray (B M41), the self-ticking first-run checklist, the public demo mode and self-hosted operations (B M42), and mobile builds that wrap the web build with Capacitor. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour, including the demo mode.
-
 ## Requirements
 ### Requirement: Single app shell on the public API
 The system SHALL serve one web application with an admin route tree and a separate `/portal` route tree, both built on the same public REST API, with a header that holds global search, the job tray and the user menu.
@@ -115,3 +114,18 @@ The system SHALL NOT include product analytics, session recording, vendor error 
 #### Scenario: No third-party requests
 - **WHEN** a browser loads any OpenVerein page with default settings
 - **THEN** no request leaves the club's own origin
+
+### Requirement: Command palette
+The system SHALL open a command palette with Ctrl+K (Cmd+K on macOS) from every admin page that lists every navigation target and global action, filters as the user types, and runs the highlighted entry with Enter; modules SHALL be able to add search results (for example members) to it.
+
+#### Scenario: Jump by keyboard
+- **WHEN** a signed-in user presses Ctrl+K, types "einst" and presses Enter
+- **THEN** the settings page opens without using the mouse
+
+### Requirement: Side sheets and inline editing instead of modal stacks
+The system SHALL edit single values in place (click or Enter to edit, Enter to save, Escape to cancel) and open record details in a side sheet over the current list; it SHALL NOT open a modal from within another modal.
+
+#### Scenario: Inline rename
+- **WHEN** an admin clicks the club name in the settings, types a new name and presses Enter
+- **THEN** the name is saved through the API, the side rail shows the new name and the change is audited
+
