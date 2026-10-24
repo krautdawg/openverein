@@ -2,7 +2,6 @@
 
 ## Purpose
 The documents capability covers the content-addressed file store that every module uses for uploads and generated documents (MVP, from the technical notes of B M07, M12, M14, M17, M22 and M36), and the file manager with folder permissions, versioning and portal sharing (B P24, post-MVP). Items that B rates "should" or "could" are marked as such in the requirement name.
-
 ## Requirements
 ### Requirement: Content-addressed file store
 The system SHALL store every file by its SHA-256 with size, MIME type, original name, owner, retention class and legal-hold flag, store identical bytes only once, and support a local volume by default with an optional S3-compatible backend.
@@ -67,3 +66,18 @@ The system SHALL share folders or files to members in the portal by group, and s
 #### Scenario: Shared to members
 - **WHEN** the board shares the minutes folder with all active members
 - **THEN** every active member sees the files under "my documents" in the portal
+
+### Requirement: Files on a member record
+The system SHALL keep files attached to a member (for example a signed application) under the member's permissions, so only users who may read that member can list or download them.
+
+#### Scenario: Trainer outside the group
+- **WHEN** a trainer scoped to "Tennis" lists files of a member who is not in "Tennis"
+- **THEN** the request fails as not found
+
+### Requirement: Raw byte upload
+The system SHALL accept uploads as `application/octet-stream` of at most 20 MB on the file routes only, with name, place and retention class as query parameters.
+
+#### Scenario: Upload elsewhere refused
+- **WHEN** a client posts `application/octet-stream` to the members route
+- **THEN** the request is refused with 415
+
