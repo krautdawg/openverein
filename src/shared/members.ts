@@ -19,8 +19,8 @@ const optText = (max: number) => z.string().trim().max(max).nullish().transform(
 const POSTAL: Record<string, RegExp> = { DE: /^\d{5}$/, AT: /^\d{4}$/, CH: /^\d{4}$/ };
 
 /** Person fields shared by create and update. Restricted fields may be absent in responses. */
-export const personFields = z.object({
-  kind: z.enum(['natural', 'organisation']).default('natural'),
+const personBase = z.object({
+  kind: z.enum(['natural', 'organisation']),
   firstName: optText(100),
   lastName: optText(100),
   companyName: optText(200),
@@ -30,9 +30,16 @@ export const personFields = z.object({
   street: optText(200),
   postalCode: optText(20),
   city: optText(100),
-  country: z.string().length(2).toUpperCase().default('DE'),
-  preferredChannel: z.enum(['email', 'letter', 'none']).default('email'),
+  country: z.string().length(2).toUpperCase(),
+  preferredChannel: z.enum(['email', 'letter', 'none']),
   note: optText(4000),
+});
+
+/** For create: with defaults. For patch, personBase.partial() keeps absent fields absent. */
+export const personFields = personBase.extend({
+  kind: personBase.shape.kind.default('natural'),
+  country: personBase.shape.country.default('DE'),
+  preferredChannel: personBase.shape.preferredChannel.default('email'),
 });
 
 function checkPerson(p: { kind?: string; lastName?: string | null; companyName?: string | null; postalCode?: string | null; country?: string }, ctx: z.RefinementCtx, partial = false) {
@@ -58,9 +65,13 @@ export const memberCreate = personFields
 export type MemberCreate = z.input<typeof memberCreate>;
 
 /** Status is not editable here; it only changes through the transition actions. */
-export const memberPatch = personFields
+export const memberPatch = personBase
   .partial()
-  .extend({ joinDate: date.optional(), applicationDate: date.nullish() })
+  .extend({
+    joinDate: date.optional(),
+    applicationDate: date.nullish(),
+    status: z.unknown().refine(() => false, 'Der Status ändert sich nur über Aktionen: resign, withdraw-resignation, admit, reject.').optional(),
+  })
   .strict()
   .superRefine((v, ctx) => checkPerson(v, ctx, true));
 

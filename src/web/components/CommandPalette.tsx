@@ -57,6 +57,7 @@ export function CommandPalette({ open, onClose, commands, go }: Props) {
       <input
         autoFocus
         role="combobox"
+        aria-label="Befehl oder Suche"
         aria-expanded="true"
         aria-controls="palette-list"
         aria-activedescendant={results[current] ? `cmd-${results[current].id}` : undefined}

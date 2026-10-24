@@ -12,6 +12,9 @@ import type { Db } from './db.ts';
 import type { Actor } from './policy.ts';
 import { errorHandler, Problem, sendProblem } from './http/problem.ts';
 import { authRoutes } from './routes/auth.ts';
+import { accessRoutes } from './routes/access.ts';
+import { groupRoutes } from './routes/groups.ts';
+import { memberRoutes } from './routes/members.ts';
 import { organizationRoutes } from './routes/organization.ts';
 import { systemRoutes } from './routes/system.ts';
 
@@ -78,6 +81,9 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(systemRoutes);
       await api.register(authRoutes);
       await api.register(organizationRoutes);
+      await api.register(memberRoutes);
+      await api.register(groupRoutes);
+      await api.register(accessRoutes);
     },
     { prefix: '/api/v1' },
   );

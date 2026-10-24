@@ -12,7 +12,7 @@ test('first run: set up the club, use the command palette, rename the club, log 
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Erika');
 
   await page.keyboard.press('Control+k');
-  await page.getByRole('combobox').fill('einst');
+  await page.getByRole('combobox', { name: 'Befehl oder Suche' }).fill('einst');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Einstellungen', level: 1 })).toBeVisible();
 
