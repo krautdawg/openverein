@@ -9,6 +9,8 @@ import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, type InvoiceDetail, type Invo
 import { displayName, type MemberListItem } from '../../shared/members.ts';
 import { Field } from '../components/Field.tsx';
 import { MoneyField } from '../components/MoneyField.tsx';
+import { SendInvoiceMail } from '../components/SendInvoiceMail.tsx';
+import { useMe } from '../lib/session.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
@@ -123,6 +125,8 @@ export function Invoices({ me }: { me: Me }) {
 
 export function InvoiceSheet({ id, canWrite, onClose }: { id: string | null; canWrite: boolean; onClose: () => void }) {
   const qc = useQueryClient();
+  const me = useMe().data;
+  const canMail = me?.permissions.communication === 'write';
   const { data: inv } = useQuery({ queryKey: ['invoice', id], queryFn: () => api<InvoiceDetail>(`/invoices/${id}`), enabled: !!id });
   const [form, setForm] = useState<'payment' | 'writeoff' | 'hold' | 'cancel' | null>(null);
   const [error, setError] = useState<ApiError>();
@@ -240,6 +244,8 @@ export function InvoiceSheet({ id, canWrite, onClose }: { id: string | null; can
                 {inv.status === 'draft' && <button className="btn btn-primary" onClick={() => void run('/issue')}>Ausstellen</button>}
                 {inv.status === 'draft' && <button className="btn btn-ghost btn-danger" onClick={async () => { if (await run('', {}, 'DELETE')) onClose(); }}>Entwurf löschen</button>}
                 {open && <button className="btn btn-primary" onClick={() => setForm('payment')}>Zahlung erfassen</button>}
+                {canMail && inv.number && inv.status !== 'cancelled' && <SendInvoiceMail key={`${inv.id}-mail`} invoiceIds={[inv.id]} label="Per E-Mail senden" />}
+                {canMail && open && receivable && inv.dunning.length > 0 && <SendInvoiceMail key={`${inv.id}-dun`} invoiceIds={[inv.id]} template="dunning" label="Mahnung per E-Mail" />}
                 {open && receivable && <button className="btn" onClick={() => setForm('hold')}>Mahnpause</button>}
                 {open && receivable && <button className="btn" onClick={() => setForm('writeoff')}>Ausbuchen</button>}
                 {['open', 'partially_paid', 'paid', 'written_off'].includes(inv.status) && inv.kind !== 'cancellation' && <button className="btn btn-ghost btn-danger" onClick={() => setForm('cancel')}>Stornieren</button>}

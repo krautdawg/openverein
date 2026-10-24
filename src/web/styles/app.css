@@ -471,3 +471,23 @@ button.agenda-item:hover { background: var(--surface-sunk); }
 li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: default; }
 .agenda-item .what { font-weight: 600; }
 @media (max-width: 560px) { .agenda-item { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Communication: composer left, live preview right; stacked on narrow screens. */
+.compose { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); gap: var(--s-6); margin-bottom: var(--s-8); }
+.compose-preview { border-left: 1px solid var(--line); padding-left: var(--s-6); min-width: 0; }
+.compose-preview article { margin-top: var(--s-3); max-width: 62ch; }
+.compose-preview h3 { margin: 0 0 var(--s-3); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-2); }
+.pill-button { cursor: pointer; border: 1px solid var(--line-strong); font-family: ui-monospace, monospace; font-size: var(--text-xs); }
+.pill-button:hover { border-color: var(--ink); }
+@media (max-width: 900px) {
+  .compose { grid-template-columns: 1fr; }
+  .compose-preview { border-left: 0; border-top: 1px solid var(--line); padding: var(--s-4) 0 0; }
+}
+/* A quiet secondary action inside dense lists: reads as text, still a real button. */
+.linklike { background: none; border: 0; padding: 0; font: inherit; color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.linklike:hover { color: var(--ink); }
+.compose-form .field { margin-bottom: var(--s-4); }
+.inline-form.narrow { max-width: 480px; }
+.inline-form.narrow .btn { justify-self: start; width: auto; }
+.actions-inline { display: inline-flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }

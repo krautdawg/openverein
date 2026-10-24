@@ -1,0 +1,29 @@
+import nodemailer, { type Transporter } from 'nodemailer';
+import { config } from '../config.ts';
+
+let transport: Transporter | null = null;
+
+/** The club's SMTP relay from SMTP_URL (smtp://user:pass@host:port or smtps://…). */
+export function mailer() {
+  // Short timeouts: a dead relay must not hang a request (invitations) or the worker for minutes.
+  const url = new URL(config.smtpUrl);
+  for (const [k, v] of [['connectionTimeout', '10000'], ['greetingTimeout', '10000'], ['socketTimeout', '30000']] as const) if (!url.searchParams.has(k)) url.searchParams.set(k, v);
+  transport ??= nodemailer.createTransport(url.toString());
+  return transport;
+}
+
+/** Tests replace the transport (e.g. with a failing one). */
+export function setMailer(t: Transporter | null) {
+  transport = t;
+}
+
+export interface Sender {
+  name: string;
+  address: string;
+  replyTo: string | null;
+}
+
+export function senderOf(org: { name: string; mail_from_name: string | null; mail_from_address: string | null; mail_reply_to: string | null }): Sender {
+  const fallback = config.mailFrom.match(/<([^>]+)>/)?.[1] ?? config.mailFrom;
+  return { name: org.mail_from_name ?? org.name, address: org.mail_from_address ?? fallback, replyTo: org.mail_reply_to };
+}

@@ -27,6 +27,11 @@ const toDto = (o: Selectable<Database['organization']>) => ({
   dunningLevels: o.dunning_levels,
   creditorId: o.creditor_id,
   prenotificationDays: o.prenotification_days,
+  mailFromName: o.mail_from_name,
+  mailFromAddress: o.mail_from_address,
+  mailReplyTo: o.mail_reply_to,
+  mailPerMinute: o.mail_per_minute,
+  mailPausedReason: o.mail_paused_reason,
 });
 
 /** API field → column; only fields present in the body are written. */
@@ -48,6 +53,10 @@ const COLUMNS = {
   dunningLevels: 'dunning_levels',
   creditorId: 'creditor_id',
   prenotificationDays: 'prenotification_days',
+  mailFromName: 'mail_from_name',
+  mailFromAddress: 'mail_from_address',
+  mailReplyTo: 'mail_reply_to',
+  mailPerMinute: 'mail_per_minute',
 } as const;
 
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {

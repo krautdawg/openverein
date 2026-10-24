@@ -13,6 +13,9 @@ jobs:
         ports: ['54329:5432']
         options: >-
           --health-cmd "pg_isready -U openverein" --health-interval 2s --health-retries 20
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports: ['11025:1025', '18025:8025']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

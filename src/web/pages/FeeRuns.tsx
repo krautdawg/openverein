@@ -6,6 +6,7 @@ import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
 import { euro, PAYMENT_METHOD_LABEL, type FeeRun } from '../../shared/fees.ts';
 import { Field } from '../components/Field.tsx';
+import { SendInvoiceMail } from '../components/SendInvoiceMail.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { todayLocal, useGroups } from '../lib/hooks.ts';
 import { useTitle } from '../lib/useTitle.ts';
@@ -92,6 +93,7 @@ export function FeeRunDetail({ me }: { me: Me }) {
   const { id } = useParams();
   useTitle('Beitragslauf');
   const qc = useQueryClient();
+  const canMail = me.permissions.communication === 'write' && me.permissions.invoices !== 'none';
   const canWrite = me.permissions.fees === 'write' && me.permissions.invoices === 'write';
   const run = useQuery({ queryKey: ['fee-run', id], queryFn: () => api<FeeRun>(`/fee-runs/${id}`) });
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -177,6 +179,7 @@ export function FeeRunDetail({ me }: { me: Me }) {
             <div className="alert alert-ok" style={{ marginBottom: 'var(--s-4)', display: 'flex', gap: 'var(--s-3)', flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ flex: 1 }}>Gebucht am {new Date(r.postedAt!).toLocaleString('de-DE')}: {r.invoiceCount} Rechnungen.</span>
               <Link to={`/rechnungen?lauf=${r.id}`}>Rechnungen ansehen</Link>
+              {canMail && <SendInvoiceMail feeRunId={r.id} label="Per E-Mail verschicken" />}
               {canWrite && (confirming === 'cancel'
                 ? <><span>Alle Rechnungen dieses Laufs stornieren?</span><button className="btn btn-danger" disabled={busy} onClick={() => void act('cancel')}>Ja, aufheben</button><button className="btn btn-ghost" onClick={() => setConfirming(null)}>Nein</button></>
                 : <button className="btn" onClick={() => setConfirming('cancel')}>Lauf aufheben</button>)}

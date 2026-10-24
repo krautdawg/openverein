@@ -16,6 +16,7 @@ import { accessRoutes } from './routes/access.ts';
 import { bankingRoutes } from './routes/banking.ts';
 import { eventRoutes } from './routes/events.ts';
 import { feeRoutes } from './routes/fees.ts';
+import { messageRoutes } from './routes/messages.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -70,7 +71,9 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     if (!isApi(req.url)) return;
     // CSRF: state-changing API calls must be JSON (a cross-site form cannot send that without a
     // CORS preflight we never answer) and, when the browser sends an Origin, come from this host.
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    // One-click unsubscribe (RFC 8058) comes from mail programs as a form post; it carries its own token and no cookie matters.
+    const oneClick = req.method === 'POST' && /^\/api\/v1\/unsubscribe\/[\w.-]+$/.test(req.url);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !oneClick) {
       const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
       if (type !== 'application/json') throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
       const origin = req.headers.origin;
@@ -94,6 +97,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(sepaRoutes);
       await api.register(bankingRoutes);
       await api.register(eventRoutes);
+      await api.register(messageRoutes);
     },
     { prefix: '/api/v1' },
   );
