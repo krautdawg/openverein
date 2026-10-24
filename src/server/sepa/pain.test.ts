@@ -14,6 +14,15 @@ describe('pain files', () => {
     expect(xml).toContain('Joerg Yilmaz + Soehne');
   });
 
+  it('marks mandate amendments after an IBAN change (same bank: old account, new bank: SMNDA)', () => {
+    const sameBank = { ...item(3), originalIban: 'DE02120300000000202052'.slice(0, 22) };
+    const newBank = { ...item(4), originalIban: 'DE89370400440532013000' };
+    const xml = pain008({ messageId: 'OV-1', createdAt: '2026-10-24T10:00:00', creditor, creditorId: 'DE98ZZZ09999999999', collectionDate: '2026-11-02', sequenceType: 'RCUR', batchBooking: true, items: [sameBank, newBank] });
+    expect(() => validateSepa(xml, 'pain.008.001.08')).not.toThrow();
+    expect(xml).toContain('<AmdmntInd>true</AmdmntInd><AmdmntInfDtls><OrgnlDbtrAcct><Id><IBAN>DE02120300000000202052</IBAN>');
+    expect(xml).toContain('<Othr><Id>SMNDA</Id></Othr>');
+  });
+
   it('pain.001.001.09 passes the official XSD', () => {
     const xml = pain001({ messageId: 'OV-T-1', createdAt: '2026-10-24T10:00:00', debtor: creditor, executionDate: '2026-10-26', batchBooking: true, items: [{ endToEndId: 'OV-T-1-1', amountCents: 2500, creditorName: 'Eva Erstattung', creditorIban: 'DE02120300000000202051', creditorBic: null, remittance: 'Gutschrift G-1' }] });
     expect(() => validateSepa(xml, 'pain.001.001.09')).not.toThrow();

@@ -13,6 +13,21 @@ export interface DebitItem {
   debtorIban: string;
   debtorBic: string | null;
   remittance: string;
+  /** IBAN before an account change under the same mandate (first debit after the change only). */
+  originalIban?: string | null;
+}
+
+// Where the bank code sits in an IBAN, per country; unknown countries compare the first four characters.
+const BANK_CODE: Record<string, [number, number]> = { DE: [4, 12], AT: [4, 9], CH: [4, 9], LI: [4, 9], FR: [4, 9], MC: [4, 9], IT: [5, 10], ES: [4, 8], NL: [4, 8], BE: [4, 7], LU: [4, 7], PL: [4, 12] };
+const bankOf = (iban: string) => iban.slice(0, 2) + iban.slice(...(BANK_CODE[iban.slice(0, 2)] ?? [4, 8]));
+
+/** Mandate amendment (EPC rulebook): new account at the same bank → original account; new bank → SMNDA. */
+function amendment(i: DebitItem) {
+  if (!i.originalIban || i.originalIban === i.debtorIban) return '';
+  const details = bankOf(i.originalIban) === bankOf(i.debtorIban)
+    ? `<OrgnlDbtrAcct><Id><IBAN>${i.originalIban}</IBAN></Id></OrgnlDbtrAcct>`
+    : '<OrgnlDbtrAgt><FinInstnId><Othr><Id>SMNDA</Id></Othr></FinInstnId></OrgnlDbtrAgt>';
+  return `<AmdmntInd>true</AmdmntInd><AmdmntInfDtls>${details}</AmdmntInfDtls>`;
 }
 
 export interface CreditItem {
@@ -63,7 +78,7 @@ export function pain008(o: {
       (i) => `<DrctDbtTxInf>
 <PmtId><EndToEndId>${esc(i.endToEndId)}</EndToEndId></PmtId>
 <InstdAmt Ccy="EUR">${amount(i.amountCents)}</InstdAmt>
-<DrctDbtTx><MndtRltdInf><MndtId>${esc(i.mandateId)}</MndtId><DtOfSgntr>${i.mandateSignedOn}</DtOfSgntr></MndtRltdInf></DrctDbtTx>
+<DrctDbtTx><MndtRltdInf><MndtId>${esc(i.mandateId)}</MndtId><DtOfSgntr>${i.mandateSignedOn}</DtOfSgntr>${amendment(i)}</MndtRltdInf></DrctDbtTx>
 <DbtrAgt>${agent(i.debtorBic)}</DbtrAgt>
 <Dbtr><Nm>${esc(sepaText(i.debtorName, 70) || 'Kontoinhaber')}</Nm></Dbtr>
 <DbtrAcct><Id><IBAN>${i.debtorIban}</IBAN></Id></DbtrAcct>

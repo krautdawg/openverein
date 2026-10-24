@@ -3,6 +3,7 @@ import { config } from './config.ts';
 import { assertDataKey } from './crypto.ts';
 import { createDb } from './db.ts';
 import { sweepFiles } from './files/store.ts';
+import { pruneSignIns } from './routes/portal.ts';
 import { startMailWorker } from './mail/worker.ts';
 import { refreshMemberStatuses } from './members/status.ts';
 import { migrate } from './migrate.ts';
@@ -18,6 +19,7 @@ const refresh = () =>
   Promise.all([
     refreshMemberStatuses(db).then((n) => n && app.log.info(`${n} member statuses updated`)),
     sweepFiles(db).then((n) => n && app.log.info(`${n} unused files removed`)),
+    pruneSignIns(db),
   ]).catch((err) => app.log.error(err));
 await refresh();
 setInterval(refresh, 60 * 60 * 1000).unref();

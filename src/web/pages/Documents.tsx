@@ -126,7 +126,7 @@ function FolderSheet({ folder, parent, onClose }: { folder?: Folder; parent?: Fo
     const ids = f.getAll('groups');
     setError(undefined);
     try {
-      const body = { name: f.get('name'), groupIds: ids.length ? ids : null };
+      const body = { name: f.get('name'), groupIds: ids.length ? ids : null, shareWithMembers: f.get('share') === 'on' };
       const saved = folder ? await api<Folder>(`/folders/${folder.id}`, { method: 'PATCH', body }) : await api<Folder>('/folders', { method: 'POST', body: { ...body, parentId: parent?.id ?? null } });
       await qc.invalidateQueries({ queryKey: ['folders'] });
       onClose();
@@ -157,6 +157,7 @@ function FolderSheet({ folder, parent, onClose }: { folder?: Folder; parent?: Fo
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0 var(--s-4)' }}>{groups.map((g) => <label key={g.id} className="check"><input type="checkbox" name="groups" value={g.id} defaultChecked={folder?.groupIds?.includes(g.id)} /> {g.name}</label>)}</div>
           </fieldset>
         )}
+        <label className="check"><input type="checkbox" name="share" defaultChecked={folder?.shareWithMembers} /> Im Mitgliederportal für alle Mitglieder zeigen</label>
         <div className="actions-row">
           <button className="btn btn-primary">{folder ? 'Speichern' : 'Ordner anlegen'}</button>
           {folder && <button type="button" className="btn btn-ghost btn-danger" onClick={() => void remove()}>Ordner löschen</button>}

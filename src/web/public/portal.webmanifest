@@ -1,0 +1,11 @@
+{
+  "name": "Mitgliederportal",
+  "short_name": "Verein",
+  "start_url": "/portal",
+  "scope": "/portal",
+  "display": "standalone",
+  "background_color": "#f3f4f1",
+  "theme_color": "#12355b",
+  "lang": "de",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

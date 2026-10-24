@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '../../../shared/auth.ts';
+import type { SystemTemplateKey } from '../../../shared/mail.ts';
 import type { Organization } from '../../../shared/organization.ts';
 import { InlineEdit } from '../../components/InlineEdit.tsx';
 import { Sheet } from '../../components/Sheet.tsx';
 import { api, ApiError } from '../../lib/api.ts';
 import { useTitle } from '../../lib/useTitle.ts';
 
-export interface MailTemplate { id: string; key: 'invoice' | 'dunning' | 'invitation' | null; name: string; subject: string; body: string; category: 'notice' | 'newsletter'; custom: boolean }
+export interface MailTemplate { id: string; key: SystemTemplateKey | null; name: string; subject: string; body: string; category: 'notice' | 'newsletter'; custom: boolean }
 
 export function MailSettings({ me }: { me: Me }) {
   useTitle('E-Mail');

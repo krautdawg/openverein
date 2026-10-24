@@ -2,6 +2,7 @@ import { Check } from 'lucide-react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import type { Me } from '../../shared/auth.ts';
+import { ChangeInbox } from '../components/ChangeInbox.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { api } from '../lib/api.ts';
 import { useTitle } from '../lib/useTitle.ts';
@@ -49,6 +50,7 @@ export function Overview({ me }: { me: Me }) {
           </dl>
         </section>
       )}
+      {me.permissions.members !== 'none' && <ChangeInbox canWrite={me.permissions.members === 'write'} />}
       <section className="section" aria-labelledby="first-steps">
         <h2 id="first-steps">Erste Schritte</h2>
         <ul className="checklist">

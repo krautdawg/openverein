@@ -226,9 +226,9 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     return t ?? SYSTEM_TEMPLATES[key];
   }
 
-  const templateDto = z.object({ id: z.string(), key: z.enum(['invoice', 'dunning', 'invitation']).nullable(), name: z.string(), subject: z.string(), body: z.string(), category: z.enum(['notice', 'newsletter']), custom: z.boolean() });
+  const templateDto = z.object({ id: z.string(), key: z.enum(['invoice', 'dunning', 'invitation', 'login_code', 'change_decided', 'resignation_received']).nullable(), name: z.string(), subject: z.string(), body: z.string(), category: z.enum(['notice', 'newsletter']), custom: z.boolean() });
   const templateInput = z.object({ name: z.string().trim().min(1).max(100), subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(50_000), category: z.enum(['notice', 'newsletter']).default('notice') });
-  const templateId = z.object({ id: z.union([z.enum(['invoice', 'dunning', 'invitation']), z.uuid()]) });
+  const templateId = z.object({ id: z.union([z.enum(['invoice', 'dunning', 'invitation', 'login_code', 'change_decided', 'resignation_received']), z.uuid()]) });
   const isKey = (id: string): id is SystemTemplateKey => id in SYSTEM_TEMPLATES;
 
   app.get('/mail-templates', { schema: { tags, summary: 'Vorlagen: eigene und System-Texte (Rechnung, Mahnung, Einladung)', response: { 200: z.array(templateDto) } } }, async (req) => {

@@ -9,6 +9,7 @@ import { CourtLines } from './CourtLines.tsx';
 import { InlineEdit } from './InlineEdit.tsx';
 import { MemberFees } from './MemberFees.tsx';
 import { MemberFiles } from './MemberFiles.tsx';
+import { PortalCode } from './PortalCode.tsx';
 import { MemberMails } from './MemberMails.tsx';
 import { MemberMandate } from './MemberMandate.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -180,6 +181,7 @@ function MembershipSection({ m, canWrite, patch, onChanged }: { m: MemberDetail;
           {m.status === 'resigned' && <button className="btn" onClick={() => void act('withdraw-resignation')}>Kündigung zurücknehmen</button>}
           {m.status === 'applicant' && form !== 'admit' && <button className="btn btn-primary" onClick={() => setForm('admit')}>Aufnehmen</button>}
           {m.status === 'applicant' && <button className="btn btn-danger" onClick={() => void act('reject')}>Ablehnen</button>}
+          {['active', 'future', 'resigned'].includes(m.status) && m.email && <PortalCode key={m.id} memberId={m.id} />}
         </div>
       )}
       {form === 'resign' && (
