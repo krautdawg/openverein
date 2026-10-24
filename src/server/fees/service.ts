@@ -27,7 +27,8 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
     .where('member.status', 'not in', ['applicant', 'rejected']);
   if (opts.memberIds) q = q.where('member.id', 'in', opts.memberIds.length ? opts.memberIds : ['00000000-0000-0000-0000-000000000000']);
   if (opts.groupId) q = q.where(scopePredicate([opts.groupId], opts.today, 'write'));
-  if (opts.scope) q = q.where(scopePredicate(opts.scope, opts.today, 'read'));
+  // Write mode: billing needs a current membership in scope, not one that ended up to 12 months ago.
+  if (opts.scope) q = q.where(scopePredicate(opts.scope, opts.today, 'write'));
   const members = await q.orderBy('person.last_name').orderBy('person.first_name').execute();
   const ids = members.map((m) => m.id);
   if (ids.length === 0) return { members: [] as MemberInputs[], versions: new Map<string, PlanVersion[]>() };
@@ -51,7 +52,7 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
   }
   const billedRows = await db
     .selectFrom('assessment')
-    .select(['member_id', 'charge_slot', 'period_start', 'period_end'])
+    .select(['member_id', 'assignment_id', 'charge_slot', 'period_start', 'period_end'])
     .where('member_id', 'in', ids)
     .where('status', '<>', 'cancelled')
     .orderBy('period_start')
@@ -70,7 +71,7 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
       assignments: assignments
         .filter((a) => a.member_id === m.id)
         .map((a) => ({ id: a.id, planId: a.fee_plan_id, planName: a.name, lineText: a.line_text, isMain: a.is_main, validFrom: a.valid_from, validTo: a.valid_to, firstPeriodStart: a.first_period_start, overrideCents: a.override_cents })),
-      billed: billedRows.filter((b) => b.member_id === m.id).map((b) => ({ slot: b.charge_slot, start: b.period_start, end: b.period_end })),
+      billed: billedRows.filter((b) => b.member_id === m.id).map((b) => ({ slot: b.charge_slot, start: b.period_start, end: b.period_end, assignmentId: b.assignment_id })),
     })),
   };
 }

@@ -25,13 +25,13 @@ import { assess } from '../fees/engine.ts';
 import { loadInputs, membersWithMandate, previewFor } from '../fees/service.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
-import { loadMemberRow, orgToday } from '../members/query.ts';
+import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
 import { requirePermission, scopeOf, type Actor } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.fee_plan_organization_id_name_key = 'Einen Beitrag mit diesem Namen gibt es schon.';
 CONSTRAINT_MESSAGES.fee_plan_version_fee_plan_id_valid_from_key = 'Ab diesem Datum gibt es schon einen Preis.';
 CONSTRAINT_MESSAGES.fee_assignment_one_main = 'Das Mitglied hat in diesem Zeitraum schon einen Hauptbeitrag. Beende ihn zuerst.';
-CONSTRAINT_MESSAGES.fee_assignment_member_id_fee_plan_id_daterange_excl = 'Das Mitglied hat diesen Beitrag in diesem Zeitraum schon.';
+CONSTRAINT_MESSAGES.fee_assignment_no_overlap = 'Das Mitglied hat diesen Beitrag in diesem Zeitraum schon.';
 CONSTRAINT_MESSAGES.assessment_no_double_billing = 'Mindestens ein Zeitraum ist bereits abgerechnet. Erstelle die Vorschau neu.';
 
 const idParam = z.object({ id: z.uuid() });
@@ -180,14 +180,14 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/members/:id/fees', { schema: { tags, summary: 'Beiträge und Zahlungsart eines Mitglieds', params: idParam, response: { 200: memberFees } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'fees', 'read');
-    await loadMemberRow(db, actor, req.params.id);
+    await loadMemberRow(db, actor, req.params.id, 'read', 'fees');
     return memberFeesDto(req.params.id);
   });
 
   app.patch('/members/:id/payment-method', { schema: { tags, summary: 'Zahlungsart eines Mitglieds festlegen', params: idParam, body: z.object({ paymentMethod: z.enum(PAYMENT_METHODS) }), response: { 200: memberFees } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'fees', 'write');
-    const { row } = await loadMemberRow(db, actor, req.params.id, 'write');
+    const { row } = await loadMemberRow(db, actor, req.params.id, 'write', 'fees');
     await db.transaction().execute(async (tx) => {
       const before = await tx.selectFrom('member').select('payment_method').where('id', '=', row.id).forUpdate().executeTakeFirstOrThrow();
       await tx.updateTable('member').set({ payment_method: req.body.paymentMethod, updated_at: new Date() }).where('id', '=', row.id).execute();
@@ -199,7 +199,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/members/:id/fee-assignments', { schema: { tags, summary: 'Beitrag zuordnen (genau ein Hauptbeitrag zu jedem Zeitpunkt)', params: idParam, body: assignmentInput, response: { 201: assignment } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'fees', 'write');
-    const { row } = await loadMemberRow(db, actor, req.params.id, 'write');
+    const { row } = await loadMemberRow(db, actor, req.params.id, 'write', 'fees');
     const b = req.body;
     if (b.overrideCents != null && !b.overrideReason) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'overrideReason', message: 'Bitte begründe den individuellen Betrag.' }] });
     if (b.validTo && b.validTo < b.validFrom) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'validTo', message: 'Liegt vor dem Beginn.' }] });
@@ -226,7 +226,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
       requirePermission(actor, 'fees', 'write');
       const a = await db.selectFrom('fee_assignment').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
       if (!a) throw notFound('Beitragszuordnung');
-      await loadMemberRow(db, actor, a.member_id, 'write');
+      await loadMemberRow(db, actor, a.member_id, 'write', 'fees');
       if (req.body.validTo && req.body.validTo < a.valid_from) throw new Problem(400, 'validation', 'Das Ende liegt vor dem Beginn.', undefined, { errors: [{ field: 'validTo', message: 'Liegt vor dem Beginn.' }] });
       // Ending before an already billed day would leave a billed period outside the assignment.
       const billed = await db.selectFrom('assessment').select(sql<string>`max(period_end)`.as('last')).where('assignment_id', '=', a.id).where('status', '<>', 'cancelled').executeTakeFirst();
@@ -247,7 +247,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       requirePermission(actor, 'fees', 'read');
-      const { today } = await loadMemberRow(db, actor, req.params.id);
+      const { today } = await loadMemberRow(db, actor, req.params.id, 'read', 'fees');
       const { members, versions } = await loadInputs(db, actor.organizationId, { memberIds: [req.params.id], today });
       const m = members[0];
       if (!m) return { lines: [], skipped: [], totalCents: 0 };
@@ -261,7 +261,14 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
   type Stored = { members: PreviewMember[] };
 
   async function runDto(actor: Actor, r: Selectable<FeeRunTable>) {
-    const members = (r.preview as Stored).members;
+    let members = (r.preview as Stored).members;
+    // A scoped reader sees only the members of their groups, never the whole club's billing.
+    const scope = scopeOf(actor, 'fees', 'read');
+    if (scope !== null) {
+      const today = await orgToday(db, actor.organizationId);
+      const visible = new Set((await db.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where(scopePredicate(scope, today, 'read')).execute()).map((m) => m.id));
+      members = members.filter((m) => visible.has(m.memberId));
+    }
     const invoiceCount = await db.selectFrom('invoice').select(sql<number>`count(*)::int`.as('n')).where('fee_run_id', '=', r.id).where('kind', '=', 'membership').executeTakeFirstOrThrow();
     return {
       id: r.id,
@@ -290,10 +297,10 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     return r;
   }
 
-  async function computePreview(actor: Actor, until: string, groupId: string | null) {
-    const today = await orgToday(db, actor.organizationId);
-    const { members, versions } = await loadInputs(db, actor.organizationId, { groupId, today, scope: scopeOf(actor, 'fees', 'write') });
-    const mandates = await membersWithMandate(db, actor.organizationId);
+  async function computePreview(actor: Actor, until: string, groupId: string | null, conn: Db = db) {
+    const today = await orgToday(conn, actor.organizationId);
+    const { members, versions } = await loadInputs(conn, actor.organizationId, { groupId, today, scope: scopeOf(actor, 'fees', 'write') });
+    const mandates = await membersWithMandate(conn, actor.organizationId);
     return members.map((m) => previewFor(m, versions, until, today, mandates.has(m.memberId))).filter((p) => p.lines.length > 0 || p.skipped.length > 0);
   }
 
@@ -350,7 +357,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
         if (!run) throw notFound('Beitragslauf');
         if (run.status !== 'preview') throw new Problem(409, 'not-preview', 'Dieser Lauf ist bereits gebucht oder verworfen.');
         const stored = (run.preview as Stored).members;
-        const current = await computePreview(actor, run.until, run.group_id);
+        const current = await computePreview(actor, run.until, run.group_id, tx);
         const before = new Map(stored.map((m) => [m.memberId, m.hash]));
         const changed = current.filter((m) => before.get(m.memberId) !== m.hash).map((m) => m.name);
         const gone = stored.filter((m) => !current.some((c) => c.memberId === m.memberId)).map((m) => m.name);
@@ -402,6 +409,8 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
       const actor = requireActor(req);
       requirePermission(actor, 'fees', 'write');
       requirePermission(actor, 'invoices', 'write');
+      // A run spans the whole selection; only someone allowed to write for every member may undo it.
+      if (scopeOf(actor, 'fees', 'write') !== null || scopeOf(actor, 'invoices', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Einen Beitragslauf aufheben dürfen nur Zugänge für den ganzen Verein.', { permission: 'fees:write (ganzer Verein)' });
       const today = await orgToday(db, actor.organizationId);
       await db.transaction().execute(async (tx) => {
         const run = await tx.selectFrom('fee_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();

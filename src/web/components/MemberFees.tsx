@@ -43,6 +43,7 @@ export function MemberFees({ memberId, joinDate, canWrite, canSeeInvoices }: { m
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const override = f.get('overrideCents');
+    if (override === 'NaN') return;
     const ok = await call(() => api(`/members/${memberId}/fee-assignments`, {
       method: 'POST',
       body: { feePlanId: f.get('feePlanId'), isMain: f.get('isMain') === 'main', validFrom: f.get('validFrom'), overrideCents: override ? Number(override) : null, overrideReason: f.get('overrideReason') || null },

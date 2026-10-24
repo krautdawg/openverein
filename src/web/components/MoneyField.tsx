@@ -14,7 +14,8 @@ export function MoneyField({ label, name, defaultCents, error, hint }: { label: 
         <input id={id} className="input num" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} aria-invalid={invalid || !!error || undefined} style={{ paddingRight: 28 }} />
         <span aria-hidden style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)' }}>€</span>
       </div>
-      <input type="hidden" name={name} value={cents ?? ''} />
+      {/* An unparseable amount is sent as NaN (JSON null), so the server rejects it instead of reading 0. */}
+      <input type="hidden" name={name} value={cents ?? (text ? 'NaN' : '')} />
       {hint && !error && !invalid && <span className="hint">{hint}</span>}
       {(invalid || error) && <span className="error" role="alert">{invalid ? 'Bitte einen Betrag wie 12,50 eingeben.' : error}</span>}
     </div>

@@ -7,7 +7,7 @@ import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db, DunningLevel, InvoiceKind, InvoiceStatus } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
-import { cancelInvoice, createDraft, insertLines, issueInvoice, RECEIVABLE_KINDS, refreshPayment, storedPdf, type IssueSnapshot } from '../invoices/service.ts';
+import { cancelInvoice, createDraft, DUNNABLE_KINDS, insertLines, issueInvoice, RECEIVABLE_KINDS, refreshPayment, storedPdf, type IssueSnapshot } from '../invoices/service.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
 import { requirePermission, scopeOf, type Actor } from '../policy.ts';
 
@@ -112,7 +112,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
   async function loadForWrite(tx: Db, actor: Actor, id: string) {
     const inv = await tx.selectFrom('invoice').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
     if (!inv) throw notFound('Rechnung');
-    if (inv.member_id) await loadMemberRow(tx, actor, inv.member_id, 'write');
+    if (inv.member_id) await loadMemberRow(tx, actor, inv.member_id, 'write', 'invoices');
     return inv;
   }
 
@@ -138,7 +138,12 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const offset = /^\d{1,9}$/.test(raw) ? Number(raw) : 0;
     const rows = await filtered().select(listColumns).orderBy(sql`invoice.status = 'draft'`, 'desc').orderBy('invoice.issue_date', sql`desc nulls first`).orderBy('invoice.number', 'desc').limit(f.limit).offset(offset).execute();
     const agg = await filtered()
-      .select([sql<number>`count(*)::int`.as('n'), sql<number>`coalesce(sum(invoice.total_cents), 0)::bigint`.as('total'), sql<number>`coalesce(sum(case when invoice.status in ('open','partially_paid') then invoice.total_cents - invoice.paid_cents else 0 end), 0)::bigint`.as('open')])
+      // Sums count receivables only: cancelled originals, cancellation documents and credit notes would distort them.
+      .select([
+        sql<number>`count(*)::int`.as('n'),
+        sql<number>`coalesce(sum(invoice.total_cents) filter (where invoice.kind in ('membership','other','dunning_fee') and invoice.status not in ('draft','cancelled')), 0)::bigint`.as('total'),
+        sql<number>`coalesce(sum(invoice.total_cents - invoice.paid_cents) filter (where invoice.kind in ('membership','other','dunning_fee') and invoice.status in ('open','partially_paid')), 0)::bigint`.as('open'),
+      ])
       .executeTakeFirstOrThrow();
     return {
       items: await toItems(rows, today),
@@ -166,7 +171,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/invoices', { schema: { tags, summary: 'Rechnungsentwurf anlegen', body: invoiceCreate, response: { 201: invoiceDetail } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'write');
-    const { row } = await loadMemberRow(db, actor, req.body.memberId, 'write');
+    const { row } = await loadMemberRow(db, actor, req.body.memberId, 'write', 'invoices');
     const id = await db.transaction().execute(async (tx) => {
       const id = await createDraft(tx, { organizationId: actor.organizationId, kind: req.body.kind, personId: row.person_id, memberId: row.id, dueDate: req.body.dueDate, coverText: req.body.coverText, createdBy: actor.userId }, req.body.lines);
       await audit(tx, actor.organizationId, actor, { action: 'invoice.drafted', entityType: 'invoice', entityId: id });
@@ -291,7 +296,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const rows = await base(actor, today)
       .select(listColumns)
       .where('invoice.status', 'in', ['open', 'partially_paid'])
-      .where('invoice.kind', 'in', RECEIVABLE_KINDS)
+      .where('invoice.kind', 'in', DUNNABLE_KINDS)
       .where('invoice.due_date', '<', today)
       .where((eb) => eb.or([eb('invoice.dunning_hold_until', 'is', null), eb('invoice.dunning_hold_until', '<', today)]))
       .orderBy('invoice.due_date')
@@ -316,12 +321,16 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
       const today = await orgToday(db, actor.organizationId);
       await db.transaction().execute(async (tx) => {
         const inv = await loadForWrite(tx, actor, req.params.id);
-        if (!['open', 'partially_paid'].includes(inv.status) || !RECEIVABLE_KINDS.includes(inv.kind)) throw new Problem(409, 'not-open', 'Nur offene Forderungen lassen sich mahnen.');
+        if (!['open', 'partially_paid'].includes(inv.status) || !DUNNABLE_KINDS.includes(inv.kind)) throw new Problem(409, 'not-open', 'Nur offene Forderungen lassen sich mahnen.');
         const org = await tx.selectFrom('organization').select(['dunning_levels', 'payment_terms_days']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
-        const level = (org.dunning_levels as DunningLevel[]).find((l) => l.level === req.body.level);
-        if (!level) throw new Problem(400, 'unknown-level', 'Diese Mahnstufe ist nicht eingerichtet.');
+        const levels = [...(org.dunning_levels as DunningLevel[])].sort((a, b) => a.level - b.level);
         const done = await tx.selectFrom('dunning_event').select(sql<number>`coalesce(max(level), 0)::int`.as('max')).where('invoice_id', '=', inv.id).executeTakeFirstOrThrow();
-        if (level.level <= done.max) throw new Problem(409, 'level-done', 'Diese Mahnstufe ist schon angewendet.');
+        // Same rules as the proposal: the next level only, once it is due, and never during a hold.
+        const level = levels.find((l) => l.level > done.max);
+        if (!level || level.level !== req.body.level) throw new Problem(409, 'wrong-level', level ? `Als Nächstes ist Stufe ${level.level} dran.` : 'Alle Mahnstufen sind schon angewendet.');
+        const overdue = inv.due_date ? Math.round((Date.parse(today) - Date.parse(inv.due_date)) / 86_400_000) : -1;
+        if (overdue < level.days) throw new Problem(409, 'not-due', `Diese Stufe ist erst ${level.days} Tage nach Fälligkeit möglich.`);
+        if (inv.dunning_hold_until && inv.dunning_hold_until >= today) throw new Problem(409, 'on-hold', 'Für diese Rechnung gilt eine Mahnpause.');
         let feeInvoiceId: string | null = null;
         if (level.feeCents > 0) {
           feeInvoiceId = await createDraft(

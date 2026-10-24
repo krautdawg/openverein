@@ -56,7 +56,7 @@ create table fee_assignment (
   created_at timestamptz not null default now(),
   check (valid_to is null or valid_to >= valid_from),
   check (override_cents is null or length(coalesce(override_reason, '')) > 0),
-  exclude using gist (member_id with =, fee_plan_id with =, daterange(valid_from, valid_to, '[]') with &&),
+  constraint fee_assignment_no_overlap exclude using gist (member_id with =, fee_plan_id with =, daterange(valid_from, valid_to, '[]') with &&),
   -- Exactly one main plan per member at any date.
   constraint fee_assignment_one_main exclude using gist (member_id with =, daterange(valid_from, valid_to, '[]') with &&) where (is_main)
 );
@@ -189,7 +189,10 @@ begin
        (old.number, old.kind, old.recipient_person_id, old.member_id, old.recipient, old.issue_date, old.due_date, old.total_cents, old.cover_text, old.cancels_invoice_id, old.fee_run_id) then
       raise exception 'issued invoice % is immutable; use a cancellation document', old.number using errcode = 'P0001';
     end if;
-    if old.pdf is not null and new.pdf is distinct from old.pdf then
+    if (new.organization_id, new.created_by, new.issued_at) is distinct from (old.organization_id, old.created_by, old.issued_at) then
+      raise exception 'issued invoice % is immutable', old.number using errcode = 'P0001';
+    end if;
+    if (old.pdf is not null and new.pdf is distinct from old.pdf) or (old.pdf_sha256 is not null and new.pdf_sha256 is distinct from old.pdf_sha256) then
       raise exception 'stored PDF of invoice % cannot change', old.number using errcode = 'P0001';
     end if;
   end if;
@@ -200,10 +203,15 @@ create trigger invoice_guard before update or delete on invoice for each row exe
 create function ov_invoice_line_guard() returns trigger language plpgsql as $$
 declare s text;
 begin
-  select status into s from invoice where id = coalesce(new.invoice_id, old.invoice_id);
+  -- Both the old and the new invoice must be drafts (a line cannot be moved off an issued invoice).
   -- s is null while a draft invoice is being deleted (cascade); that is allowed.
-  if s is not null and s <> 'draft' then
-    raise exception 'lines of an issued invoice cannot change' using errcode = 'P0001';
+  if tg_op <> 'INSERT' then
+    select status into s from invoice where id = old.invoice_id;
+    if s is not null and s <> 'draft' then raise exception 'lines of an issued invoice cannot change' using errcode = 'P0001'; end if;
+  end if;
+  if tg_op <> 'DELETE' then
+    select status into s from invoice where id = new.invoice_id;
+    if s is not null and s <> 'draft' then raise exception 'lines of an issued invoice cannot change' using errcode = 'P0001'; end if;
   end if;
   return coalesce(new, old);
 end $$;

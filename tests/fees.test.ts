@@ -201,3 +201,56 @@ describe('invoices', () => {
   });
 });
 
+
+describe('review fixes', () => {
+  it('a PATCH of one organisation field keeps the others', async () => {
+    await admin.patch('/organization', { name: 'Neuer Name e.V.' });
+    const org = (await admin.get('/organization')).body;
+    expect(org).toMatchObject({ street: 'Sportplatzweg 1', city: 'Musterstadt', bankName: 'Musterbank', iban: 'DE89370400440532013000' });
+    expect((await admin.patch('/organization', { bic: 'COBA DEFF XXX' })).status).toBe(200);
+  });
+
+  it('the treasurer (Kassenwart) can bill and collect for members they may only read', async () => {
+    const { memberId } = await setup();
+    const treasurer = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Kassenwart', null, 'kasse@example.org') });
+    expect((await treasurer.patch(`/members/${memberId}/payment-method`, { paymentMethod: 'cash' })).status).toBe(200);
+    const d = await treasurer.post('/invoices', { memberId, lines: [{ text: 'Trikot', unitCents: 2500 }] });
+    expect(d.status, JSON.stringify(d.body)).toBe(201);
+    expect((await treasurer.post(`/invoices/${d.body.id}/issue`, {})).status).toBe(200);
+    expect((await treasurer.post(`/invoices/${d.body.id}/payments`, { amountCents: 2500, bookedOn: '2026-06-02', method: 'cash' })).body.status).toBe('paid');
+    const run = await treasurer.post('/fee-runs', { until: '2026-12-31' });
+    expect((await treasurer.post(`/fee-runs/${run.body.id}/post`, {})).status).toBe(200);
+  });
+
+  it('dunning POST follows the same rules as the proposal', async () => {
+    const { memberId } = await setup();
+    const d = await admin.post('/invoices', { memberId, lines: [{ text: 'Trikot', unitCents: 2500 }] });
+    await admin.post(`/invoices/${d.body.id}/issue`, {});
+    expect((await admin.post(`/invoices/${d.body.id}/dunning`, { level: 1 })).status).toBe(409); // not overdue yet
+    await ctx.db.updateTable('organization').set({ dunning_levels: JSON.stringify([{ level: 1, label: 'Erinnerung', days: 1, feeCents: 500 }, { level: 2, label: 'Mahnung', days: 2, feeCents: 500 }]) as never }).execute();
+    await admin.post(`/invoices/${d.body.id}/issue`, {});
+    const old = await admin.post('/invoices', { memberId, lines: [{ text: 'Alt', unitCents: 1000 }] });
+    await admin.post(`/invoices/${old.body.id}/issue`, { issueDate: '2026-01-01' });
+    expect((await admin.post(`/invoices/${old.body.id}/dunning`, { level: 2 })).status).toBe(409); // skips level 1
+    const first = await admin.post(`/invoices/${old.body.id}/dunning`, { level: 1 });
+    expect(first.status).toBe(200);
+    const fee = first.body.dunning[0].feeInvoiceId;
+    const proposal = (await admin.get('/dunning/proposal')).body;
+    expect(proposal.some((p: { invoice: { id: string } }) => p.invoice.id === fee)).toBe(false);
+    await admin.post(`/invoices/${old.body.id}/dunning-hold`, { until: '2099-01-01', reason: 'Ratenzahlung' });
+    expect((await admin.post(`/invoices/${old.body.id}/dunning`, { level: 2 })).status).toBe(409);
+  });
+
+  it('scoped readers only see their own members in a fee run and cannot cancel runs', async () => {
+    const { memberId } = await setup();
+    const g = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN' })).body.id;
+    const other = await admin.post('/members', { lastName: 'Außen', joinDate: '2026-01-01', groupIds: [g] });
+    await admin.post(`/members/${other.body.id}/fee-assignments`, { feePlanId: (await admin.get('/fee-plans')).body[0].id, validFrom: '2026-01-01' });
+    const { posted } = await postRun();
+    expect(posted.body.members.length).toBe(2);
+    const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Abteilungsleitung', [g]) });
+    const seen = await lead.get(`/fee-runs/${posted.body.id}`);
+    expect(seen.body.members.map((m: { memberId: string }) => m.memberId)).toEqual([other.body.id]);
+    expect(seen.body.members.map((m: { memberId: string }) => m.memberId)).not.toContain(memberId);
+  });
+});

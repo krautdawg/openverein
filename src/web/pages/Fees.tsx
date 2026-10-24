@@ -71,7 +71,7 @@ const versionFrom = (f: FormData) => ({
   intervalMonths: f.get('intervalMonths') === 'null' ? null : Number(f.get('intervalMonths')),
   anchor: f.get('anchor'),
   proration: f.get('proration'),
-  admissionFeeCents: Number(f.get('admissionFeeCents') || 0),
+  admissionFeeCents: f.get('admissionFeeCents') === '' ? 0 : Number(f.get('admissionFeeCents')),
 });
 
 export function FeePlans({ me }: { me: Me }) {

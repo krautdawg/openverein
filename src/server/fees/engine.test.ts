@@ -125,3 +125,26 @@ describe('properties', () => {
     );
   });
 });
+
+describe('review regressions', () => {
+  it('bills a one-off main plan after earlier monthly billing', () => {
+    const versions = new Map([['p1', [plan({ intervalMonths: 1, amountCents: 1000 })]], ['p2', [plan({ intervalMonths: null, amountCents: 50000 })]]]);
+    const monthly = assignment({ validTo: '2026-03-31' });
+    const lifetime = assignment({ id: 'a2', planId: 'p2', planName: 'Lebenslang', validFrom: '2026-04-01' });
+    const { lines } = run([monthly, lifetime], versions, { until: '2026-04-30', billed: [{ slot: 'main', start: '2026-01-01', end: '2026-03-31', assignmentId: 'a1' }] });
+    expect(lines.map((l) => [l.periodStart, l.amountCents])).toEqual([['2026-04-01', 50000]]);
+  });
+
+  it('charges the admission fee once even with two assignments of the same plan', () => {
+    const v = [plan({ admissionFeeCents: 2500 })];
+    const { lines } = run([assignment({ validTo: '2024-12-31', validFrom: '2024-01-01' }), assignment({ id: 'a2', validFrom: '2026-01-01' })], v);
+    expect(lines.filter((l) => l.kind === 'admission')).toHaveLength(1);
+  });
+
+  it('does not charge the switch month twice at a mid-month plan change', () => {
+    const versions = new Map([['p1', [plan({ intervalMonths: 1, amountCents: 1000 })]], ['p2', [plan({ intervalMonths: 12, amountCents: 12000 })]]]);
+    const yearly = assignment({ id: 'a2', planId: 'p2', validFrom: '2026-03-16' });
+    const { lines } = run([yearly], versions, { billed: [{ slot: 'main', start: '2026-01-01', end: '2026-03-15', assignmentId: 'a1' }] });
+    expect(lines[0]!.amountCents).toBe(9000); // April–December
+  });
+});

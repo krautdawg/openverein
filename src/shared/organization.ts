@@ -23,7 +23,8 @@ export const organization = z.object({
 });
 export type Organization = z.infer<typeof organization>;
 
-const optText = (max: number) => z.string().trim().max(max).nullish().transform((v) => (v ? v : null));
+// Absent keys must stay absent (undefined): a PATCH of one field may not clear the others.
+const optText = (max: number) => z.string().trim().max(max).nullish().transform((v) => (v === undefined ? undefined : v || null));
 const numberPattern = z.string().trim().min(1).max(40).refine((p) => /\{seq(:\d)?\}/.test(p) && !/\{(?!seq(:\d)?\}|YYYY\})/.test(p), 'Das Muster braucht {seq} oder {seq:4}; erlaubt ist außerdem {YYYY}.');
 
 export const organizationPatch = z.object({
@@ -34,12 +35,16 @@ export const organizationPatch = z.object({
   street: optText(200),
   postalCode: optText(20),
   city: optText(100),
-  email: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)),
-  iban: z.string().trim().max(40).nullish().transform((v) => (v ? normalizeIban(v) : v === '' ? null : v)).refine((v) => !v || isValidIban(v), 'Diese IBAN ist nicht gültig (Prüfziffer).'),
-  bic: z.string().trim().max(11).nullish().transform((v) => (v ? v.replace(/\s+/g, '').toUpperCase() : v === '' ? null : v)).refine((v) => !v || isValidBic(v), 'Diese BIC ist nicht gültig.'),
+  email: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)).optional(),
+  iban: z.string().trim().max(42).nullish().transform((v) => (v ? normalizeIban(v) : v === '' ? null : v)).refine((v) => !v || isValidIban(v), 'Diese IBAN ist nicht gültig (Prüfziffer).').optional(),
+  bic: z.preprocess((v) => (typeof v === 'string' ? v.replace(/\s+/g, '').toUpperCase() : v), z.string().max(11).nullish().transform((v) => (v === '' ? null : v)).refine((v) => !v || isValidBic(v), 'Diese BIC ist nicht gültig.')).optional(),
   bankName: optText(100),
   invoiceNumberPattern: numberPattern.optional(),
   cancellationNumberPattern: numberPattern.optional(),
   paymentTermsDays: z.number().int().min(0).max(120).optional(),
-  dunningLevels: z.array(z.object({ level: z.number().int().min(1).max(9), label: z.string().trim().min(1).max(60), days: z.number().int().min(1).max(365), feeCents: z.number().int().min(0).max(10_000) })).max(5).optional(),
+  dunningLevels: z
+    .array(z.object({ level: z.number().int().min(1).max(9), label: z.string().trim().min(1).max(60), days: z.number().int().min(1).max(365), feeCents: z.number().int().min(0).max(10_000) }))
+    .max(5)
+    .refine((ls) => ls.every((l, i) => i === 0 || (l.level > ls[i - 1]!.level && l.days > ls[i - 1]!.days)), 'Stufen aufsteigend nummerieren, jede Stufe mit mehr Tagen als die vorige.')
+    .optional(),
 });

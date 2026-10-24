@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import PDFDocument from 'pdfkit';
-import { generate } from 'lean-qr';
+import { correction, generate } from 'lean-qr';
 import { formatDate } from '../../shared/dates.ts';
 
 const require = createRequire(import.meta.url);
@@ -134,7 +134,8 @@ export function renderInvoicePdf(d: PdfInvoice): Promise<Buffer> {
   const qrSize = mm(32);
   doc.font('text').fontSize(10).fillColor(ink).text(d.paymentText, left, y, { width: d.epc ? width - qrSize - 16 : width });
   if (d.epc) {
-    const code = generate(d.epc, { minCorrectionLevel: 1 } as never);
+    // EPC069-12 requires error correction level M.
+    const code = generate(d.epc, { minCorrectionLevel: correction.M });
     const cell = qrSize / (code.size + 8);
     const ox = right - qrSize;
     for (let qy = 0; qy < code.size; qy++) for (let qx = 0; qx < code.size; qx++) if (code.get(qx, qy)) doc.rect(ox + (qx + 4) * cell, y + (qy + 4) * cell, cell + 0.01, cell + 0.01);

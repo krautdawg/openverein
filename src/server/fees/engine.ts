@@ -31,6 +31,8 @@ export interface BilledRange {
   slot: string;
   start: string;
   end: string;
+  /** the assignment that was billed, so one-off and admission checks look at their own history */
+  assignmentId?: string;
 }
 
 export interface Line {
@@ -99,6 +101,13 @@ function monthDiffDays(origin: string, date: string) {
   return m;
 }
 
+/** "YYYY-MM" of every month touched by [start, end]. */
+function monthsOf(start: string, end: string) {
+  const out: string[] = [];
+  for (let m = 0; m < monthsTouched(start, end); m++) out.push(addMonths(start, m).slice(0, 7));
+  return out;
+}
+
 /** Parts of [start, end] not covered by any of the ranges. */
 export function uncovered(start: string, end: string, ranges: { start: string; end: string }[]): [string, string][] {
   let parts: [string, string][] = [[start, end]];
@@ -130,6 +139,8 @@ const euro = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'currency
 export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] } {
   const lines: Line[] = [];
   const skipped: Skipped[] = [];
+  // Admission fees already emitted in this call: two assignments of one plan must not both charge it.
+  const admissions = new Set(input.billed.filter((b) => b.slot.startsWith('admission:')).map((b) => b.slot));
 
   for (const a of input.assignments) {
     const versions = input.versions.get(a.planId) ?? [];
@@ -149,7 +160,7 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
     // Admission fee: once, with the first period of the assignment.
     if (first.admissionFeeCents > 0 && start <= input.until) {
       const admissionSlot = `admission:${a.planId}`;
-      if (input.billed.some((b) => b.slot === admissionSlot)) {
+      if (admissions.has(admissionSlot)) {
         skipped.push({ slot: admissionSlot, periodStart: start, periodEnd: start, reason: 'Aufnahmegebühr bereits berechnet.' });
       } else {
         lines.push({
@@ -166,6 +177,7 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
           text: `Aufnahmegebühr ${a.planName}`,
           explanation: `Einmalige Aufnahmegebühr ${euro(first.admissionFeeCents)}.`,
         });
+        admissions.add(admissionSlot);
       }
     }
 
@@ -178,7 +190,7 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
 
       if (v.intervalMonths === null) {
         // One-off: billed exactly once, on the assignment's start.
-        if (billed.length) skipped.push({ slot, periodStart: start, periodEnd: start, reason: 'Einmalbeitrag bereits berechnet.' });
+        if (billed.some((b) => b.assignmentId === a.id || (!b.assignmentId && b.start === start))) skipped.push({ slot, periodStart: start, periodEnd: start, reason: 'Einmalbeitrag bereits berechnet.' });
         else lines.push(line(a, slot, start, start, full, full, `Einmalbeitrag ${euro(full)}.`));
         break;
       }
@@ -196,7 +208,9 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
         let amount = full;
         let why = `${euro(full)} je ${n === 1 ? 'Monat' : `${n} Monate`}`;
         if (!whole && (v.proration === 'month' || trimmedByBilling)) {
-          const months = Math.min(monthsTouched(s, e), n);
+          // A month already (partly) billed in this slot, e.g. at a mid-month plan switch, is not charged again.
+          const billedMonths = new Set(billed.flatMap((b) => monthsOf(b.start, b.end)));
+          const months = Math.min(monthsOf(s, e).filter((m) => !billedMonths.has(m)).length, n);
           amount = Math.round((full * months) / n);
           why += `, anteilig ${months} von ${n} Monaten`;
         } else if (!whole) {

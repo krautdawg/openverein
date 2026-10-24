@@ -16,6 +16,8 @@ export interface IssueSnapshot {
 }
 
 export const RECEIVABLE_KINDS: InvoiceKind[] = ['membership', 'other', 'dunning_fee'];
+/** Dunning fees are not dunned themselves. */
+export const DUNNABLE_KINDS: InvoiceKind[] = ['membership', 'other'];
 
 function personLines(p: { kind: string; first_name: string | null; last_name: string | null; company_name: string | null; street: string | null; postal_code: string | null; city: string | null; country: string }) {
   const name = p.kind === 'organisation' ? (p.company_name ?? '') : [p.first_name, p.last_name].filter(Boolean).join(' ');
@@ -186,8 +188,10 @@ export async function cancelInvoice(tx: Db, organizationId: string, invoiceId: s
   if (!['open', 'partially_paid', 'paid', 'written_off'].includes(inv.status) || inv.kind === 'cancellation') {
     throw new Problem(409, 'not-cancellable', 'Nur ausgestellte Rechnungen lassen sich stornieren.');
   }
-  const paid = await tx.selectFrom('allocation').select('id').where('invoice_id', '=', inv.id).where('status', '=', 'confirmed').executeTakeFirst();
-  if (paid) throw new Problem(409, 'has-payments', 'Auf die Rechnung sind Zahlungen gebucht. Buche sie zuerst zurück, dann kannst Du stornieren.');
+  const paid = await tx.selectFrom('allocation').select('method').where('invoice_id', '=', inv.id).where('status', '=', 'confirmed').executeTakeFirst();
+  if (paid) {
+    throw new Problem(409, 'has-payments', paid.method === 'write_off' ? 'Die Rechnung ist ausgebucht. Nimm die Ausbuchung zuerst zurück, dann kannst Du stornieren.' : 'Auf die Rechnung sind Zahlungen gebucht. Buche sie zuerst zurück, dann kannst Du stornieren.');
+  }
   const lines = await tx.selectFrom('invoice_line').selectAll().where('invoice_id', '=', inv.id).orderBy('position').execute();
   const cancelId = await createDraft(
     tx,
