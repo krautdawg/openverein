@@ -2,7 +2,6 @@
 
 ## Purpose
 The member-portal capability covers the member portal as an installable PWA, data change requests with admin approval, and the public online membership application with SEPA mandate capture (B M29, M30, M31). Sign-in mechanics are specified in the auth capability. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Portal pages
 The system SHALL give signed-in members: my profile (fields marked visible; editable ones through change requests), my memberships and groups (without admins-only groups), my SEPA mandate (masked IBAN, reference, signature date), my invoices with PDF download, open amount and EPC QR code, my donation receipts, my documents, and a resignation request.
@@ -120,3 +119,18 @@ The system SHALL let a form be a contact form that creates a non-member person i
 #### Scenario: Sponsor contact
 - **WHEN** a contact form for address group "Sponsoren" is submitted
 - **THEN** a non-member person is created in that group with the consent record
+
+### Requirement: Portal identity by e-mail address
+The system SHALL sign members in per e-mail address and show every current membership whose person has that address, so a parent sees the memberships of children registered under the same address.
+
+#### Scenario: Family under one address
+- **WHEN** a parent and a child share an e-mail address and the parent signs in
+- **THEN** the portal shows both memberships and the invoices addressed to either of them
+
+### Requirement: Fixed field rules for change requests
+The system SHALL apply phone number changes immediately and hold changes of name, e-mail address, postal address and IBAN for approval.
+
+#### Scenario: Address waits
+- **WHEN** a member changes their city in the portal
+- **THEN** the member record keeps the old city until an admin accepts the request
+
