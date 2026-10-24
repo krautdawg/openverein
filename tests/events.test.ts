@@ -81,14 +81,58 @@ describe('events', () => {
   it('limits scoped trainers to calendars of their groups and hides birthdays without the right', async () => {
     const tennis = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN' })).body.id;
     const board = (await admin.post('/calendars', { name: 'Vorstand', groupIds: [(await admin.post('/groups', { name: 'Vorstand', shortCode: 'VS' })).body.id] })).body.id;
-    await admin.post('/calendars', { name: 'Tennis', groupIds: [tennis] });
+    const tcal = (await admin.post('/calendars', { name: 'Tennis', groupIds: [tennis] })).body.id;
     await admin.post('/events', { calendarId: board, title: 'Vorstandssitzung', startsAt: '2026-12-02T19:00', endsAt: '2026-12-02T21:00' });
     const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Trainer:in', [tennis]) });
     expect((await trainer.get('/calendars')).body.map((c: { name: string }) => c.name).sort()).toEqual(['Tennis', 'Training']);
     expect((await trainer.get('/events?from=2026-12-01&to=2026-12-31')).body).toHaveLength(0);
+    expect((await trainer.post(`/calendars/${board}/feed`, {})).status).toBe(403);
+    const own = (await trainer.post('/events', { calendarId: tcal, title: 'Tennis', startsAt: '2026-12-03T17:00', endsAt: '2026-12-03T18:00' })).body;
+    expect((await trainer.patch(`/events/${own.eventId}`, { calendarId })).status).toBe(403); // club-wide calendar
     await member('Geburtstag', { birthDate: '2000-12-05', groupIds: [tennis] });
     expect((await admin.get('/birthdays?from=2026-12-01&to=2026-12-31')).body[0]).toMatchObject({ date: '2026-12-05', age: 26 });
     const adviser = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Steuerberatung', null) });
     expect((await adviser.get('/birthdays?from=2026-12-01&to=2026-12-31')).body).toEqual([]);
+  });
+
+  it('review fixes: cancelling a paid date cancels its invoices, orphan series are refused, dates with RSVPs cannot vanish', async () => {
+    const d = future(10);
+    const ev = (await admin.post('/events', { calendarId, title: 'Kurs', startsAt: `${d}T10:00`, endsAt: `${d}T12:00`, priceCents: 2000 })).body;
+    const a = await member('Alpha');
+    await admin.put(`/events/${ev.eventId}/occurrences/${d}/participants/${a}`, { status: 'yes' });
+    expect((await admin.del(`/events/${ev.eventId}`)).status).toBe(204);
+    const inv = (await admin.get('/invoices?status=all')).body.items as { status: string; kind: string }[];
+    expect(inv.map((i) => i.status).sort()).toEqual(['cancelled', 'issued']);
+
+    const none = await admin.post('/events', { calendarId, title: 'Leer', startsAt: '2026-12-10T10:00', endsAt: '2026-12-10T11:00', recurrence: { freq: 'WEEKLY', until: '2026-12-01' } });
+    expect(none.status).toBe(400);
+    expect(await ctx.db.selectFrom('event').select('id').where('title', '=', 'Leer').execute()).toHaveLength(0);
+    expect((await admin.post('/events', { calendarId, title: 'X', startsAt: '2026-02-30T10:00', endsAt: '2026-02-30T11:00' })).status).toBe(400);
+
+    // A Monday-only series created on a Sunday starts on Monday.
+    const mo = (await admin.post('/events', { calendarId, title: 'Montags', startsAt: '2026-12-06T18:00', endsAt: '2026-12-06T19:00', recurrence: { freq: 'WEEKLY', byDay: ['MO'] } })).body;
+    expect(mo.seriesStart).toBe('2026-12-07');
+
+    const s = (await admin.post('/events', { calendarId, title: 'Serie', startsAt: `${d}T18:00`, endsAt: `${d}T19:00`, recurrence: { freq: 'DAILY' } })).body;
+    await admin.put(`/events/${s.eventId}/occurrences/${future(11)}/participants/${a}`, { status: 'yes' });
+    const shifted = await admin.patch(`/events/${s.eventId}`, { scope: 'all', recurrence: { freq: 'WEEKLY', interval: 2 } });
+    expect(shifted.status).toBe(409);
+    // "following" from the first date edits the whole series instead of leaving an empty one behind.
+    const whole = await admin.patch(`/events/${s.eventId}`, { scope: 'following', date: d, title: 'Serie neu' });
+    expect(whole.status, JSON.stringify(whole.body)).toBe(200);
+    expect(whole.body.eventId).toBe(s.eventId);
+  });
+
+  it('does not promote from the waitlist when attendance is recorded', async () => {
+    const d = future(0);
+    const ev = (await admin.post('/events', { calendarId, title: 'Jetzt', startsAt: `${d}T00:00`, endsAt: `${d}T23:59`, maxParticipants: 1, priceCents: 1000 })).body;
+    const [a, b] = [await member('Alpha'), await member('Beta')];
+    await ctx.db.insertInto('participation').values([
+      { organization_id: (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id, event_id: ev.eventId, occurrence_date: d, member_id: a, status: 'yes' },
+      { organization_id: (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id, event_id: ev.eventId, occurrence_date: d, member_id: b, status: 'waitlist', waitlisted_at: new Date() },
+    ]).execute();
+    const r = await admin.put(`/events/${ev.eventId}/occurrences/${d}/participants/${a}`, { status: 'not_attended' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.participants.find((p: { memberId: string }) => p.memberId === b).status).toBe('waitlist');
   });
 });

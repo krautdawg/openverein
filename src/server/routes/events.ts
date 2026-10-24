@@ -9,7 +9,7 @@ import { audit } from '../audit.ts';
 import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, EventTable, ParticipationStatus } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
-import { createDraft, issueInvoice } from '../invoices/service.ts';
+import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
 import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 
@@ -46,16 +46,22 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     return scope === null ? rows : rows.filter((c) => !c.group_ids || c.group_ids.some((g) => scope.includes(g)));
   }
 
+  /** A calendar the actor may put events into: visible, and for scoped actors one of their groups' calendars. */
+  async function writableCalendar(actor: Actor, calendarId: string) {
+    const cal = (await visibleCalendars(actor)).find((c) => c.id === calendarId);
+    if (!cal) throw notFound('Kalender');
+    const scope = scopeOf(actor, 'events', 'write');
+    if (scope !== null && (!cal.group_ids || !cal.group_ids.some((g) => scope.includes(g)))) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Dieser Kalender gehört nicht zu Deinen Gruppen.', { permission: 'events:write' });
+    return cal;
+  }
+
   async function loadEvent(actor: Actor, id: string, mode: 'read' | 'write' = 'read') {
     const e = await db.selectFrom('event').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!e) throw notFound('Termin');
     const cals = await visibleCalendars(actor);
     const cal = cals.find((c) => c.id === e.calendar_id);
     if (!cal) throw notFound('Termin');
-    if (mode === 'write') {
-      const scope = scopeOf(actor, 'events', 'write');
-      if (scope !== null && (!cal.group_ids || !cal.group_ids.some((g) => scope.includes(g)))) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Dieser Kalender gehört nicht zu Deinen Gruppen.', { permission: 'events:write' });
-    }
+    if (mode === 'write') await writableCalendar(actor, cal.id);
     return { e, cal };
   }
 
@@ -63,9 +69,9 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     if (occurrences(datePart(e.starts_at), e.rrule, date, date, e.exdates).length === 0) throw new Problem(404, 'not-found', 'An diesem Tag findet der Termin nicht statt.');
   }
 
-  async function counts(eventIds: string[]) {
+  async function counts(eventIds: string[], from: string, to: string) {
     if (!eventIds.length) return new Map<string, Occurrence['counts']>();
-    const rows = await db.selectFrom('participation').select(['event_id', 'occurrence_date', 'status', sql<number>`count(*)::int`.as('n')]).where('event_id', 'in', eventIds).groupBy(['event_id', 'occurrence_date', 'status']).execute();
+    const rows = await db.selectFrom('participation').select(['event_id', 'occurrence_date', 'status', sql<number>`count(*)::int`.as('n')]).where('event_id', 'in', eventIds).where('occurrence_date', '>=', from).where('occurrence_date', '<=', to).groupBy(['event_id', 'occurrence_date', 'status']).execute();
     const map = new Map<string, Occurrence['counts']>();
     for (const r of rows) {
       const key = `${r.event_id}|${r.occurrence_date}`;
@@ -138,10 +144,13 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/calendars/:id/feed', { schema: { tags, summary: 'ICS-Abo-Link erzeugen; ein neuer Link macht den alten ungültig', params: idParam, body: z.object({}).optional(), response: { 200: z.object({ path: z.string() }) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'events', 'write');
+    if (scopeOf(actor, 'events', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Abo-Links verwalten Zugänge für den ganzen Verein.', { permission: 'events:write (ganzer Verein)' });
     const token = randomBytes(24).toString('base64url');
-    const r = await db.updateTable('calendar').set({ feed_token_hash: sha256(token) }).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
-    if (!Number(r.numUpdatedRows)) throw notFound('Kalender');
-    await audit(db, actor.organizationId, actor, { action: 'calendar.feed_rotated', entityType: 'calendar', entityId: req.params.id });
+    await db.transaction().execute(async (tx) => {
+      const r = await tx.updateTable('calendar').set({ feed_token_hash: sha256(token) }).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+      if (!Number(r.numUpdatedRows)) throw notFound('Kalender');
+      await audit(tx, actor.organizationId, actor, { action: 'calendar.feed_rotated', entityType: 'calendar', entityId: req.params.id });
+    });
     return { path: `/api/v1/ics/${token}.ics` };
   });
 
@@ -174,7 +183,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(sql<boolean>`starts_at::date <= ${to}::date`)
         .where((eb) => eb.or([eb('rrule', 'is not', null), eb(sql`ends_at::date`, '>=', from)]))
         .execute();
-      const c = await counts(events.map((e) => e.id));
+      const c = await counts(events.map((e) => e.id), from, to);
       const out: Occurrence[] = [];
       for (const e of events) {
         const cal = cals.find((x) => x.id === e.calendar_id)!;
@@ -189,7 +198,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   async function detail(actor: Actor, id: string, date: string) {
     const { e, cal } = await loadEvent(actor, id);
     assertOccurrence(e, date);
-    const c = (await counts([e.id])).get(`${e.id}|${date}`);
+    const c = (await counts([e.id], date, date)).get(`${e.id}|${date}`);
     const people = await db
       .selectFrom('participation')
       .innerJoin('member', 'member.id', 'participation.member_id')
@@ -219,6 +228,10 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   });
 
   function validateTimes(startsAt: string, endsAt: string) {
+    for (const [field, v] of [['startsAt', startsAt], ['endsAt', endsAt]] as const) {
+      const t = `${v.slice(0, 10)}T${v.slice(11, 16)}`;
+      if (Number.isNaN(Date.parse(`${t}:00Z`)) || new Date(`${t}:00Z`).toISOString().slice(0, 16) !== t) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message: 'Dieses Datum gibt es nicht.' }] });
+    }
     if (endsAt < startsAt) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'endsAt', message: 'Das Ende liegt vor dem Beginn.' }] });
   }
 
@@ -227,32 +240,54 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'events', 'write');
     const b = req.body;
     validateTimes(b.startsAt, b.endsAt);
-    const cal = (await visibleCalendars(actor)).find((c) => c.id === b.calendarId);
-    if (!cal) throw notFound('Kalender');
-    const scope = scopeOf(actor, 'events', 'write');
-    if (scope !== null && (!cal.group_ids || !cal.group_ids.some((g) => scope.includes(g)))) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Dieser Kalender gehört nicht zu Deinen Gruppen.', { permission: 'events:write' });
-    let rrule: string | null = null;
-    try {
-      rrule = rruleOf(b.recurrence);
-      if (rrule) parseRule(rrule);
-    } catch (err) {
-      throw new Problem(400, 'validation', 'Die Wiederholung ist ungültig.', (err as Error).message);
-    }
+    const cal = await writableCalendar(actor, b.calendarId);
+    const rrule = ruleOrProblem(() => rruleOf(b.recurrence));
+    // The series starts on its first real occurrence (a Monday-only series created on a Sunday starts on Monday),
+    // so DTSTART in ICS feeds never adds a date the app does not show.
+    const first = occurrences(b.startsAt.slice(0, 10), rrule, b.startsAt.slice(0, 10), addDays(b.startsAt.slice(0, 10), 400))[0];
+    if (!first) throw new Problem(400, 'validation', 'Diese Wiederholung ergibt keinen einzigen Termin.');
+    const shift = dayDiff(b.startsAt.slice(0, 10), first);
+    const startsAt = shiftTo(toLocal(b.startsAt), first);
+    const endsAt = shiftTo(toLocal(b.endsAt), addDays(b.endsAt.slice(0, 10), shift));
     const e = await db.transaction().execute(async (tx) => {
       const e = await tx
         .insertInto('event')
-        .values({ organization_id: actor.organizationId, calendar_id: cal.id, title: b.title, description: b.description ?? null, location: b.location ?? null, starts_at: toLocal(b.startsAt), ends_at: toLocal(b.endsAt), all_day: b.allDay, rrule, max_participants: b.maxParticipants ?? null, rsvp: b.rsvp, registration_closes_hours: b.registrationClosesHours ?? null, price_cents: b.priceCents ?? null, created_by: actor.userId })
+        .values({ organization_id: actor.organizationId, calendar_id: cal.id, title: b.title, description: b.description ?? null, location: b.location ?? null, starts_at: startsAt, ends_at: endsAt, all_day: b.allDay, rrule, max_participants: b.maxParticipants ?? null, rsvp: b.rsvp, registration_closes_hours: b.registrationClosesHours ?? null, price_cents: b.priceCents ?? null, created_by: actor.userId })
         .returningAll()
         .executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'event.created', entityType: 'event', entityId: e.id, diff: { title: [null, e.title], startsAt: [null, e.starts_at], rrule: [null, rrule] } });
       return e;
     });
     reply.status(201);
-    // A weekly series on other weekdays may not include its start date: answer with its first occurrence.
-    const first = occurrences(datePart(e.starts_at), e.rrule, datePart(e.starts_at), addDays(datePart(e.starts_at), 400), e.exdates)[0];
-    if (!first) throw new Problem(400, 'validation', 'Diese Wiederholung ergibt keinen einzigen Termin.');
     return detail(actor, e.id, first);
   });
+
+  function ruleOrProblem<T>(f: () => T) {
+    try {
+      const r = f();
+      if (typeof r === 'string') parseRule(r);
+      return r;
+    } catch (err) {
+      throw new Problem(400, 'validation', 'Die Wiederholung ist ungültig.', (err as Error).message);
+    }
+  }
+
+  /** Every participation of the event must still sit on one of its dates; otherwise RSVPs and invoices would vanish. */
+  async function assertParticipationsFit(tx: Db, eventId: string) {
+    const e = await tx.selectFrom('event').selectAll().where('id', '=', eventId).executeTakeFirstOrThrow();
+    const dates = await tx.selectFrom('participation').select('occurrence_date').distinct().where('event_id', '=', eventId).execute();
+    const lost = dates.filter((d) => occurrences(datePart(e.starts_at), e.rrule, d.occurrence_date, d.occurrence_date, e.exdates).length === 0);
+    if (lost.length) throw new Problem(409, 'participations-left', 'Nach dieser Änderung hätten Rückmeldungen keinen Termin mehr.', `Betroffen: ${lost.map((d) => d.occurrence_date.split('-').reverse().join('.')).join(', ')}. Ändere stattdessen einzelne Termine oder sag sie ab.`);
+    return e;
+  }
+
+  /** The date to show after an edit: the requested one if it still exists, else the first occurrence. */
+  function landing(e: Ev, wanted: string | undefined) {
+    if (wanted && occurrences(datePart(e.starts_at), e.rrule, wanted, wanted, e.exdates).length) return wanted;
+    const first = occurrences(datePart(e.starts_at), e.rrule, datePart(e.starts_at), addDays(datePart(e.starts_at), 800), e.exdates)[0];
+    if (!first) throw new Problem(400, 'validation', 'Diese Wiederholung ergibt keinen einzigen Termin.');
+    return first;
+  }
 
   /** Field values for an update: only what the body contains, times moved to `date` when given. */
   function changes(b: z.infer<typeof eventPatch>) {
@@ -268,7 +303,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     if (b.rsvp !== undefined) v.rsvp = b.rsvp;
     if (b.registrationClosesHours !== undefined) v.registration_closes_hours = b.registrationClosesHours ?? null;
     if (b.priceCents !== undefined) v.price_cents = b.priceCents ?? null;
-    if (b.recurrence !== undefined) v.rrule = rruleOf(b.recurrence);
+    if (b.recurrence !== undefined) v.rrule = ruleOrProblem(() => rruleOf(b.recurrence));
     return v;
   }
 
@@ -281,19 +316,21 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       const { e } = await loadEvent(actor, req.params.id, 'write');
       const b = req.body;
       const v = changes(b);
+      if (b.calendarId) await writableCalendar(actor, b.calendarId);
+      // "following" from the very first date is the whole series.
+      const scope = e.rrule && b.scope === 'following' && b.date === datePart(e.starts_at) ? 'all' : b.scope;
       const result = await db.transaction().execute(async (tx) => {
-        if (!e.rrule || b.scope === 'all') {
-          if (b.calendarId) await assertCalendar(tx, actor, b.calendarId);
+        if (!e.rrule || scope === 'all') {
           const after = await tx.updateTable('event').set({ ...v, updated_at: new Date() }).where('id', '=', e.id).returningAll().executeTakeFirstOrThrow();
           validateTimes(after.starts_at, after.ends_at);
-          if (after.rrule) parseRule(after.rrule);
+          await assertParticipationsFit(tx, e.id);
           await audit(tx, actor.organizationId, actor, { action: 'event.updated', entityType: 'event', entityId: e.id, diff: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, [(e as Record<string, unknown>)[k] ?? null, x]])) });
-          return { id: e.id, date: b.date && after.rrule ? b.date : datePart(after.starts_at) };
+          return { id: e.id, date: landing(after, after.rrule ? b.date : undefined) };
         }
         if (!b.date) throw new Problem(400, 'validation', 'Für „nur diesen“ oder „ab diesem“ braucht es das Datum des Termins.');
         assertOccurrence(e, b.date);
         const base = { ...e, starts_at: shiftTo(e.starts_at, b.date), ends_at: shiftTo(e.ends_at, addDays(datePart(e.ends_at), dayDiff(datePart(e.starts_at), b.date))) };
-        if (b.scope === 'this') {
+        if (scope === 'this') {
           // The occurrence leaves the series as an exception and becomes a single event; its RSVPs move with it.
           await tx.updateTable('event').set({ exdates: sql`array_append(exdates, ${b.date}::date)`, updated_at: new Date() }).where('id', '=', e.id).execute();
           const single = await tx
@@ -311,7 +348,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         const before = occurrences(datePart(e.starts_at), e.rrule, datePart(e.starts_at), addDays(b.date, -1), []).length;
         const oldRule = formatRule({ ...rule, until: addDays(b.date, -1), count: null });
         await tx.updateTable('event').set({ rrule: oldRule, updated_at: new Date() }).where('id', '=', e.id).execute();
-        const newRule = (v.rrule as string | undefined) ?? formatRule({ ...rule, count: rule.count ? Math.max(1, rule.count - before) : null });
+        const newRule = 'rrule' in v ? (v.rrule as string | null) : formatRule({ ...rule, count: rule.count ? Math.max(1, rule.count - before) : null });
         const next = await tx
           .insertInto('event')
           .values({ ...pick(base), exdates: e.exdates.filter((x) => x >= b.date!), ...v, rrule: newRule, organization_id: actor.organizationId, created_by: actor.userId } as never)
@@ -319,8 +356,9 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
           .executeTakeFirstOrThrow();
         validateTimes(next.starts_at, next.ends_at);
         await tx.updateTable('participation').set({ event_id: next.id }).where('event_id', '=', e.id).where('occurrence_date', '>=', b.date).execute();
+        await assertParticipationsFit(tx, next.id);
         await audit(tx, actor.organizationId, actor, { action: 'event.series_split', entityType: 'event', entityId: e.id, diff: { from: [null, b.date], newEvent: [null, next.id] } });
-        return { id: next.id, date: datePart(next.starts_at) };
+        return { id: next.id, date: landing(next, b.date) };
       });
       return detail(actor, result.id, result.date);
     },
@@ -330,11 +368,6 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     return { calendar_id: e.calendar_id, title: e.title, description: e.description, location: e.location, starts_at: e.starts_at, ends_at: e.ends_at, all_day: e.all_day, max_participants: e.max_participants, rsvp: e.rsvp, registration_closes_hours: e.registration_closes_hours, price_cents: e.price_cents };
   }
 
-  async function assertCalendar(tx: Db, actor: Actor, calendarId: string) {
-    const c = await tx.selectFrom('calendar').select('id').where('id', '=', calendarId).where('organization_id', '=', actor.organizationId).executeTakeFirst();
-    if (!c) throw notFound('Kalender');
-  }
-
   app.delete(
     '/events/:id',
     { schema: { tags, summary: 'Termin absagen: nur diesen, diesen und alle folgenden, oder die ganze Serie', params: idParam, body: z.object({ scope: z.enum(['this', 'following', 'all']).default('all'), date: z.iso.date().optional() }).optional(), response: { 204: z.null() } } },
@@ -342,9 +375,14 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       const actor = requireActor(req);
       requirePermission(actor, 'events', 'write');
       const { e } = await loadEvent(actor, req.params.id, 'write');
-      const scope = req.body?.scope ?? 'all';
       const date = req.body?.date;
+      const scope = req.body?.scope === 'following' && date === datePart(e.starts_at) ? 'all' : (req.body?.scope ?? 'all');
       await db.transaction().execute(async (tx) => {
+        // Places already charged are cancelled with a cancellation invoice; paid ones must be refunded first (409).
+        let billed = tx.selectFrom('participation').innerJoin('invoice', 'invoice.id', 'participation.invoice_id').select('invoice.id').where('participation.event_id', '=', e.id).where('invoice.status', '!=', 'cancelled');
+        if (e.rrule && scope !== 'all' && date) billed = billed.where('participation.occurrence_date', scope === 'this' ? '=' : '>=', date);
+        const today = await orgToday(tx, actor.organizationId);
+        for (const inv of await billed.execute()) await cancelInvoice(tx, actor.organizationId, inv.id, today, actor.userId);
         if (!e.rrule || scope === 'all') {
           await tx.deleteFrom('event').where('id', '=', e.id).execute();
         } else {
@@ -371,11 +409,11 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       requirePermission(actor, 'events', 'write');
       const { e } = await loadEvent(actor, req.params.id, 'write');
       assertOccurrence(e, req.params.date);
-      const { row: member } = await loadMemberRow(db, actor, req.params.memberId, 'read', 'events');
-      const { now } = await localNow(db, actor.organizationId);
-      const start = shiftTo(e.starts_at, req.params.date).slice(0, 16);
       const wanted = req.body.status;
       const attendance = wanted === 'attended' || wanted === 'not_attended';
+      const { row: member } = await loadMemberRow(db, actor, req.params.memberId, attendance ? 'read' : 'write', 'events');
+      const { now } = await localNow(db, actor.organizationId);
+      const start = shiftTo(e.starts_at, req.params.date).slice(0, 16);
       if (attendance && now < start) throw new Problem(409, 'not-started', 'Anwesenheit lässt sich erst ab Beginn des Termins eintragen.');
       if (!attendance) {
         if (!e.rsvp) throw new Problem(409, 'no-rsvp', 'Für diesen Termin gibt es keine Rückmeldungen.');
@@ -399,8 +437,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         else await tx.insertInto('participation').values({ organization_id: actor.organizationId, event_id: e.id, occurrence_date: req.params.date, member_id: member.id, ...values }).execute();
         if (status === 'yes') await chargeOnce(tx, actor, e, req.params.date, member.id, member.person_id);
         await audit(tx, actor.organizationId, actor, { action: 'event.rsvp', entityType: 'event', entityId: e.id, diff: { member: [null, member.id], date: [null, req.params.date], status: [current?.status ?? null, status] } });
-        // A freed place goes to the first person on the waitlist.
-        if (current?.status === 'yes' && status !== 'yes' && status !== 'attended') {
+        // A freed place goes to the first person on the waitlist, but only before the event (no charging afterwards).
+        if (!attendance && current?.status === 'yes' && status !== 'yes') {
           const next = await tx.selectFrom('participation').innerJoin('member', 'member.id', 'participation.member_id').select(['participation.id', 'participation.member_id', 'member.person_id']).where('participation.event_id', '=', e.id).where('participation.occurrence_date', '=', req.params.date).where('participation.status', '=', 'waitlist').orderBy('participation.waitlisted_at').limit(1).executeTakeFirst();
           if (next) {
             await tx.updateTable('participation').set({ status: 'yes', waitlisted_at: null, updated_at: new Date() }).where('id', '=', next.id).execute();
@@ -458,7 +496,21 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
 export function ics(name: string, timeZone: string, events: Ev[]) {
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
   const dt = (ts: string) => ts.replace(/[-:]/g, '').replace(' ', 'T').slice(0, 15);
-  const fold = (line: string) => (line.length <= 74 ? line : line.match(/.{1,73}/g)!.join('\r\n '));
+  // Lines fold at 75 octets without splitting a UTF-8 character.
+  const fold = (line: string) => {
+    const parts: string[] = [];
+    let cur = '';
+    for (const ch of line) {
+      if (Buffer.byteLength(cur + ch) > (parts.length ? 74 : 75)) {
+        parts.push(cur);
+        cur = '';
+      }
+      cur += ch;
+    }
+    return [...parts, cur].join('\r\n ');
+  };
+  // shortcut: UNTIL ends at 23:59:59 UTC on the last day, so a late-night local event right after midnight could be included; exact conversion needs VTIMEZONE support.
+  const rule = (r: string) => r.replace(/UNTIL=(\d{8})(?=;|$)/, 'UNTIL=$1T235959Z');
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OpenVerein//DE', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${esc(name)}`, `X-WR-TIMEZONE:${timeZone}`];
   const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
   for (const e of events) {
@@ -468,7 +520,7 @@ export function ics(name: string, timeZone: string, events: Ev[]) {
     } else {
       lines.push(`DTSTART;TZID=${timeZone}:${dt(e.starts_at)}`, `DTEND;TZID=${timeZone}:${dt(e.ends_at)}`);
     }
-    if (e.rrule) lines.push(`RRULE:${e.rrule}`);
+    if (e.rrule) lines.push(`RRULE:${e.all_day ? e.rrule : rule(e.rrule)}`);
     for (const x of e.exdates) lines.push(e.all_day ? `EXDATE;VALUE=DATE:${x.replaceAll('-', '')}` : `EXDATE;TZID=${timeZone}:${x.replaceAll('-', '')}T${dt(e.starts_at).slice(9)}`);
     lines.push(`SUMMARY:${esc(e.title)}`);
     if (e.location) lines.push(`LOCATION:${esc(e.location)}`);

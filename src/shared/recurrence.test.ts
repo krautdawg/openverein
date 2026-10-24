@@ -24,3 +24,9 @@ describe('recurrence', () => {
     expect(() => parseRule('FREQ=YEARLY')).toThrow();
   });
 });
+
+it('treats Sunday as the last day of the week', () => {
+  expect(occurrences('2026-12-07', 'FREQ=WEEKLY;BYDAY=MO,SU;UNTIL=20261209', '2026-12-01', '2026-12-31')).toEqual(['2026-12-07']);
+  expect(occurrences('2026-12-07', 'FREQ=WEEKLY;BYDAY=MO,SU', '2026-12-01', '2026-12-16')).toEqual(['2026-12-07', '2026-12-13', '2026-12-14']);
+  expect(occurrences('2026-12-07', 'FREQ=WEEKLY;BYDAY=MO,SU;COUNT=3', '2026-12-01', '2026-12-31')).toEqual(['2026-12-07', '2026-12-13', '2026-12-14']);
+});

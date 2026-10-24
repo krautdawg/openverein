@@ -52,12 +52,13 @@ export function occurrences(start: string, rrule: string | null, from: string, t
   if (r.freq === 'DAILY') {
     for (let date = start; !done(date); date = addDays(date, r.interval)) emit(date);
   } else if (r.freq === 'WEEKLY') {
-    const days = r.byDay.length ? r.byDay.map((x) => DAYS.indexOf(x)).sort() : [d(start).getUTCDay()];
+    // Offsets within a Monday-based week, so Sunday sorts last.
+    const days = (r.byDay.length ? r.byDay.map((x) => DAYS.indexOf(x)) : [d(start).getUTCDay()]).map((wd) => (wd + 6) % 7).sort((a, b) => a - b);
     // Weeks start on Monday; walk week by week from the start's week.
     const monday = addDays(start, -((d(start).getUTCDay() + 6) % 7));
     for (let week = monday; !done(week); week = addDays(week, 7 * r.interval)) {
       for (const wd of days) {
-        const date = addDays(week, (wd + 6) % 7);
+        const date = addDays(week, wd);
         if (date < start) continue;
         if (done(date)) break;
         emit(date);
