@@ -1,12 +1,13 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { loginBody, me, setupBody } from '../../shared/auth.ts';
+import { acceptInviteBody, loginBody, me, setupBody } from '../../shared/auth.ts';
 import { audit } from '../audit.ts';
 import { hashPassword, passwordProblem, verifyPassword } from '../auth/password.ts';
-import { destroySession, insertSession, requireUser, setSessionCookie } from '../auth/session.ts';
+import { destroySession, insertSession, requireActor, setSessionCookie, sha256 } from '../auth/session.ts';
 import type { AppUser, Db } from '../db.ts';
 import { Problem } from '../http/problem.ts';
+import { level, loadGrants, MODULES, type Grant } from '../policy.ts';
 
 const MAX_FAILS = 5;
 // A real hash so unknown e-mails, locked accounts and wrong passwords all cost one Argon2 verification.
@@ -14,10 +15,21 @@ const dummyHash = await hashPassword('openverein-timing-equaliser');
 const invalidCredentials = () => new Problem(401, 'invalid-credentials', 'E-Mail oder Passwort stimmen nicht.');
 const publicRoute = { security: [] };
 
-async function meOf(db: Db, user: AppUser) {
+async function meOf(db: Db, user: AppUser, grants?: Grant[]) {
   const org = await db.selectFrom('organization').selectAll().where('id', '=', user.organization_id).executeTakeFirstOrThrow();
-  return { id: user.id, name: user.name, email: user.email, organization: { id: org.id, name: org.name, isDemo: org.is_demo } };
+  const g = grants ?? (await loadGrants(db, user.id));
+  const actor = { kind: 'user' as const, id: user.id, userId: user.id, name: user.name, organizationId: org.id, grants: g };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    organization: { id: org.id, name: org.name, isDemo: org.is_demo },
+    permissions: Object.fromEntries(MODULES.map((m) => [m, level(actor, m)])),
+    roles: g.map((x) => x.roleName),
+  };
 }
+
+const userActor = (u: AppUser) => ({ userId: u.id, name: u.name });
 
 export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -48,7 +60,10 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .values({ organization_id: org.id, email: req.body.email, name: req.body.name, password_hash: passwordHash })
           .returningAll()
           .executeTakeFirstOrThrow();
-        await audit(tx, org.id, user, { action: 'organization.setup', entityType: 'organization', entityId: org.id });
+        await sql`select ov_seed_builtin_roles(${org.id}::uuid)`.execute(tx);
+        const admin = await tx.selectFrom('role').select('id').where('organization_id', '=', org.id).where('builtin_key', '=', 'admin').executeTakeFirstOrThrow();
+        await tx.insertInto('role_grant').values({ organization_id: org.id, user_id: user.id, role_id: admin.id }).execute();
+        await audit(tx, org.id, userActor(user), { action: 'organization.setup', entityType: 'organization', entityId: org.id });
         return { user, token: await insertSession(tx, user.id, req.headers['user-agent']) };
       });
       setSessionCookie(reply, token);
@@ -83,7 +98,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           return null;
         }
         await tx.updateTable('app_user').set({ failed_logins: 0, locked_until: null, last_login_at: new Date() }).where('id', '=', user.id).execute();
-        await audit(tx, user.organization_id, user, { action: 'auth.login', entityType: 'app_user', entityId: user.id });
+        await audit(tx, user.organization_id, userActor(user), { action: 'auth.login', entityType: 'app_user', entityId: user.id });
         return { user, token: await insertSession(tx, user.id, req.headers['user-agent']) };
       });
       // Locked, unknown and wrong-password attempts get the same answer.
@@ -103,6 +118,35 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
-  app.get('/auth/me', { schema: { tags: ['auth'], summary: 'Das angemeldete Konto', response: { 200: me } } }, async (req) => meOf(db, requireUser(req)));
+  app.get('/auth/me', { schema: { tags: ['auth'], summary: 'Das angemeldete Konto mit seinen effektiven Rechten', response: { 200: me } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') throw new Problem(400, 'not-a-user', 'API-Schlüssel haben kein Benutzerkonto.');
+    return meOf(db, await db.selectFrom('app_user').selectAll().where('id', '=', actor.id).executeTakeFirstOrThrow(), actor.grants);
+  });
+
+  app.post(
+    '/auth/accept-invite',
+    { ...limited, schema: { ...publicRoute, tags: ['auth'], summary: 'Einladung annehmen und Passwort setzen', body: acceptInviteBody, response: { 200: me } } },
+    async (req, reply) => {
+      const pwProblem = passwordProblem(req.body.password);
+      if (pwProblem) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', pwProblem, { errors: [{ field: 'password', message: pwProblem }] });
+      const passwordHash = await hashPassword(req.body.password);
+      const { user, token } = await db.transaction().execute(async (tx) => {
+        const u = await tx
+          .updateTable('app_user')
+          .set({ password_hash: passwordHash, invite_token_hash: null, invite_expires_at: null, failed_logins: 0, locked_until: null, updated_at: new Date() })
+          .where('invite_token_hash', '=', sha256(req.body.token))
+          .where('invite_expires_at', '>', new Date())
+          .where('status', '=', 'active')
+          .returningAll()
+          .executeTakeFirst();
+        if (!u) throw new Problem(400, 'invalid-invite', 'Der Einladungslink ist ungültig oder abgelaufen.');
+        await audit(tx, u.organization_id, userActor(u), { action: 'auth.invite_accepted', entityType: 'app_user', entityId: u.id });
+        return { user: u, token: await insertSession(tx, u.id, req.headers['user-agent']) };
+      });
+      setSessionCookie(reply, token);
+      return meOf(db, user);
+    },
+  );
 };
 
