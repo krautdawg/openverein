@@ -1,0 +1,356 @@
+import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { sql } from 'kysely';
+import { z } from 'zod';
+import { addDays } from '../../shared/dates.ts';
+import { allocationDto, dunningProposal, invoiceCreate, invoiceDetail, invoiceListItem, invoicePatch, invoiceQuery, paymentInput, type InvoiceListItem } from '../../shared/invoices.ts';
+import { audit } from '../audit.ts';
+import { requireActor } from '../auth/session.ts';
+import type { Db, DunningLevel, InvoiceKind, InvoiceStatus } from '../db.ts';
+import { notFound, Problem } from '../http/problem.ts';
+import { cancelInvoice, createDraft, insertLines, issueInvoice, RECEIVABLE_KINDS, refreshPayment, storedPdf, type IssueSnapshot } from '../invoices/service.ts';
+import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
+import { requirePermission, scopeOf, type Actor } from '../policy.ts';
+
+const idParam = z.object({ id: z.uuid() });
+const tags = ['invoices'];
+
+export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
+  const { db } = app;
+
+  /** Base query: invoices of the organisation; scoped actors see only invoices of members in scope. */
+  function base(actor: Actor, today: string) {
+    let q = db
+      .selectFrom('invoice')
+      .innerJoin('person', 'person.id', 'invoice.recipient_person_id')
+      .leftJoin('member', 'member.id', 'invoice.member_id')
+      .where('invoice.organization_id', '=', actor.organizationId);
+    const scope = scopeOf(actor, 'invoices', 'read');
+    if (scope !== null) q = q.where(scopePredicate(scope, today, 'read'));
+    return q;
+  }
+
+  const listColumns = [
+    'invoice.id',
+    'invoice.number',
+    'invoice.kind',
+    'invoice.status',
+    'invoice.member_id',
+    'invoice.issue_date',
+    'invoice.due_date',
+    'invoice.total_cents',
+    'invoice.paid_cents',
+    'invoice.recipient',
+    'person.kind as person_kind',
+    'person.first_name',
+    'person.last_name',
+    'person.company_name',
+  ] as const;
+
+  type ListRow = {
+    id: string; number: string | null; kind: InvoiceKind; status: InvoiceStatus; member_id: string | null; issue_date: string | null; due_date: string | null;
+    total_cents: number; paid_cents: number; recipient: unknown; person_kind: string; first_name: string | null; last_name: string | null; company_name: string | null;
+  };
+
+  async function toItems(rows: ListRow[], today: string): Promise<InvoiceListItem[]> {
+    const levels = rows.length
+      ? await db.selectFrom('dunning_event').select(['invoice_id', sql<number>`max(level)::int`.as('level')]).where('invoice_id', 'in', rows.map((r) => r.id)).groupBy('invoice_id').execute()
+      : [];
+    return rows.map((r) => {
+      const snap = r.recipient as IssueSnapshot | null;
+      const name = snap?.recipient.name ?? (r.person_kind === 'organisation' ? r.company_name ?? '' : [r.first_name, r.last_name].filter(Boolean).join(' '));
+      const open = ['open', 'partially_paid'].includes(r.status) ? r.total_cents - r.paid_cents : 0;
+      return {
+        id: r.id,
+        number: r.number,
+        kind: r.kind,
+        status: r.status,
+        recipientName: name,
+        memberId: r.member_id,
+        issueDate: r.issue_date,
+        dueDate: r.due_date,
+        totalCents: r.total_cents,
+        openCents: open,
+        overdue: open > 0 && RECEIVABLE_KINDS.includes(r.kind) && !!r.due_date && r.due_date < today,
+        dunningLevel: levels.find((l) => l.invoice_id === r.id)?.level ?? 0,
+      };
+    });
+  }
+
+  async function detail(actor: Actor, id: string) {
+    const today = await orgToday(db, actor.organizationId);
+    const row = await base(actor, today).select([...listColumns, 'invoice.cover_text', 'invoice.cancels_invoice_id', 'invoice.pdf_sha256', 'invoice.written_off_reason', 'invoice.dunning_hold_until', 'invoice.dunning_hold_reason']).where('invoice.id', '=', id).executeTakeFirst();
+    if (!row) throw notFound('Rechnung');
+    const [item] = await toItems([row], today);
+    const lines = await db
+      .selectFrom('invoice_line')
+      .leftJoin('assessment', 'assessment.id', 'invoice_line.assessment_id')
+      .select(['invoice_line.id', 'invoice_line.position', 'invoice_line.text', 'invoice_line.quantity', 'invoice_line.unit_cents', 'invoice_line.total_cents', 'invoice_line.tax_rate', 'assessment.period_start', 'assessment.period_end'])
+      .where('invoice_line.invoice_id', '=', id)
+      .orderBy('invoice_line.position')
+      .execute();
+    const allocations = await db.selectFrom('allocation').selectAll().where('invoice_id', '=', id).orderBy('created_at').execute();
+    const dunning = await db.selectFrom('dunning_event').selectAll().where('invoice_id', '=', id).orderBy('level').execute();
+    const cancels = row.cancels_invoice_id ? await db.selectFrom('invoice').select(['id', 'number']).where('id', '=', row.cancels_invoice_id).executeTakeFirst() : undefined;
+    const cancelledBy = await db.selectFrom('invoice').select(['id', 'number']).where('cancels_invoice_id', '=', id).executeTakeFirst();
+    const snap = row.recipient as IssueSnapshot | null;
+    return {
+      ...item!,
+      coverText: row.cover_text,
+      recipient: snap?.recipient ?? null,
+      lines: lines.map((l) => ({ id: l.id, position: l.position, text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, totalCents: l.total_cents, taxRate: Number(l.tax_rate), periodStart: l.period_start, periodEnd: l.period_end })),
+      allocations: allocations.map((a) => ({ id: a.id, amountCents: a.amount_cents, bookedOn: a.booked_on, method: a.method, note: a.note, status: a.status })),
+      dunning: dunning.map((d) => ({ level: d.level, label: d.label, feeCents: d.fee_cents, at: d.created_at.toISOString(), feeInvoiceId: d.fee_invoice_id })),
+      cancelsInvoice: cancels ?? null,
+      cancelledBy: cancelledBy ?? null,
+      pdfSha256: row.pdf_sha256,
+      writtenOffReason: row.written_off_reason,
+      dunningHoldUntil: row.dunning_hold_until,
+      dunningHoldReason: row.dunning_hold_reason,
+    };
+  }
+
+  async function loadForWrite(tx: Db, actor: Actor, id: string) {
+    const inv = await tx.selectFrom('invoice').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
+    if (!inv) throw notFound('Rechnung');
+    if (inv.member_id) await loadMemberRow(tx, actor, inv.member_id, 'write');
+    return inv;
+  }
+
+  app.get('/invoices', { schema: { tags, summary: 'Rechnungen suchen und filtern', querystring: invoiceQuery, response: { 200: z.object({ items: z.array(invoiceListItem), total: z.number(), nextCursor: z.string().nullable(), sums: z.object({ totalCents: z.number(), openCents: z.number() }) }) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'read');
+    const today = await orgToday(db, actor.organizationId);
+    const f = req.query;
+    const filtered = () => {
+      let q = base(actor, today);
+      if (f.status === 'open') q = q.where('invoice.status', 'in', ['open', 'partially_paid']);
+      else if (f.status === 'overdue') q = q.where('invoice.status', 'in', ['open', 'partially_paid']).where('invoice.due_date', '<', today).where('invoice.kind', 'in', RECEIVABLE_KINDS);
+      else if (f.status !== 'all') q = q.where('invoice.status', '=', f.status);
+      if (f.memberId) q = q.where('invoice.member_id', '=', f.memberId);
+      if (f.feeRunId) q = q.where('invoice.fee_run_id', '=', f.feeRunId);
+      if (f.q) {
+        const like = `%${f.q.toLowerCase().replace(/[%_\\]/g, (c) => '\\' + c)}%`;
+        q = q.where((eb) => eb.or([eb(sql`lower(invoice.number)`, 'like', like), eb(sql`lower(unaccent(coalesce(person.last_name, '') || ' ' || coalesce(person.first_name, '') || ' ' || coalesce(person.company_name, '')))`, 'like', sql<string>`lower(unaccent(${like}))`)]));
+      }
+      return q;
+    };
+    const raw = f.cursor ? Buffer.from(f.cursor, 'base64url').toString() : '0';
+    const offset = /^\d{1,9}$/.test(raw) ? Number(raw) : 0;
+    const rows = await filtered().select(listColumns).orderBy(sql`invoice.status = 'draft'`, 'desc').orderBy('invoice.issue_date', sql`desc nulls first`).orderBy('invoice.number', 'desc').limit(f.limit).offset(offset).execute();
+    const agg = await filtered()
+      .select([sql<number>`count(*)::int`.as('n'), sql<number>`coalesce(sum(invoice.total_cents), 0)::bigint`.as('total'), sql<number>`coalesce(sum(case when invoice.status in ('open','partially_paid') then invoice.total_cents - invoice.paid_cents else 0 end), 0)::bigint`.as('open')])
+      .executeTakeFirstOrThrow();
+    return {
+      items: await toItems(rows, today),
+      total: agg.n,
+      nextCursor: offset + rows.length < agg.n ? Buffer.from(String(offset + rows.length)).toString('base64url') : null,
+      sums: { totalCents: agg.total, openCents: agg.open },
+    };
+  });
+
+  app.get('/invoices/:id', { schema: { tags, summary: 'Rechnung mit Positionen, Zahlungen und Mahnungen', params: idParam, response: { 200: invoiceDetail } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'read');
+    return detail(actor, req.params.id);
+  });
+
+  app.get('/invoices/:id/pdf', { schema: { tags, summary: 'PDF der ausgestellten Rechnung (immer dieselben Bytes)', params: idParam } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'read');
+    await detail(actor, req.params.id); // scope check
+    const { pdf, number } = await storedPdf(db, actor.organizationId, req.params.id);
+    reply.header('content-type', 'application/pdf').header('content-disposition', `inline; filename="${number}.pdf"`).header('cache-control', 'private, max-age=31536000, immutable');
+    return reply.send(pdf);
+  });
+
+  app.post('/invoices', { schema: { tags, summary: 'Rechnungsentwurf anlegen', body: invoiceCreate, response: { 201: invoiceDetail } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    const { row } = await loadMemberRow(db, actor, req.body.memberId, 'write');
+    const id = await db.transaction().execute(async (tx) => {
+      const id = await createDraft(tx, { organizationId: actor.organizationId, kind: req.body.kind, personId: row.person_id, memberId: row.id, dueDate: req.body.dueDate, coverText: req.body.coverText, createdBy: actor.userId }, req.body.lines);
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.drafted', entityType: 'invoice', entityId: id });
+      return id;
+    });
+    reply.status(201);
+    return detail(actor, id);
+  });
+
+  app.patch('/invoices/:id', { schema: { tags, summary: 'Entwurf ändern (ausgestellte Rechnungen sind unveränderlich)', params: idParam, body: invoicePatch, response: { 200: invoiceDetail } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    await db.transaction().execute(async (tx) => {
+      const inv = await loadForWrite(tx, actor, req.params.id);
+      if (inv.status !== 'draft') throw new Problem(409, 'immutable', 'Ausgestellte Rechnungen lassen sich nicht ändern. Erstelle eine Stornorechnung.');
+      await tx.updateTable('invoice').set({ ...(req.body.kind ? { kind: req.body.kind } : {}), ...(req.body.dueDate !== undefined ? { due_date: req.body.dueDate } : {}), ...(req.body.coverText !== undefined ? { cover_text: req.body.coverText } : {}), updated_at: new Date() }).where('id', '=', inv.id).execute();
+      if (req.body.lines) {
+        await tx.deleteFrom('invoice_line').where('invoice_id', '=', inv.id).execute();
+        await insertLines(tx, actor.organizationId, inv.id, req.body.lines);
+      }
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.draft_updated', entityType: 'invoice', entityId: inv.id });
+    });
+    return detail(actor, req.params.id);
+  });
+
+  app.delete('/invoices/:id', { schema: { tags, summary: 'Entwurf löschen', params: idParam, body: z.object({}).optional(), response: { 204: z.null() } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    await db.transaction().execute(async (tx) => {
+      const inv = await loadForWrite(tx, actor, req.params.id);
+      if (inv.status !== 'draft') throw new Problem(409, 'immutable', 'Nur Entwürfe lassen sich löschen.');
+      await tx.deleteFrom('invoice').where('id', '=', inv.id).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.draft_deleted', entityType: 'invoice', entityId: inv.id });
+    });
+    reply.status(204);
+    return null;
+  });
+
+  app.post('/invoices/:id/issue', { schema: { tags, summary: 'Entwurf ausstellen: fortlaufende Nummer, danach unveränderlich', params: idParam, body: z.object({ issueDate: z.iso.date().optional() }).optional(), response: { 200: invoiceDetail } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    const today = await orgToday(db, actor.organizationId);
+    await db.transaction().execute(async (tx) => {
+      const inv = await loadForWrite(tx, actor, req.params.id);
+      const r = await issueInvoice(tx, actor.organizationId, inv.id, req.body?.issueDate ?? today);
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.issued', entityType: 'invoice', entityId: inv.id, diff: { number: [null, r.number], totalCents: [null, r.total] } });
+    });
+    return detail(actor, req.params.id);
+  });
+
+  app.post('/invoices/:id/cancel', { schema: { tags, summary: 'Rechnung mit Stornorechnung aufheben', params: idParam, body: z.object({}).optional(), response: { 200: invoiceDetail } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    const today = await orgToday(db, actor.organizationId);
+    await db.transaction().execute(async (tx) => {
+      const inv = await loadForWrite(tx, actor, req.params.id);
+      const r = await cancelInvoice(tx, actor.organizationId, inv.id, today, actor.userId);
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.cancelled', entityType: 'invoice', entityId: inv.id, diff: { cancellation: [null, r.number] } });
+    });
+    return detail(actor, req.params.id);
+  });
+
+  app.post('/invoices/:id/payments', { schema: { tags, summary: 'Zahlungseingang von Hand erfassen (bar, Überweisung)', params: idParam, body: paymentInput, response: { 201: invoiceDetail } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    await db.transaction().execute(async (tx) => {
+      const inv = await loadForWrite(tx, actor, req.params.id);
+      if (!['open', 'partially_paid'].includes(inv.status)) throw new Problem(409, 'not-open', 'Auf diese Rechnung kann nichts mehr gebucht werden.');
+      const open = inv.total_cents - inv.paid_cents;
+      if (req.body.amountCents > open) {
+        throw new Problem(400, 'overpayment', 'Der Betrag ist höher als der offene Betrag.', `Offen sind ${(open / 100).toFixed(2).replace('.', ',')} €.`, { errors: [{ field: 'amountCents', message: 'Höher als der offene Betrag.' }] });
+      }
+      const a = await tx.insertInto('allocation').values({ organization_id: actor.organizationId, invoice_id: inv.id, amount_cents: req.body.amountCents, booked_on: req.body.bookedOn, method: req.body.method, note: req.body.note ?? null, created_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
+      await refreshPayment(tx, inv.id);
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.payment', entityType: 'invoice', entityId: inv.id, diff: { allocation: [null, a.id], amountCents: [null, req.body.amountCents] } });
+    });
+    reply.status(201);
+    return detail(actor, req.params.id);
+  });
+
+  app.post('/allocations/:id/reverse', { schema: { tags, summary: 'Zahlung oder Ausbuchung zurücknehmen', params: idParam, body: z.object({}).optional(), response: { 200: allocationDto } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    const a = await db.transaction().execute(async (tx) => {
+      const a = await tx.selectFrom('allocation').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
+      if (!a) throw notFound('Zahlung');
+      await loadForWrite(tx, actor, a.invoice_id);
+      if (a.status === 'reversed') throw new Problem(409, 'already-reversed', 'Die Zahlung ist bereits zurückgenommen.');
+      const r = await tx.updateTable('allocation').set({ status: 'reversed', reversed_at: new Date() }).where('id', '=', a.id).returningAll().executeTakeFirstOrThrow();
+      if (a.method === 'write_off') await tx.updateTable('invoice').set({ status: 'open', written_off_reason: null }).where('id', '=', a.invoice_id).execute();
+      await refreshPayment(tx, a.invoice_id);
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.payment_reversed', entityType: 'invoice', entityId: a.invoice_id, diff: { allocation: [a.id, null], amountCents: [a.amount_cents, 0] } });
+      return r;
+    });
+    return { id: a.id, amountCents: a.amount_cents, bookedOn: a.booked_on, method: a.method, note: a.note, status: a.status };
+  });
+
+  app.post('/invoices/:id/write-off', { schema: { tags, summary: 'Offenen Betrag als uneinbringlich ausbuchen', params: idParam, body: z.object({ reason: z.string().trim().min(3, 'Bitte gib einen Grund an.').max(300) }), response: { 200: invoiceDetail } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'write');
+    const today = await orgToday(db, actor.organizationId);
+    await db.transaction().execute(async (tx) => {
+      const inv = await loadForWrite(tx, actor, req.params.id);
+      if (!['open', 'partially_paid'].includes(inv.status) || !RECEIVABLE_KINDS.includes(inv.kind)) throw new Problem(409, 'not-open', 'Nur offene Forderungen lassen sich ausbuchen.');
+      const open = inv.total_cents - inv.paid_cents;
+      await tx.insertInto('allocation').values({ organization_id: actor.organizationId, invoice_id: inv.id, amount_cents: open, booked_on: today, method: 'write_off', note: req.body.reason, created_by: actor.userId }).execute();
+      await tx.updateTable('invoice').set({ written_off_reason: req.body.reason }).where('id', '=', inv.id).execute();
+      await refreshPayment(tx, inv.id);
+      await audit(tx, actor.organizationId, actor, { action: 'invoice.written_off', entityType: 'invoice', entityId: inv.id, diff: { openCents: [open, 0], reason: [null, req.body.reason] } });
+    });
+    return detail(actor, req.params.id);
+  });
+
+  // ---------- Dunning ----------
+
+  app.get('/dunning/proposal', { schema: { tags, summary: 'Rechnungen, die die nächste Mahnstufe erreicht haben', response: { 200: z.array(dunningProposal) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'read');
+    const today = await orgToday(db, actor.organizationId);
+    const org = await db.selectFrom('organization').select('dunning_levels').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+    const levels = [...org.dunning_levels].sort((a, b) => a.level - b.level);
+    const rows = await base(actor, today)
+      .select(listColumns)
+      .where('invoice.status', 'in', ['open', 'partially_paid'])
+      .where('invoice.kind', 'in', RECEIVABLE_KINDS)
+      .where('invoice.due_date', '<', today)
+      .where((eb) => eb.or([eb('invoice.dunning_hold_until', 'is', null), eb('invoice.dunning_hold_until', '<', today)]))
+      .orderBy('invoice.due_date')
+      .execute();
+    const items = await toItems(rows, today);
+    const out: z.infer<typeof dunningProposal>[] = [];
+    for (const it of items) {
+      const next = levels.find((l) => l.level > it.dunningLevel);
+      if (!next || !it.dueDate) continue;
+      const daysOverdue = Math.round((Date.parse(today) - Date.parse(it.dueDate)) / 86_400_000);
+      if (daysOverdue >= next.days) out.push({ invoice: it, nextLevel: next.level, label: next.label, feeCents: next.feeCents, daysOverdue });
+    }
+    return out;
+  });
+
+  app.post(
+    '/invoices/:id/dunning',
+    { schema: { tags, summary: 'Mahnstufe anwenden (Mahngebühr als eigene Rechnung). Versand ist ein eigener Schritt.', params: idParam, body: z.object({ level: z.number().int().min(1).max(9) }), response: { 200: invoiceDetail } } },
+    async (req) => {
+      const actor = requireActor(req);
+      requirePermission(actor, 'invoices', 'write');
+      const today = await orgToday(db, actor.organizationId);
+      await db.transaction().execute(async (tx) => {
+        const inv = await loadForWrite(tx, actor, req.params.id);
+        if (!['open', 'partially_paid'].includes(inv.status) || !RECEIVABLE_KINDS.includes(inv.kind)) throw new Problem(409, 'not-open', 'Nur offene Forderungen lassen sich mahnen.');
+        const org = await tx.selectFrom('organization').select(['dunning_levels', 'payment_terms_days']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+        const level = (org.dunning_levels as DunningLevel[]).find((l) => l.level === req.body.level);
+        if (!level) throw new Problem(400, 'unknown-level', 'Diese Mahnstufe ist nicht eingerichtet.');
+        const done = await tx.selectFrom('dunning_event').select(sql<number>`coalesce(max(level), 0)::int`.as('max')).where('invoice_id', '=', inv.id).executeTakeFirstOrThrow();
+        if (level.level <= done.max) throw new Problem(409, 'level-done', 'Diese Mahnstufe ist schon angewendet.');
+        let feeInvoiceId: string | null = null;
+        if (level.feeCents > 0) {
+          feeInvoiceId = await createDraft(
+            tx,
+            { organizationId: actor.organizationId, kind: 'dunning_fee', personId: inv.recipient_person_id, memberId: inv.member_id, dueDate: addDays(today, org.payment_terms_days), createdBy: actor.userId },
+            [{ text: `${level.label} zu Rechnung ${inv.number}`, quantity: 1, unitCents: level.feeCents, taxRate: 0 }],
+          );
+          await issueInvoice(tx, actor.organizationId, feeInvoiceId, today);
+        }
+        await tx.insertInto('dunning_event').values({ organization_id: actor.organizationId, invoice_id: inv.id, level: level.level, label: level.label, fee_cents: level.feeCents, fee_invoice_id: feeInvoiceId, created_by: actor.userId }).execute();
+        await audit(tx, actor.organizationId, actor, { action: 'invoice.dunning', entityType: 'invoice', entityId: inv.id, diff: { level: [done.max, level.level], feeCents: [null, level.feeCents] } });
+      });
+      return detail(actor, req.params.id);
+    },
+  );
+
+  app.post(
+    '/invoices/:id/dunning-hold',
+    { schema: { tags, summary: 'Mahnungen bis zu einem Datum aussetzen (z. B. Ratenzahlung)', params: idParam, body: z.object({ until: z.iso.date().nullable(), reason: z.string().trim().max(200).nullish() }), response: { 200: invoiceDetail } } },
+    async (req) => {
+      const actor = requireActor(req);
+      requirePermission(actor, 'invoices', 'write');
+      await db.transaction().execute(async (tx) => {
+        const inv = await loadForWrite(tx, actor, req.params.id);
+        if (req.body.until && !req.body.reason) throw new Problem(400, 'validation', 'Bitte gib einen Grund an.', undefined, { errors: [{ field: 'reason', message: 'Bitte gib einen Grund an.' }] });
+        await tx.updateTable('invoice').set({ dunning_hold_until: req.body.until, dunning_hold_reason: req.body.until ? (req.body.reason ?? null) : null }).where('id', '=', inv.id).execute();
+        await audit(tx, actor.organizationId, actor, { action: 'invoice.dunning_hold', entityType: 'invoice', entityId: inv.id, diff: { until: [inv.dunning_hold_until, req.body.until] } });
+      });
+      return detail(actor, req.params.id);
+    },
+  );
+};

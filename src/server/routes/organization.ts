@@ -14,7 +14,37 @@ const toDto = (o: Selectable<Database['organization']>) => ({
   memberNumberPattern: o.member_number_pattern,
   noticeWeeks: o.notice_weeks,
   exitAt: o.exit_at,
+  street: o.street,
+  postalCode: o.postal_code,
+  city: o.city,
+  email: o.email,
+  iban: o.iban,
+  bic: o.bic,
+  bankName: o.bank_name,
+  invoiceNumberPattern: o.invoice_number_pattern,
+  cancellationNumberPattern: o.cancellation_number_pattern,
+  paymentTermsDays: o.payment_terms_days,
+  dunningLevels: o.dunning_levels,
 });
+
+/** API field → column; only fields present in the body are written. */
+const COLUMNS = {
+  name: 'name',
+  memberNumberPattern: 'member_number_pattern',
+  noticeWeeks: 'notice_weeks',
+  exitAt: 'exit_at',
+  street: 'street',
+  postalCode: 'postal_code',
+  city: 'city',
+  email: 'email',
+  iban: 'iban',
+  bic: 'bic',
+  bankName: 'bank_name',
+  invoiceNumberPattern: 'invoice_number_pattern',
+  cancellationNumberPattern: 'cancellation_number_pattern',
+  paymentTermsDays: 'payment_terms_days',
+  dunningLevels: 'dunning_levels',
+} as const;
 
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -30,21 +60,20 @@ export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       requirePermission(actor, 'settings', 'write');
+      const values: Record<string, unknown> = {};
+      for (const [api, col] of Object.entries(COLUMNS)) {
+        const v = (req.body as Record<string, unknown>)[api];
+        if (v !== undefined) values[col] = col === 'dunning_levels' ? JSON.stringify(v) : v;
+      }
       return db.transaction().execute(async (tx) => {
         const before = await tx.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).forUpdate().executeTakeFirstOrThrow();
         const after = await tx
           .updateTable('organization')
-          .set({
-            ...(req.body.name !== undefined ? { name: req.body.name } : {}),
-            ...(req.body.memberNumberPattern !== undefined ? { member_number_pattern: req.body.memberNumberPattern } : {}),
-            ...(req.body.noticeWeeks !== undefined ? { notice_weeks: req.body.noticeWeeks } : {}),
-            ...(req.body.exitAt !== undefined ? { exit_at: req.body.exitAt } : {}),
-            updated_at: new Date(),
-          })
+          .set({ ...values, updated_at: new Date() })
           .where('id', '=', actor.organizationId)
           .returningAll()
           .executeTakeFirstOrThrow();
-        await audit(tx, actor.organizationId, actor, { action: 'organization.update', entityType: 'organization', entityId: after.id, diff: diffOf(before as Record<string, unknown>, { name: req.body.name, member_number_pattern: req.body.memberNumberPattern, notice_weeks: req.body.noticeWeeks, exit_at: req.body.exitAt }) });
+        await audit(tx, actor.organizationId, actor, { action: 'organization.update', entityType: 'organization', entityId: after.id, diff: diffOf(before as Record<string, unknown>, values) });
         return toDto(after);
       });
     },

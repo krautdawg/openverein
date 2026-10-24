@@ -192,7 +192,7 @@ export function Members({ me }: { me: Me }) {
         </div>
       )}
 
-      <MemberSheet id={openId ?? null} onClose={close} canWrite={canWrite} />
+      <MemberSheet id={openId ?? null} onClose={close} canWrite={canWrite} permissions={me.permissions} />
       {creating && <CreateMember onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); open(id); }} />}
     </div>
   );

@@ -42,3 +42,27 @@ export function formatDate(date: string | null | undefined) {
   const [y, m, d] = date.split('-');
   return `${d}.${m}.${y}`;
 }
+
+/** First day of the month `n` months after the month of `date`. */
+export function addMonths(date: string, n: number): string {
+  const d = parse(date);
+  return isoDate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)));
+}
+
+/** Same day-of-month `n` months later, clamped to the month's last day (31 Jan + 1 → 28/29 Feb). */
+export function addMonthsKeepDay(date: string, n: number): string {
+  const d = parse(date);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
+  const last = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d.getUTCDate(), last));
+  return isoDate(target);
+}
+
+/** Whole calendar months from the month of `a` to the month of `b` (0 when same month). */
+export const monthDiff = (a: string, b: string) => (Number(b.slice(0, 4)) - Number(a.slice(0, 4))) * 12 + (Number(b.slice(5, 7)) - Number(a.slice(5, 7)));
+
+/** Calendar months touched by the inclusive range [a, b]. */
+export const monthsTouched = (a: string, b: string) => monthDiff(a, b) + 1;
+
+export const minDate = (a: string, b: string) => (a < b ? a : b);
+export const maxDate = (a: string, b: string) => (a > b ? a : b);

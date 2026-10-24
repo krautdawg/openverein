@@ -14,3 +14,8 @@ Small decisions made while building, especially where the spec was ambiguous or 
 | 2026-10-24 | API tokens cannot create users, roles or tokens. | A leaked key must not be able to create lasting access. Scripts that need to manage people can be revisited later with an explicit permission. |
 | 2026-10-24 | An API token keeps working after the admin who created it is disabled. | Tokens belong to the club, not to a person; revoke them in Einstellungen → API-Schlüssel. |
 | 2026-10-24 | PR #2 was reviewed by the third counsel rung (headless Claude, Opus) because Codex was out of quota and the Gemini CLI needs an interactive login. | Lead's rule: never skip the review. Run `agy` once interactively to restore the Gemini rung. |
+| 2026-10-24 | Households, family discounts and credit-balance offset are deferred from the fees slice. | The fee engine and guards come first; households need the payer model and touch SEPA mandates (next slice). |
+| 2026-10-24 | Proration is by months only (no day-based proration). | Matches how clubs bill; day proration can be added to the engine later. |
+| 2026-10-24 | Recurring invoice templates and scheduled fee-run previews are deferred. | Need the job runner; manual runs cover the cycle. |
+| 2026-10-24 | Payments and write-offs do not post journal entries yet. | The bookkeeping slice adds the journal and posts from allocations. |
+| 2026-10-24 | Dunning levels are edited over the API only for now. | Defaults cover most clubs; a settings editor follows with the letter templates. |

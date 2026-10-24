@@ -7,12 +7,13 @@ import { api, ApiError } from '../lib/api.ts';
 import { todayLocal, useGroups } from '../lib/hooks.ts';
 import { CourtLines } from './CourtLines.tsx';
 import { InlineEdit } from './InlineEdit.tsx';
+import { MemberFees } from './MemberFees.tsx';
 import { Sheet } from './Sheet.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 
 const CHANNEL = { email: 'E-Mail', letter: 'Brief', none: 'Keine Post' } as const;
 
-export function MemberSheet({ id, onClose, canWrite }: { id: string | null; onClose: () => void; canWrite: boolean }) {
+export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: string | null; onClose: () => void; canWrite: boolean; permissions?: Record<string, string> }) {
   const qc = useQueryClient();
   const { data: m, error } = useQuery({ queryKey: ['member', id], queryFn: () => api<MemberDetail>(`/members/${id}`), enabled: !!id });
   const title = m ? displayName(m) : 'Mitglied';
@@ -100,6 +101,9 @@ export function MemberSheet({ id, onClose, canWrite }: { id: string | null; onCl
 
           <MembershipSection m={m} canWrite={canWrite} patch={patch} onChanged={refresh} />
           <GroupsSection m={m} canWrite={canWrite} onChanged={reload} />
+          {permissions.fees && permissions.fees !== 'none' && (
+            <MemberFees memberId={m.id} joinDate={m.joinDate} canWrite={permissions.fees === 'write'} canSeeInvoices={!!permissions.invoices && permissions.invoices !== 'none'} />
+          )}
 
           <section className="sheet-section" aria-labelledby="s-history">
             <h3 id="s-history">Verlauf</h3>
