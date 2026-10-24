@@ -40,8 +40,12 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     return new Map(rows.map((r) => [r.id, r]));
   }
 
-  /** No escalation: nobody hands out (or defines) more than they hold themselves, module by module. */
-  function assertNotAbove(actor: Actor, permissions: Record<string, Level>, scopeGroupIds?: string[] | null) {
+  /** No escalation: nobody hands out (or defines) more than they hold themselves, module by module and field by field. */
+  function assertNotAbove(actor: Actor, permissions: Record<string, Level>, scopeGroupIds?: string[] | null, restricted?: string[]) {
+    if (restricted) {
+      const hidden = [...restrictedFields(actor)].filter((f) => !restricted.includes(f));
+      if (hidden.length) throw forbidden(`members.field.${hidden[0]} (Feld, das Du selbst nicht siehst)`);
+    }
     for (const m of MODULES) {
       const wanted = permissions[m] ?? 'none';
       if (RANK[wanted] > RANK[level(actor, m)]) throw forbidden(`${m}:${wanted} (mehr Rechte, als Du selbst hast)`);
@@ -56,13 +60,26 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     for (const g of grants) {
       const role = roles.get(g.roleId);
       if (!role) throw notFound('Rolle');
-      assertNotAbove(actor, role.permissions, g.scopeGroupIds);
+      assertNotAbove(actor, role.permissions, g.scopeGroupIds, role.restricted_fields);
       if (g.scopeGroupIds?.length) {
         const n = await db.selectFrom('club_group').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', actor.organizationId).where('id', 'in', g.scopeGroupIds).executeTakeFirstOrThrow();
         if (n.n !== new Set(g.scopeGroupIds).size) throw notFound('Gruppe');
       }
     }
   }
+
+  /** People and role definitions are managed by people: a leaked API key must not create accounts or roles. */
+  function assertHuman(actor: Actor) {
+    if (actor.kind === 'token') throw forbidden('settings:write (nur angemeldete Zugänge, keine API-Schlüssel)');
+  }
+
+  /** Acting on another user (role change, lock, invite) needs at least that user's current rights. */
+  async function assertCanManage(actor: Actor, targetId: string) {
+    for (const g of await loadGrants(db, targetId)) assertNotAbove(actor, g.permissions as Record<string, Level>, g.scope, g.restricted);
+  }
+
+  /** Serialises user and role changes per organisation, so two parallel demotions cannot remove the last admin. */
+  const lockOrg = (tx: Db, organizationId: string) => tx.selectFrom('organization').select('id').where('id', '=', organizationId).forUpdate().execute();
 
   async function userDto(id: string) {
     const u = await db.selectFrom('app_user').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
@@ -101,6 +118,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       .where('role.builtin_key', '=', 'admin')
       .where('role_grant.scope_group_ids', 'is', null)
       .where('app_user.status', '=', 'active')
+      .where('app_user.password_hash', 'is not', null)
       .executeTakeFirstOrThrow();
     if (n.n === 0) throw new Problem(409, 'last-admin', 'Mindestens ein aktiver Zugang muss die Rolle Admin für den ganzen Verein behalten.');
   }
@@ -124,8 +142,9 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/roles', { schema: { tags: ['access'], summary: 'Eigene Rolle anlegen (z. B. als Kopie einer eingebauten)', body: roleCreate, response: { 201: role } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
-    assertNotAbove(actor, req.body.permissions);
+    assertHuman(actor);
     const fields = req.body.restrictedFields.filter((f) => (RESTRICTABLE_FIELDS as readonly string[]).includes(f));
+    assertNotAbove(actor, req.body.permissions, null, fields);
     const r = await db.transaction().execute(async (tx) => {
       const r = await tx
         .insertInto('role')
@@ -145,12 +164,15 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     const before = (await rolesById(actor)).get(req.params.id);
     if (!before) throw notFound('Rolle');
     if (before.builtin_key) throw new Problem(409, 'builtin-role', 'Eingebaute Rollen lassen sich nicht ändern. Lege eine Kopie an.');
-    if (req.body.permissions) assertNotAbove(actor, req.body.permissions);
+    assertHuman(actor);
+    assertNotAbove(actor, before.permissions, null, before.restricted_fields);
+    if (req.body.permissions || req.body.restrictedFields) assertNotAbove(actor, req.body.permissions ?? before.permissions, null, req.body.restrictedFields ?? before.restricted_fields);
     const values: Record<string, unknown> = {};
     if (req.body.name) values.name = req.body.name;
     if (req.body.permissions) values.permissions = JSON.stringify(normalisePermissions(req.body.permissions));
     if (req.body.restrictedFields) values.restricted_fields = req.body.restrictedFields.filter((f) => (RESTRICTABLE_FIELDS as readonly string[]).includes(f));
     const r = await db.transaction().execute(async (tx) => {
+      await lockOrg(tx, actor.organizationId);
       const r = await tx.updateTable('role').set(values).where('id', '=', before.id).returningAll().executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'role.updated', entityType: 'role', entityId: r.id, diff: { permissions: [before.permissions, r.permissions], restrictedFields: [before.restricted_fields, r.restricted_fields] } });
       await assertAdminRemains(tx, actor.organizationId);
@@ -162,6 +184,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.delete('/roles/:id', { schema: { tags: ['access'], summary: 'Eigene Rolle löschen, wenn sie niemandem zugewiesen ist', params: idParam, body: z.object({}).optional(), response: { 204: z.null() } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    assertHuman(actor);
     const r = (await rolesById(actor)).get(req.params.id);
     if (!r) throw notFound('Rolle');
     if (r.builtin_key) throw new Problem(409, 'builtin-role', 'Eingebaute Rollen lassen sich nicht löschen.');
@@ -188,6 +211,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/users', { schema: { tags: ['access'], summary: 'Zugang anlegen und Einladungslink erzeugen (Link wird nur einmal angezeigt)', body: userCreate, response: { 201: inviteResult } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    assertHuman(actor);
     await checkGrants(actor, req.body.grants);
     const result = await db.transaction().execute(async (tx) => {
       const u = await tx.insertInto('app_user').values({ organization_id: actor.organizationId, email: req.body.email, name: req.body.name, password_hash: null }).returningAll().executeTakeFirstOrThrow();
@@ -204,7 +228,11 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/users/:id/invite', { schema: { tags: ['access'], summary: 'Neuen Einladungslink erzeugen (der alte wird ungültig)', params: idParam, body: z.object({}).optional(), response: { 200: inviteResult } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
+    // An invitation is not a password reset: once the user has set a password, no new link.
+    if (u.password_hash) throw new Problem(409, 'already-active', 'Der Zugang ist schon eingerichtet.');
+    await assertCanManage(actor, u.id);
     const invite = await db.transaction().execute(async (tx) => {
       const invite = await newInvite(tx, u.id);
       await audit(tx, actor.organizationId, actor, { action: 'user.invited', entityType: 'app_user', entityId: u.id });
@@ -216,10 +244,13 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.patch('/users/:id', { schema: { tags: ['access'], summary: 'Zugang ändern: Name, sperren/entsperren, Rollen', params: idParam, body: userPatch, response: { 200: user } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
+    await assertCanManage(actor, u.id);
     if (req.body.status === 'disabled' && u.id === actor.userId) throw new Problem(409, 'self-disable', 'Du kannst Deinen eigenen Zugang nicht sperren.');
     if (req.body.grants) await checkGrants(actor, req.body.grants);
     await db.transaction().execute(async (tx) => {
+      await lockOrg(tx, actor.organizationId);
       const before = await userDto(u.id);
       if (req.body.name || req.body.status) {
         await tx.updateTable('app_user').set({ ...(req.body.name ? { name: req.body.name } : {}), ...(req.body.status ? { status: req.body.status } : {}), updated_at: new Date() }).where('id', '=', u.id).execute();
@@ -335,6 +366,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/audit-events', { schema: { tags: ['access'], summary: 'Änderungsprotokoll (neueste zuerst)', querystring: auditQuery, response: { 200: z.object({ items: z.array(auditEvent), nextCursor: z.number().nullable() }) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'audit', 'read');
+    // The log covers the whole club, so a grant limited to some groups cannot read it.
+    if (scopeOf(actor, 'audit', 'read') !== null) throw forbidden('audit:read (für den ganzen Verein)');
     let q = db.selectFrom('audit_event').selectAll().where('organization_id', '=', actor.organizationId);
     if (req.query.entityType) q = q.where('entity_type', '=', req.query.entityType);
     if (req.query.entityId) q = q.where('entity_id', '=', req.query.entityId);

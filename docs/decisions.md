@@ -11,3 +11,6 @@ Small decisions made while building, especially where the spec was ambiguous or 
 | 2026-10-24 | Custom fields, households, duplicate detection, saved views and XLSX export are deferred from slice 1. | They belong with the slices that need them (fees for households, import for duplicates); slice 1 stays reviewable. |
 | 2026-10-24 | Bulk actions run synchronously (max 5,000 ids). | No job runner yet; background jobs arrive with the fee run. |
 | 2026-10-24 | Member status refresh runs hourly, not nightly. | Same result, heals missed runs, no scheduler needed. |
+| 2026-10-24 | API tokens cannot create users, roles or tokens. | A leaked key must not be able to create lasting access. Scripts that need to manage people can be revisited later with an explicit permission. |
+| 2026-10-24 | An API token keeps working after the admin who created it is disabled. | Tokens belong to the club, not to a person; revoke them in Einstellungen → API-Schlüssel. |
+| 2026-10-24 | PR #2 was reviewed by the third counsel rung (headless Claude, Opus) because Codex was out of quota and the Gemini CLI needs an interactive login. | Lead's rule: never skip the review. Run `agy` once interactively to restore the Gemini rung. |

@@ -11,15 +11,16 @@ export async function orgToday(db: Db, organizationId: string) {
 }
 
 /**
- * Division scope as SQL. Reading: a current membership in a scoped group, or one that ended within
- * the last 12 months. Writing: a current membership only.
+ * Division scope as SQL. Reading: a current or upcoming membership in a scoped group, or one that ended
+ * within the last 12 months. Writing: a current or upcoming membership only. Memberships end at the
+ * member's exit date, so former members drop out of scope 12 months after leaving.
  */
 export function scopePredicate(groups: string[], today: string, mode: 'read' | 'write') {
   const window = mode === 'read' ? sql`${today}::date - interval '12 months'` : sql`${today}::date`;
   return sql<boolean>`exists (
     select 1 from group_membership gm
     where gm.member_id = member.id and gm.group_id = any(${groups}::uuid[])
-      and gm.valid_from <= ${today}::date and (gm.valid_to is null or gm.valid_to >= ${window}))`;
+      and (gm.valid_to is null or gm.valid_to >= ${window}))`;
 }
 
 export function applyScope(actor: Actor, today: string, mode: 'read' | 'write') {

@@ -18,6 +18,12 @@ const optText = (max: number) => z.string().trim().max(max).nullish().transform(
 
 const POSTAL: Record<string, RegExp> = { DE: /^\d{5}$/, AT: /^\d{4}$/, CH: /^\d{4}$/ };
 
+export function postalCodeProblem(postalCode: string | null | undefined, country: string | null | undefined) {
+  const re = POSTAL[country ?? 'DE'];
+  if (!postalCode || !re || re.test(postalCode)) return null;
+  return (country ?? 'DE') === 'DE' ? 'Die PLZ hat in Deutschland 5 Ziffern.' : 'Die PLZ hat in Österreich und der Schweiz 4 Ziffern.';
+}
+
 /** Person fields shared by create and update. Restricted fields may be absent in responses. */
 const personBase = z.object({
   kind: z.enum(['natural', 'organisation']),
@@ -48,10 +54,10 @@ function checkPerson(p: { kind?: string; lastName?: string | null; companyName?:
       ctx.addIssue({ code: 'custom', path: [p.kind === 'organisation' ? 'companyName' : 'lastName'], message: 'Pflichtfeld.' });
     }
   }
-  const re = POSTAL[p.country ?? 'DE'];
-  if (p.postalCode && re && !re.test(p.postalCode)) {
-    ctx.addIssue({ code: 'custom', path: ['postalCode'], message: p.country === 'DE' || !p.country ? 'Die PLZ hat in Deutschland 5 Ziffern.' : 'Die PLZ hat in Österreich und der Schweiz 4 Ziffern.' });
-  }
+  // On partial updates without a country, the route checks against the stored country.
+  if (partial && p.country === undefined) return;
+  const problem = postalCodeProblem(p.postalCode, p.country);
+  if (problem) ctx.addIssue({ code: 'custom', path: ['postalCode'], message: problem });
 }
 
 export const memberCreate = personFields
@@ -135,7 +141,7 @@ export const memberListQuery = z.object({
   q: z.string().trim().max(100).optional(),
   status: z.union([memberStatus, z.array(memberStatus)]).optional(),
   groupId: z.uuid().optional(),
-  includeFormer: z.coerce.boolean().optional(),
+  includeFormer: z.stringbool().optional(),
   sort: z.enum(['name', 'number', 'joinDate']).default('name'),
   cursor: z.string().max(40).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

@@ -11,6 +11,7 @@ import {
   memberList,
   memberListQuery,
   memberPatch,
+  postalCodeProblem,
   resignBody,
   STATUS_LABEL,
   type MemberStatus,
@@ -112,7 +113,8 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'members', 'read');
     const today = await orgToday(db, actor.organizationId);
     // shortcut: the cursor is an opaque offset; switch to keyset pagination if lists grow past ~50k rows.
-    const offset = req.query.cursor ? Number(Buffer.from(req.query.cursor, 'base64url').toString()) || 0 : 0;
+    const raw = req.query.cursor ? Buffer.from(req.query.cursor, 'base64url').toString() : '0';
+    const offset = /^\d{1,9}$/.test(raw) ? Number(raw) : 0;
     const order = { name: ['person.last_name', 'person.first_name', 'person.company_name'], number: ['member.membership_number'], joinDate: ['member.join_date'] }[req.query.sort];
     let query = listFilter(req.query, actor, today)(db).select([...memberColumns, sql<number>`count(*) over()`.as('total')]);
     for (const col of order) query = query.orderBy(sql.ref(col), sql`asc nulls last`);
@@ -187,7 +189,8 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
         .returning('id')
         .executeTakeFirstOrThrow();
       const status: MemberStatus = req.body.joinDate ? statusForJoin(req.body.joinDate, today) : 'applicant';
-      const number = req.body.membershipNumber ?? (await nextNumber(tx, actor.organizationId, 'member', org.member_number_pattern, req.body.joinDate ?? today));
+      const taken = async (n: string) => !!(await tx.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('membership_number', '=', n).executeTakeFirst());
+      const number = req.body.membershipNumber ?? (await nextNumber(tx, actor.organizationId, 'member', org.member_number_pattern, req.body.joinDate ?? today, taken));
       const member = await tx
         .insertInto('member')
         .values({
@@ -220,6 +223,10 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
       const body = req.body;
       assertWritable(actor, body);
       const { row, today } = await loadMemberRow(db, actor, req.params.id, 'write');
+      const postalProblem = postalCodeProblem(body.postalCode ?? row.postal_code, body.country ?? row.country);
+      if ((body.postalCode !== undefined || body.country !== undefined) && postalProblem) {
+        throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'postalCode', message: postalProblem }] });
+      }
       await db.transaction().execute(async (tx) => {
         const person = personValues(body);
         if (Object.keys(person).length) {
@@ -244,15 +251,25 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   /** Shared body of the dated status transitions. */
-  async function transition(actor: Actor, id: string, allowed: MemberStatus[], change: (row: Awaited<ReturnType<typeof loadMemberRow>>['row'], today: string) => Record<string, unknown> & { status: MemberStatus }, action: string) {
+  async function transition(
+    actor: Actor,
+    id: string,
+    allowed: MemberStatus[],
+    change: (row: Awaited<ReturnType<typeof loadMemberRow>>['row'], today: string) => Record<string, unknown> & { status: MemberStatus },
+    action: string,
+    after?: (tx: Db, row: Awaited<ReturnType<typeof loadMemberRow>>['row'], values: Record<string, unknown>) => Promise<void>,
+  ) {
     requirePermission(actor, 'members', 'write');
     const { row, today } = await loadMemberRow(db, actor, id, 'write');
-    if (!allowed.includes(row.status)) {
-      throw new Problem(409, 'invalid-transition', `Das geht nicht bei Status „${STATUS_LABEL[row.status]}“.`);
-    }
-    const values = change(row, today);
     await db.transaction().execute(async (tx) => {
+      // Re-read the status under a row lock: two parallel actions (admit and reject) cannot both pass.
+      const locked = await tx.selectFrom('member').select('status').where('id', '=', row.id).forUpdate().executeTakeFirstOrThrow();
+      if (!allowed.includes(locked.status)) {
+        throw new Problem(409, 'invalid-transition', `Das geht nicht bei Status „${STATUS_LABEL[locked.status]}“.`);
+      }
+      const values = change({ ...row, status: locked.status }, today);
       await tx.updateTable('member').set({ ...values, updated_at: new Date() }).where('id', '=', row.id).execute();
+      await after?.(tx, row, values);
       await audit(tx, actor.organizationId, actor, { action, entityType: 'member', entityId: row.id, diff: diffOf(row as Record<string, unknown>, values) });
     });
   }
@@ -271,6 +288,8 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
         return { status: exitDate < today ? 'former' : 'resigned', notice_date: noticeDate, exit_date: exitDate, exit_reason: exitReason };
       },
       'member.resigned',
+      // Group memberships end with the membership.
+      (tx, row) => tx.updateTable('group_membership').set({ valid_to: exitDate }).where('member_id', '=', row.id).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>', exitDate)])).where('valid_from', '<=', exitDate).execute().then(() => undefined),
     );
     const warn = exitDate < proposal ? [`Das Austrittsdatum liegt vor dem frühesten Termin laut Satzung (${proposal}).`] : [];
     return memberDetail(db, actor, req.params.id, warn);
@@ -278,7 +297,15 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/members/:id/withdraw-resignation', { schema: { tags, summary: 'Kündigung zurücknehmen', params: idParam, body: z.object({}).optional(), response: { 200: memberDetailSchema } } }, async (req) => {
     const actor = requireActor(req);
-    await transition(actor, req.params.id, ['resigned'], (row, today) => ({ status: statusForJoin(row.join_date!, today), notice_date: null, exit_date: null, exit_reason: null }), 'member.resignation_withdrawn');
+    await transition(
+      actor,
+      req.params.id,
+      ['resigned'],
+      (row, today) => ({ status: statusForJoin(row.join_date!, today), notice_date: null, exit_date: null, exit_reason: null }),
+      'member.resignation_withdrawn',
+      // Reopen the group memberships that the resignation closed.
+      (tx, row) => tx.updateTable('group_membership').set({ valid_to: null }).where('member_id', '=', row.id).where('valid_to', '=', row.exit_date!).execute().then(() => undefined),
+    );
     return memberDetail(db, actor, req.params.id);
   });
 

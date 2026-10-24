@@ -138,9 +138,11 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .where('invite_token_hash', '=', sha256(req.body.token))
           .where('invite_expires_at', '>', new Date())
           .where('status', '=', 'active')
+          .where('password_hash', 'is', null)
           .returningAll()
           .executeTakeFirst();
         if (!u) throw new Problem(400, 'invalid-invite', 'Der Einladungslink ist ungültig oder abgelaufen.');
+        await tx.deleteFrom('session').where('user_id', '=', u.id).execute();
         await audit(tx, u.organization_id, userActor(u), { action: 'auth.invite_accepted', entityType: 'app_user', entityId: u.id });
         return { user: u, token: await insertSession(tx, u.id, req.headers['user-agent']) };
       });

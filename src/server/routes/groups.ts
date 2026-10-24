@@ -67,11 +67,14 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!parentId) return;
     if (parentId === selfId) throw new Problem(400, 'invalid-parent', 'Eine Gruppe kann nicht ihre eigene Obergruppe sein.');
     const parent = await loadGroup(actor, parentId);
-    // One level of nesting is enough (spec): a parent must not have a parent itself.
+    // One level of nesting is enough (spec): a parent must not have a parent, and a parent cannot become a child.
     if (parent.parent_id) throw new Problem(400, 'invalid-parent', 'Obergruppen dürfen selbst keine Obergruppe haben.');
+    if (selfId && (await db.selectFrom('club_group').select('id').where('parent_id', '=', selfId).executeTakeFirst())) {
+      throw new Problem(400, 'invalid-parent', 'Diese Gruppe hat Untergruppen und kann deshalb keiner Obergruppe angehören.');
+    }
   }
 
-  app.get('/groups', { schema: { tags, summary: 'Gruppen und Abteilungen mit aktueller Mitgliederzahl', querystring: z.object({ includeArchived: z.coerce.boolean().optional() }), response: { 200: z.array(group) } } }, async (req) => {
+  app.get('/groups', { schema: { tags, summary: 'Gruppen und Abteilungen mit aktueller Mitgliederzahl', querystring: z.object({ includeArchived: z.stringbool().optional() }), response: { 200: z.array(group) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'groups', 'read');
     const today = await orgToday(db, actor.organizationId);

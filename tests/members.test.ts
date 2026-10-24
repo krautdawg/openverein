@@ -231,3 +231,71 @@ describe('no privilege escalation', () => {
     expect((await clerk.post('/users', { name: 'Kumpel', email: 'k@example.org', grants: [{ roleId: custom.body.id }] })).status).toBe(201);
   });
 });
+
+describe('review fixes', () => {
+  it('invites are not password resets and tokens cannot manage people', async () => {
+    const roles = (await admin.get('/roles')).body;
+    const adminRole = roles.find((r: { name: string }) => r.name === 'Admin');
+    const all = Object.fromEntries(Object.keys(adminRole.permissions).map((m) => [m, 'read']));
+    const clerkRole = await admin.post('/roles', { name: 'Schriftführung', permissions: { ...all, settings: 'write' } });
+    const created = await admin.post('/users', { name: 'Sabine', email: 'sabine@example.org', grants: [{ roleId: clerkRole.body.id }] });
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
+    const clerk = client(ctx.app, { cookie: `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}` });
+    const me = (await admin.get('/auth/me')).body;
+    expect((await clerk.post(`/users/${me.id}/invite`)).status).toBe(409);
+    expect((await clerk.patch(`/users/${me.id}`, { status: 'disabled' })).status).toBe(403);
+    expect((await clerk.post('/roles', { name: 'Ohne Grenzen', permissions: all, restrictedFields: [] })).status).toBe(201);
+
+    const token = await admin.post('/api-tokens', { name: 'Skript', roleId: adminRole.id });
+    const api = client(ctx.app, { token: token.body.token });
+    expect((await api.post('/users', { name: 'Fremd', email: 'f@example.org', grants: [{ roleId: adminRole.id }] })).status).toBe(403);
+    expect((await api.post('/roles', { name: 'API-Rolle', permissions: all })).status).toBe(403);
+  });
+
+  it('a role cannot reveal fields the creator does not see', async () => {
+    const roles = (await admin.get('/roles')).body;
+    const trainer = roles.find((r: { name: string }) => r.name === 'Trainer:in');
+    const custom = await admin.post('/roles', { name: 'Trainer plus', permissions: { ...trainer.permissions, settings: 'write' }, restrictedFields: ['note'] });
+    const created = await admin.post('/users', { name: 'Tom', email: 'tom@example.org', grants: [{ roleId: custom.body.id }] });
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
+    const tom = client(ctx.app, { cookie: `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}` });
+    expect((await tom.post('/roles', { name: 'Alles sehen', permissions: trainer.permissions, restrictedFields: [] })).status).toBe(403);
+  });
+
+  it('skips member numbers that already exist', async () => {
+    await member({ membershipNumber: '0002', lastName: 'Hand' });
+    const a = await member({ lastName: 'A' });
+    const b = await member({ lastName: 'B' });
+    expect([a.membershipNumber, b.membershipNumber]).toEqual(['0001', '0003']);
+    expect((await admin.patch('/organization', { memberNumberPattern: 'M-{seqx}' })).status).toBe(400);
+  });
+
+  it('former members leave the division scope; future members are in scope at once', async () => {
+    const tennis = await group('Tennis', 'TEN');
+    const old = await member({ lastName: 'Ehemalig', joinDate: '2010-01-01', groupIds: [tennis] });
+    await admin.post(`/members/${old.id}/resign`, { noticeDate: '2020-01-01', exitDate: '2020-12-31' });
+    const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Abteilungsleitung', [tennis]) });
+    expect((await lead.get(`/members/${old.id}`)).status).toBe(404);
+    const future = new Date(Date.now() + 40 * 86_400_000).toISOString().slice(0, 10);
+    const created = await lead.post('/members', { lastName: 'Bald', joinDate: future, groupIds: [tennis] });
+    expect(created.status).toBe(201);
+    expect(created.body.status).toBe('future');
+    expect((await admin.get('/members?includeFormer=false')).body.items.map((m: { lastName: string }) => m.lastName)).not.toContain('Ehemalig');
+  });
+
+  it('parallel admit and reject: exactly one wins', async () => {
+    const m = await member({ joinDate: null, lastName: 'Antrag' });
+    const [x, y] = await Promise.all([admin.post(`/members/${m.id}/admit`, { joinDate: '2026-01-01' }), admin.post(`/members/${m.id}/reject`)]);
+    expect([x.status, y.status].sort()).toEqual([200, 409]);
+  });
+
+  it('withdrawing a resignation reopens the group memberships', async () => {
+    const g = await group('Turnen', 'TU');
+    const m = await member({ groupIds: [g] });
+    const exit = new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
+    const r = await admin.post(`/members/${m.id}/resign`, { noticeDate: today(), exitDate: exit });
+    expect(r.body.memberships[0].validTo).toBe(exit);
+    const w = await admin.post(`/members/${m.id}/withdraw-resignation`);
+    expect(w.body.memberships[0].validTo).toBeNull();
+  });
+});

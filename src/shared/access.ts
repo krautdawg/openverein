@@ -36,7 +36,7 @@ export const roleCreate = z.object({
   restrictedFields: z.array(z.string()).default([]),
 });
 
-export const grantInput = z.object({ roleId: z.uuid(), scopeGroupIds: z.array(z.uuid()).max(100).nullish() });
+export const grantInput = z.object({ roleId: z.uuid(), scopeGroupIds: z.array(z.uuid()).min(1, 'Mindestens eine Gruppe oder keine Beschränkung (null).').max(100).nullish() });
 
 export const user = z.object({
   id: z.uuid(),
@@ -72,7 +72,7 @@ export const apiToken = z.object({
 export const apiTokenCreate = z.object({
   name: z.string().trim().min(2).max(80),
   roleId: z.uuid(),
-  scopeGroupIds: z.array(z.uuid()).nullish(),
+  scopeGroupIds: z.array(z.uuid()).min(1).nullish(),
   expiresInDays: z.number().int().min(1).max(365).default(365),
 });
 
