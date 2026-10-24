@@ -3,6 +3,10 @@ import pg from 'pg';
 
 // DATE columns stay strings ("2026-03-01"): legal dates must never shift with time zones.
 pg.types.setTypeParser(1082, (v) => v);
+// TIMESTAMP WITHOUT TIME ZONE (event wall-clock times) stays a string too.
+pg.types.setTypeParser(1114, (v) => v);
+// DATE[] (exdates) as string arrays.
+pg.types.setTypeParser(1182 as never, (v: string) => (v === '{}' ? [] : v.slice(1, -1).split(',')));
 // BIGINT (money in cents, counts) fits a JS number for every realistic club amount.
 pg.types.setTypeParser(20, (v) => Number(v));
 
@@ -462,6 +466,53 @@ export interface ReturnDebitTable {
   created_at: Timestamp;
 }
 
+export interface CalendarTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  color: Generated<string>;
+  group_ids: string[] | null;
+  feed_token_hash: string | null;
+  created_at: Timestamp;
+}
+
+/** Wall-clock timestamps in the club's time zone, kept as 'YYYY-MM-DD HH:MM:SS' strings. */
+export interface EventTable {
+  id: Generated<string>;
+  organization_id: string;
+  calendar_id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string;
+  all_day: Generated<boolean>;
+  rrule: string | null;
+  exdates: Generated<string[]>;
+  max_participants: number | null;
+  rsvp: Generated<boolean>;
+  registration_closes_hours: number | null;
+  price_cents: number | null;
+  created_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export type ParticipationStatus = 'yes' | 'maybe' | 'no' | 'waitlist' | 'attended' | 'not_attended';
+export interface ParticipationTable {
+  id: Generated<string>;
+  organization_id: string;
+  event_id: string;
+  occurrence_date: string;
+  member_id: string;
+  status: ParticipationStatus;
+  waitlisted_at: Date | null;
+  invoice_id: string | null;
+  updated_by: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -493,6 +544,9 @@ export interface Database {
   bank_statement_import: BankStatementImportTable;
   bank_transaction: BankTransactionTable;
   return_debit: ReturnDebitTable;
+  calendar: CalendarTable;
+  event: EventTable;
+  participation: ParticipationTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

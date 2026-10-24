@@ -11,6 +11,7 @@ import { Groups } from './pages/Groups.tsx';
 import { FeePlans } from './pages/Fees.tsx';
 import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
 import { Dunning, Invoices } from './pages/Invoices.tsx';
+import { Events } from './pages/Events.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
@@ -60,6 +61,8 @@ export function App() {
         <Route path="/mitglieder/:id" element={<Members me={me.data} />} />
         <Route path="/gruppen" element={<Groups me={me.data} />} />
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
+        <Route path="/termine" element={<Events me={me.data} />} />
+        <Route path="/termine/:id/:date" element={<Events me={me.data} />} />
         <Route path="/beitraege" element={<FeePlans me={me.data} />} />
         <Route path="/beitraege/laeufe" element={<FeeRuns me={me.data} />} />
         <Route path="/beitraege/laeufe/:id" element={<FeeRunDetail me={me.data} />} />
