@@ -38,7 +38,7 @@ export function textToHtml(text: string) {
     .join('\n');
 }
 
-export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received';
+export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | 'application_received' | 'application_accepted' | 'application_rejected';
 export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject: string; body: string }> = {
   invoice: {
     name: 'Rechnung',
@@ -64,6 +64,21 @@ export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject
     name: 'Änderungswunsch entschieden',
     subject: 'Deine Änderung bei {{verein}}',
     body: 'Hallo {{vorname}},\n\n{{entscheidung}}\n\nViele Grüße\n{{verein}}',
+  },
+  application_received: {
+    name: 'Aufnahmeantrag eingegangen',
+    subject: 'Dein Aufnahmeantrag bei {{verein}}',
+    body: 'Hallo {{vorname}},\n\ndanke für Deinen Antrag! Im Anhang findest Du eine Kopie davon. Der Vorstand meldet sich, sobald er entschieden hat.\n\nViele Grüße\n{{verein}}',
+  },
+  application_accepted: {
+    name: 'Aufnahme bestätigt',
+    subject: 'Willkommen bei {{verein}}',
+    body: 'Hallo {{vorname}},\n\nwillkommen im Verein! Deine Mitgliedsnummer ist {{mitgliedsnummer}}.{{entscheidung}}\n\nViele Grüße\n{{verein}}',
+  },
+  application_rejected: {
+    name: 'Aufnahme abgelehnt',
+    subject: 'Dein Aufnahmeantrag bei {{verein}}',
+    body: 'Hallo {{vorname}},\n\nleider können wir Deinen Antrag nicht annehmen. {{entscheidung}}\n\nViele Grüße\n{{verein}}',
   },
   resignation_received: {
     name: 'Kündigung bestätigt',

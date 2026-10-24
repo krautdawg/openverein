@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { PortalApp } from './portal/Portal.tsx';
+import { ApplicationForm } from './pages/ApplicationForm.tsx';
 import { Shell } from './components/Shell.tsx';
 import { api } from './lib/api.ts';
 import { useInstanceConfig, useMe } from './lib/session.tsx';
@@ -17,6 +18,8 @@ import { Events } from './pages/Events.tsx';
 import { Communication } from './pages/Communication.tsx';
 import { Documents } from './pages/Documents.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
+import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
+import { Applications } from './pages/Applications.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
@@ -29,7 +32,9 @@ import './lib/search.ts';
 
 /** The member portal is its own small app with its own sign-in; everything else is the admin app. */
 export function App() {
-  return useLocation().pathname.startsWith('/portal') ? <PortalApp /> : <AdminApp />;
+  const { pathname } = useLocation();
+  if (pathname.startsWith('/aufnahme/')) return <Routes><Route path="/aufnahme/:slug" element={<ApplicationForm />} /></Routes>;
+  return pathname.startsWith('/portal') ? <PortalApp /> : <AdminApp />;
 }
 
 function AdminApp() {
@@ -74,6 +79,8 @@ function AdminApp() {
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
         <Route path="/termine" element={<Events me={me.data} />} />
         <Route path="/termine/:id/:date" element={<Events me={me.data} />} />
+        <Route path="/antraege" element={<Applications me={me.data} />} />
+        <Route path="/antraege/:id" element={<Applications me={me.data} />} />
         <Route path="/kommunikation" element={<Communication me={me.data} />} />
         <Route path="/dokumente" element={<Documents me={me.data} />} />
         <Route path="/dokumente/:id" element={<Documents me={me.data} />} />
@@ -93,6 +100,7 @@ function AdminApp() {
         <Route path="/einstellungen" element={<SettingsLayout me={me.data} />}>
           <Route index element={<ClubSettings me={me.data} />} />
           <Route path="email" element={<MailSettings me={me.data} />} />
+          <Route path="aufnahme" element={<ApplicationSettings me={me.data} />} />
           <Route path="zugaenge" element={<Users me={me.data} />} />
           <Route path="rollen" element={<Roles me={me.data} />} />
           <Route path="api" element={<ApiTokens me={me.data} />} />

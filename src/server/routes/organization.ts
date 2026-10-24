@@ -32,6 +32,8 @@ const toDto = (o: Selectable<Database['organization']>) => ({
   mailReplyTo: o.mail_reply_to,
   mailPerMinute: o.mail_per_minute,
   mailPausedReason: o.mail_paused_reason,
+  electronicMandatesAgreed: o.electronic_mandates_agreed,
+  joinRule: o.join_rule,
 });
 
 /** API field → column; only fields present in the body are written. */
@@ -57,6 +59,8 @@ const COLUMNS = {
   mailFromAddress: 'mail_from_address',
   mailReplyTo: 'mail_reply_to',
   mailPerMinute: 'mail_per_minute',
+  electronicMandatesAgreed: 'electronic_mandates_agreed',
+  joinRule: 'join_rule',
 } as const;
 
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {

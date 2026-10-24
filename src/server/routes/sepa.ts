@@ -6,7 +6,7 @@ import { candidate, mandate, mandateCreate, run, runCreate, runSummary, type Can
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { blindIndex, decrypt, encrypt, maskIban } from '../crypto.ts';
-import type { SepaMandateTable } from '../db.ts';
+import type { Db, SepaMandateTable } from '../db.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
 import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
@@ -76,31 +76,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     if (req.body.signedOn > today) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'signedOn', message: 'Das Datum liegt in der Zukunft.' }] });
     const old = await db.selectFrom('sepa_mandate').select('id').where('person_id', '=', row.person_id).where('status', 'in', ['active', 'pending_evidence']).execute();
     for (const o of old) await assertMandateNotLive(o.id);
-    const m = await db.transaction().execute(async (tx) => {
-      const count = await tx.selectFrom('sepa_mandate').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', row.person_id).executeTakeFirstOrThrow();
-      const reference = req.body.reference ?? `${row.membership_number}-${count.n + 1}`.replace(/[^A-Za-z0-9/?:().,'+ -]/g, '-').slice(0, 35);
-      // One active mandate per person: a new one replaces the old.
-      await tx.updateTable('sepa_mandate').set({ status: 'revoked', revoked_on: today, revoke_reason: 'Durch neues Mandat ersetzt', updated_at: new Date() }).where('person_id', '=', row.person_id).where('status', 'in', ['active', 'pending_evidence']).execute();
-      const m = await tx
-        .insertInto('sepa_mandate')
-        .values({
-          organization_id: actor.organizationId,
-          person_id: row.person_id,
-          reference,
-          signed_on: req.body.signedOn,
-          account_holder: req.body.accountHolder,
-          iban_encrypted: encrypt(req.body.iban),
-          iban_hash: blindIndex(req.body.iban),
-          iban_last4: req.body.iban.slice(-4),
-          bic: req.body.bic ?? null,
-          type: req.body.type,
-          status: req.body.pendingEvidence ? 'pending_evidence' : 'active',
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      await audit(tx, actor.organizationId, actor, { action: 'mandate.created', entityType: 'member', entityId: row.id, diff: { reference: [null, reference], iban: ['•••', '•••'] } });
-      return m;
-    });
+    const m = await db.transaction().execute((tx) => insertMandate(tx, actor, { personId: row.person_id, memberId: row.id, membershipNumber: row.membership_number, today, ...req.body }));
     reply.status(201);
     return mandateDto(actor, m);
   });
@@ -424,3 +400,34 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 };
+
+/** Creates a mandate for the debtor person, replacing an active or pending one, in the caller's transaction. */
+export async function insertMandate(
+  tx: Db,
+  actor: Actor,
+  v: { personId: string; memberId: string; membershipNumber: string; today: string; reference?: string; signedOn: string; accountHolder: string; iban: string; bic?: string | null; type: 'recurrent' | 'one_off'; pendingEvidence: boolean },
+) {
+  const count = await tx.selectFrom('sepa_mandate').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', v.personId).executeTakeFirstOrThrow();
+  const reference = v.reference ?? `${v.membershipNumber}-${count.n + 1}`.replace(/[^A-Za-z0-9/?:().,'+ -]/g, '-').slice(0, 35);
+  // One active mandate per person: a new one replaces the old.
+  await tx.updateTable('sepa_mandate').set({ status: 'revoked', revoked_on: v.today, revoke_reason: 'Durch neues Mandat ersetzt', updated_at: new Date() }).where('person_id', '=', v.personId).where('status', 'in', ['active', 'pending_evidence']).execute();
+  const m = await tx
+    .insertInto('sepa_mandate')
+    .values({
+      organization_id: actor.organizationId,
+      person_id: v.personId,
+      reference,
+      signed_on: v.signedOn,
+      account_holder: v.accountHolder,
+      iban_encrypted: encrypt(v.iban),
+      iban_hash: blindIndex(v.iban),
+      iban_last4: v.iban.slice(-4),
+      bic: v.bic ?? null,
+      type: v.type,
+      status: v.pendingEvidence ? 'pending_evidence' : 'active',
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+  await audit(tx, actor.organizationId, actor, { action: 'mandate.created', entityType: 'member', entityId: v.memberId, diff: { reference: [null, reference], iban: ['•••', '•••'] } });
+  return m;
+}
