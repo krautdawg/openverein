@@ -214,3 +214,20 @@ describe('API tokens', () => {
 });
 
 vi.setConfig({ testTimeout: 30_000 });
+
+describe('no privilege escalation', () => {
+  it('a user with settings:write but not admin cannot grant or define stronger roles', async () => {
+    const roles = (await admin.get('/roles')).body;
+    const adminRole = roles.find((r: { name: string }) => r.name === 'Admin');
+    const all = Object.fromEntries(Object.keys(adminRole.permissions).map((m) => [m, 'read']));
+    const custom = await admin.post('/roles', { name: 'Schriftführung', permissions: { ...all, settings: 'write', members: 'write' } });
+    expect(custom.status).toBe(201);
+    const created = await admin.post('/users', { name: 'Sabine Schrift', email: 'sabine@example.org', grants: [{ roleId: custom.body.id }] });
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
+    const clerk = client(ctx.app, { cookie: `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}` });
+    const me = (await clerk.get('/auth/me')).body;
+    expect((await clerk.patch(`/users/${me.id}`, { grants: [{ roleId: adminRole.id }] })).status).toBe(403);
+    expect((await clerk.post('/roles', { name: 'Hintertür', permissions: { ...all, ledger: 'write' } })).status).toBe(403);
+    expect((await clerk.post('/users', { name: 'Kumpel', email: 'k@example.org', grants: [{ roleId: custom.body.id }] })).status).toBe(201);
+  });
+});

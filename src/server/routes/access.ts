@@ -28,6 +28,8 @@ CONSTRAINT_MESSAGES.role_organization_id_name_key = 'Eine Rolle mit diesem Namen
 const idParam = z.object({ id: z.uuid() });
 const INVITE_DAYS = 7;
 
+const RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
+
 const normalisePermissions = (p: Record<string, Level>) => Object.fromEntries(MODULES.map((m) => [m, p[m] ?? 'none'])) as Record<string, Level>;
 
 export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -38,10 +40,23 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     return new Map(rows.map((r) => [r.id, r]));
   }
 
+  /** No escalation: nobody hands out (or defines) more than they hold themselves, module by module. */
+  function assertNotAbove(actor: Actor, permissions: Record<string, Level>, scopeGroupIds?: string[] | null) {
+    for (const m of MODULES) {
+      const wanted = permissions[m] ?? 'none';
+      if (RANK[wanted] > RANK[level(actor, m)]) throw forbidden(`${m}:${wanted} (mehr Rechte, als Du selbst hast)`);
+      // A scoped actor may only grant within their own scope.
+      const mine = wanted === 'none' ? null : scopeOf(actor, m, wanted);
+      if (mine !== null && (!scopeGroupIds?.length || scopeGroupIds.some((g) => !mine.includes(g)))) throw forbidden(`${m}:${wanted} (außerhalb Deines Bereichs)`);
+    }
+  }
+
   async function checkGrants(actor: Actor, grants: z.infer<typeof grantInput>[]) {
     const roles = await rolesById(actor);
     for (const g of grants) {
-      if (!roles.has(g.roleId)) throw notFound('Rolle');
+      const role = roles.get(g.roleId);
+      if (!role) throw notFound('Rolle');
+      assertNotAbove(actor, role.permissions, g.scopeGroupIds);
       if (g.scopeGroupIds?.length) {
         const n = await db.selectFrom('club_group').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', actor.organizationId).where('id', 'in', g.scopeGroupIds).executeTakeFirstOrThrow();
         if (n.n !== new Set(g.scopeGroupIds).size) throw notFound('Gruppe');
@@ -109,6 +124,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/roles', { schema: { tags: ['access'], summary: 'Eigene Rolle anlegen (z. B. als Kopie einer eingebauten)', body: roleCreate, response: { 201: role } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    assertNotAbove(actor, req.body.permissions);
     const fields = req.body.restrictedFields.filter((f) => (RESTRICTABLE_FIELDS as readonly string[]).includes(f));
     const r = await db.transaction().execute(async (tx) => {
       const r = await tx
@@ -129,6 +145,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     const before = (await rolesById(actor)).get(req.params.id);
     if (!before) throw notFound('Rolle');
     if (before.builtin_key) throw new Problem(409, 'builtin-role', 'Eingebaute Rollen lassen sich nicht ändern. Lege eine Kopie an.');
+    if (req.body.permissions) assertNotAbove(actor, req.body.permissions);
     const values: Record<string, unknown> = {};
     if (req.body.name) values.name = req.body.name;
     if (req.body.permissions) values.permissions = JSON.stringify(normalisePermissions(req.body.permissions));
