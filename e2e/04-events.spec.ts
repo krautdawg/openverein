@@ -29,6 +29,7 @@ test('events: calendar, weekly training, RSVP and cancelling one date', async ({
 
   await sheet.getByRole('button', { name: 'Termin absagen …' }).click();
   await sheet.getByRole('button', { name: 'Nur diesen' }).click();
+  await expect(sheet).toBeHidden();
   const list = await (await page.request.get(`/api/v1/events?from=${next}&to=${next}`)).json();
   expect(list).toHaveLength(0);
   void m;
