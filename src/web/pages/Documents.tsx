@@ -34,7 +34,7 @@ export function Documents({ me }: { me: Me }) {
 
   const current = folders.data?.find((f) => f.id === folderId);
   const trail: Folder[] = [];
-  for (let f = current; f; f = folders.data?.find((x) => x.id === f!.parentId)) trail.unshift(f);
+  for (let f = current, depth = 0; f && depth < 100; f = folders.data?.find((x) => x.id === f!.parentId), depth++) trail.unshift(f);
   const children = folders.data?.filter((f) => (f.parentId ?? undefined) === folderId) ?? [];
   const open = (id?: string) => navigate(id ? `/dokumente?ordner=${id}` : '/dokumente');
 
@@ -52,7 +52,7 @@ export function Documents({ me }: { me: Me }) {
   }
 
   return (
-    <div className="page" onDragOver={(e) => { if (canWrite) { e.preventDefault(); setDragging(true); } }} onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={onDrop}>
+    <div className="page" onDragOver={(e) => { e.preventDefault(); if (canWrite) setDragging(true); }} onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)} onDrop={onDrop}>
       <PageHead
         title="Dokumente"
         intro="Satzung, Protokolle, Formulare. Ordner lassen sich auf Gruppen beschränken; Belege bleiben acht Jahre gesperrt."
@@ -109,7 +109,7 @@ export function Documents({ me }: { me: Me }) {
 
       {creating && <FolderSheet parent={current} onClose={() => setCreating(false)} />}
       {access && current && <FolderSheet folder={current} onClose={() => setAccess(false)} />}
-      <FileSheet id={fileId ?? null} folders={folders.data ?? []} canWrite={canWrite} canHold={canWrite} onClose={() => navigate(folderId ? `/dokumente?ordner=${folderId}` : '/dokumente')} />
+      <FileSheet id={fileId ?? null} folders={folders.data ?? []} canWrite={canWrite} canHold={canWrite} onClose={() => navigate(folderId ? `/dokumente?ordner=${folderId}` : '/dokumente')} onOpen={(nid) => navigate(`/dokumente/${nid}${folderId ? `?ordner=${folderId}` : ''}`, { replace: true })} />
     </div>
   );
 }
@@ -166,7 +166,7 @@ function FolderSheet({ folder, parent, onClose }: { folder?: Folder; parent?: Fo
   );
 }
 
-export function FileSheet({ id, folders, canWrite, canHold, onClose }: { id: string | null; folders: Folder[]; canWrite: boolean; canHold: boolean; onClose: () => void }) {
+export function FileSheet({ id, folders, canWrite, canHold, onClose, onOpen }: { id: string | null; folders: Folder[]; canWrite: boolean; canHold: boolean; onClose: () => void; onOpen: (id: string) => void }) {
   const qc = useQueryClient();
   const versions = useQuery({ queryKey: ['file-versions', id], queryFn: () => api<FileDto[]>(`/files/${id}/versions`), enabled: !!id });
   const f = versions.data?.[0];
@@ -189,8 +189,7 @@ export function FileSheet({ id, folders, canWrite, canHold, onClose }: { id: str
     try {
       const v = await uploadFile<FileDto>(`/files/${id}/versions`, file, {});
       await qc.invalidateQueries({ queryKey: ['files'] });
-      window.history.replaceState(null, '', window.location.pathname.replace(id!, v.id) + window.location.search);
-      onClose();
+      onOpen(v.id);
     } catch (err) {
       setError(err instanceof ApiError ? (err.problem.detail ?? err.problem.title) : 'Hochladen fehlgeschlagen.');
     }
@@ -279,7 +278,7 @@ export function FileSheet({ id, folders, canWrite, canHold, onClose }: { id: str
 
 function pathOf(folders: Folder[], f: Folder) {
   const parts = [f.name];
-  for (let p = folders.find((x) => x.id === f.parentId); p; p = folders.find((x) => x.id === p!.parentId)) parts.unshift(p.name);
+  for (let p = folders.find((x) => x.id === f.parentId), depth = 0; p && depth < 100; p = folders.find((x) => x.id === p!.parentId), depth++) parts.unshift(p.name);
   return parts.join(' / ');
 }
 

@@ -5,6 +5,7 @@ import { fileDto, filePatch, folder, folderInput, MAX_FILE_BYTES } from '../../s
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { FileTable, FolderTable, RetentionClass } from '../db.ts';
+import { deleteChain, deletionBlocker, lockChain } from '../files/chain.ts';
 import { getBlob, putBlob } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { loadMemberRow, orgToday } from '../members/query.ts';
@@ -64,6 +65,8 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     const f = await db.selectFrom('file').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!f) throw notFound('Datei');
     await assertPlace(actor, f, mode);
+    // Place, retention and hold belong to the whole document; they change only through its current version.
+    if (mode === 'write' && f.superseded_at) throw new Problem(409, 'superseded', 'Das ist eine ältere Fassung. Ändere die aktuelle.');
     return f;
   }
 
@@ -127,14 +130,16 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'documents', 'write');
     unscoped(actor);
     const before = await folderFor(actor, req.params.id, 'write');
-    const folders = await allFolders(actor);
-    if (req.body.parentId) {
-      // No folder may end up inside itself.
-      for (let p: FolderRow | undefined = folders.find((x) => x.id === req.body.parentId); p; p = folders.find((x) => x.id === p!.parent_id)) {
-        if (p.id === before.id) throw new Problem(409, 'cycle', 'Ein Ordner kann nicht in sich selbst liegen.');
-      }
-    }
+    if (req.body.parentId) await folderFor(actor, req.body.parentId, 'write');
     const f = await db.transaction().execute(async (tx) => {
+      // Serialise folder moves per club, then check for cycles on fresh data.
+      await sql`select pg_advisory_xact_lock(hashtext(${`folders:${actor.organizationId}`}))`.execute(tx);
+      if (req.body.parentId) {
+        const folders = await tx.selectFrom('folder').selectAll().where('organization_id', '=', actor.organizationId).execute();
+        for (let p: FolderRow | undefined = folders.find((x) => x.id === req.body.parentId), depth = 0; p && depth < 100; p = folders.find((x) => x.id === p!.parent_id), depth++) {
+          if (p.id === before.id) throw new Problem(409, 'cycle', 'Ein Ordner kann nicht in sich selbst liegen.');
+        }
+      }
       const f = await tx
         .updateTable('folder')
         .set({
@@ -234,16 +239,16 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const actor = requireActor(req);
       const old = await loadFile(actor, req.params.id, 'write');
-      if (old.superseded_at) throw new Problem(409, 'superseded', 'Das ist schon eine ältere Version. Lade die neue Fassung bei der aktuellen hoch.');
       const bytes = bytesOf(req.body);
       const sha = await putBlob(bytes);
       const today = await orgToday(db, actor.organizationId);
       const f = await db.transaction().execute(async (tx) => {
-        const locked = await tx.updateTable('file').set({ superseded_at: new Date() }).where('id', '=', old.id).where('superseded_at', 'is', null).returning('id').executeTakeFirst();
+        // Read place and hold from the locked row, so a move or hold set a moment ago is carried over.
+        const locked = await tx.updateTable('file').set({ superseded_at: new Date() }).where('id', '=', old.id).where('superseded_at', 'is', null).returningAll().executeTakeFirst();
         if (!locked) throw new Problem(409, 'superseded', 'Jemand hat gerade eine neue Fassung hochgeladen.');
         const f = await tx
           .insertInto('file')
-          .values({ organization_id: actor.organizationId, folder_id: old.folder_id, member_id: old.member_id, sha256: sha, size_bytes: bytes.length, mime_type: mimeOf(req), name: old.name, retention_class: old.retention_class, retain_until: retainUntil(old.retention_class, today), legal_hold: old.legal_hold, previous_id: old.id, uploaded_by: actor.userId })
+          .values({ organization_id: actor.organizationId, folder_id: locked.folder_id, member_id: locked.member_id, sha256: sha, size_bytes: bytes.length, mime_type: mimeOf(req), name: locked.name, retention_class: locked.retention_class, retain_until: retainUntil(locked.retention_class, today), legal_hold: locked.legal_hold, previous_id: locked.id, uploaded_by: actor.userId })
           .returningAll()
           .executeTakeFirstOrThrow();
         await audit(tx, actor.organizationId, actor, { action: 'file.version_uploaded', entityType: 'file', entityId: f.id, diff: { previous: [null, old.id], sha256: [old.sha256, sha] } });
@@ -267,22 +272,23 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     return dtos(chain);
   });
 
-  app.get('/files/:id/content', { schema: { tags, summary: 'Datei herunterladen (die gespeicherten Bytes, mit Prüfsummenkontrolle)', params: idParam, querystring: z.object({ inline: z.coerce.boolean().optional() }) } }, async (req, reply) => {
+  app.get('/files/:id/content', { schema: { tags, summary: 'Datei herunterladen (die gespeicherten Bytes, mit Prüfsummenkontrolle)', params: idParam, querystring: z.object({ inline: z.enum(['true', 'false']).optional() }) } }, async (req, reply) => {
     const actor = requireActor(req);
     const f = await loadFile(actor, req.params.id, 'read');
     const bytes = await getBlob(f.sha256);
     // Only PDFs and raster images may render inline; everything else downloads, never sniffed, never scripted.
-    const inline = req.query.inline && /^(application\/pdf|image\/(png|jpeg|gif|webp))$/.test(f.mime_type);
+    const inline = req.query.inline === 'true' && /^(application\/pdf|image\/(png|jpeg|gif|webp))$/.test(f.mime_type);
     return reply
       .header('content-type', inline ? f.mime_type : 'application/octet-stream')
       .header('content-disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`)
       .header('x-content-type-options', 'nosniff')
-      .header('content-security-policy', "default-src 'none'; sandbox")
+      // Chrome's PDF viewer refuses to run in a sandboxed document, so PDFs get the strict policy without sandbox.
+      .header('content-security-policy', f.mime_type === 'application/pdf' && inline ? "default-src 'none'" : "default-src 'none'; sandbox")
       .header('cache-control', 'private, no-store')
       .send(bytes);
   });
 
-  app.patch('/files/:id', { schema: { tags, summary: 'Datei umbenennen, verschieben, Aufbewahrung oder Sperre ändern', params: idParam, body: filePatch, response: { 200: fileDto } } }, async (req) => {
+  app.patch('/files/:id', { schema: { tags, summary: 'Datei umbenennen, verschieben, Aufbewahrung oder Sperre ändern (gilt für alle Fassungen)', params: idParam, body: filePatch, response: { 200: fileDto } } }, async (req) => {
     const actor = requireActor(req);
     const f = await loadFile(actor, req.params.id, 'write');
     const b = req.body;
@@ -290,17 +296,27 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
       if (f.member_id) throw new Problem(409, 'member-file', 'Dateien eines Mitglieds bleiben beim Mitglied.');
       await assertPlace(actor, { folder_id: b.folderId, member_id: null }, 'write');
     }
-    if (b.legalHold !== undefined && scopeOf(actor, 'documents', 'write') !== null) unscoped(actor);
+    if (b.legalHold !== undefined) unscoped(actor);
     const today = await orgToday(db, actor.organizationId);
-    // A shorter retention class never shortens a running retention period.
-    const until = b.retentionClass ? [f.retain_until, retainUntil(b.retentionClass, today)].filter((x): x is string => !!x).sort().at(-1) ?? null : f.retain_until;
     const updated = await db.transaction().execute(async (tx) => {
-      const u = await tx
+      const chain = await lockChain(tx, f.id);
+      if (!chain) throw new Problem(409, 'superseded', 'Jemand hat gerade eine neue Fassung hochgeladen.');
+      if (b.retentionClass === 'temporary' && chain.some((v) => v.retain_until && v.retain_until >= today)) {
+        throw new Problem(409, 'retention', 'Ein Beleg in seiner Aufbewahrungsfrist kann nicht vorübergehend werden.');
+      }
+      const newUntil = b.retentionClass ? retainUntil(b.retentionClass, today) : null;
+      await tx
         .updateTable('file')
-        .set({ ...(b.name ? { name: b.name } : {}), ...(b.folderId !== undefined ? { folder_id: b.folderId } : {}), ...(b.retentionClass ? { retention_class: b.retentionClass, retain_until: until } : {}), ...(b.legalHold !== undefined ? { legal_hold: b.legalHold } : {}) })
-        .where('id', '=', f.id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
+        .set({
+          ...(b.name ? { name: b.name } : {}),
+          ...(b.folderId !== undefined ? { folder_id: b.folderId } : {}),
+          // A shorter class never shortens a running retention period.
+          ...(b.retentionClass ? { retention_class: b.retentionClass, retain_until: sql<string>`greatest(retain_until, ${newUntil}::date)` } : {}),
+          ...(b.legalHold !== undefined ? { legal_hold: b.legalHold } : {}),
+        })
+        .where('id', 'in', chain.map((v) => v.id))
+        .execute();
+      const u = await tx.selectFrom('file').selectAll().where('id', '=', f.id).executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'file.updated', entityType: 'file', entityId: f.id, diff: { name: [f.name, u.name], folder: [f.folder_id, u.folder_id], retention: [f.retention_class, u.retention_class], legalHold: [f.legal_hold, u.legal_hold] } });
       return u;
     });
@@ -312,16 +328,12 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     const f = await loadFile(actor, req.params.id, 'write');
     const today = await orgToday(db, actor.organizationId);
     await db.transaction().execute(async (tx) => {
-      const chain = await sql<FileRow>`
-        with recursive chain as (select * from file where id = ${f.id} union all select f.* from file f join chain c on f.id = c.previous_id)
-        select * from chain for update`.execute(tx);
-      for (const v of chain.rows) {
-        if (v.legal_hold) throw new Problem(409, 'legal-hold', 'Für diese Datei gilt eine Löschsperre.');
-        if (v.retain_until && v.retain_until > today) throw new Problem(409, 'retention', `Diese Datei ist ein Beleg und muss bis ${v.retain_until.split('-').reverse().join('.')} aufbewahrt werden.`);
-      }
-      // Newest first, so no row still points at a deleted predecessor. Bytes go later in the sweep, after commit.
-      for (const v of chain.rows) await tx.deleteFrom('file').where('id', '=', v.id).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'file.deleted', entityType: 'file', entityId: f.id, diff: { name: [f.name, null], versions: [chain.rows.length, null] } });
+      const chain = await lockChain(tx, f.id);
+      if (!chain) throw new Problem(409, 'superseded', 'Jemand hat gerade eine neue Fassung hochgeladen.');
+      const blocker = deletionBlocker(chain, today);
+      if (blocker) throw new Problem(409, 'retention', blocker);
+      await deleteChain(tx, chain);
+      await audit(tx, actor.organizationId, actor, { action: 'file.deleted', entityType: 'file', entityId: f.id, diff: { name: [f.name, null], versions: [chain.length, null] } });
     });
     reply.status(204);
     return null;

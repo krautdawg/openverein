@@ -77,4 +77,31 @@ describe('documents', () => {
     expect((await trainer.get(`/files?memberId=${m}`)).status).toBe(404); // not in the trainer's groups
     expect((await admin.del(`/folders/${board.id}`)).status).toBe(409);
   });
+
+  it('treats a document as its whole version chain', async () => {
+    const v1 = (await upload('name=Export.csv&retentionClass=temporary', 'v1', cookie, 'text/csv')).json();
+    const v2 = (await ctx.app.inject({ method: 'POST', url: `/api/v1/files/${v1.id}/versions`, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: 'v2' })).json();
+    // Old versions cannot be changed or deleted on their own.
+    expect((await admin.patch(`/files/${v1.id}`, { legalHold: true })).status).toBe(409);
+    expect((await admin.del(`/files/${v1.id}`)).status).toBe(409);
+    // A hold on the current version protects the whole chain from the 7-day expiry.
+    await admin.patch(`/files/${v2.id}`, { legalHold: true });
+    await ctx.db.updateTable('file').set({ created_at: new Date(Date.now() - 8 * 86_400_000) }).execute();
+    await sweepFiles(ctx.db);
+    expect(await ctx.db.selectFrom('file').select('id').execute()).toHaveLength(2);
+    await admin.patch(`/files/${v2.id}`, { legalHold: false });
+    await sweepFiles(ctx.db);
+    expect(await ctx.db.selectFrom('file').select('id').execute()).toHaveLength(0);
+
+    // A voucher cannot be turned temporary while its retention runs.
+    const beleg = (await upload('name=Beleg.pdf&retentionClass=voucher', 'beleg')).json();
+    expect((await admin.patch(`/files/${beleg.id}`, { retentionClass: 'temporary' })).status).toBe(409);
+    expect((await admin.patch(`/files/${beleg.id}`, { retentionClass: 'document' })).body.retainUntil).toBe(beleg.retainUntil);
+
+    // Folder moves: unknown parents and cycles are refused.
+    const a = (await admin.post('/folders', { name: 'A' })).body;
+    const b = (await admin.post('/folders', { name: 'B', parentId: a.id })).body;
+    expect((await admin.patch(`/folders/${a.id}`, { parentId: b.id })).status).toBe(409);
+    expect((await admin.patch(`/folders/${a.id}`, { parentId: '01a00000-0000-7000-8000-000000000000' })).status).toBe(404);
+  });
 });
