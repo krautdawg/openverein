@@ -14,6 +14,15 @@ export function App() {
   const cfg = useInstanceConfig();
 
   if (setup.isPending || me.isPending) return null;
+  if (setup.isError || me.isError) {
+    return (
+      <main className="page" role="alert">
+        <h1>OpenVerein ist gerade nicht erreichbar.</h1>
+        <p className="muted" style={{ margin: 'var(--s-3) 0 var(--s-5)' }}>Der Server antwortet nicht. Versuche es gleich noch einmal.</p>
+        <button className="btn btn-primary" onClick={() => { void setup.refetch(); void me.refetch(); }}>Erneut versuchen</button>
+      </main>
+    );
+  }
   if (setup.data?.needsSetup) {
     return (
       <Routes>

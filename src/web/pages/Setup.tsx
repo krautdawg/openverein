@@ -25,7 +25,13 @@ export function Setup() {
       qc.setQueryData(['setup'], { needsSetup: false });
       navigate('/');
     } catch (err) {
-      setError(err instanceof ApiError ? err : undefined);
+      if (err instanceof ApiError && err.problem.status === 409) {
+        // Someone else finished the setup first: go to the login.
+        qc.setQueryData(['setup'], { needsSetup: false });
+        navigate('/anmelden');
+        return;
+      }
+      setError(err instanceof ApiError ? err : new ApiError({ type: 'unknown', title: 'Das hat nicht geklappt. Bitte versuche es noch einmal.', status: 0 }));
     } finally {
       setBusy(false);
     }

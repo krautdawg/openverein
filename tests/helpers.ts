@@ -7,15 +7,22 @@ const url = process.env.TEST_DATABASE_URL ?? 'postgres://openverein:openverein@l
 export async function testApp() {
   const db = createDb(url);
   await reset(db);
-  const app = await buildApp(db, { serveWeb: false });
+  const app = await buildApp(db, { serveWeb: false, authRateLimit: 10_000 });
   await app.ready();
   return { app, db, close: async () => { await app.close(); await db.destroy(); } };
 }
 
-/** Empties every table except the migration log. Audit rows are append-only, so the trigger is bypassed by TRUNCATE (allowed: tests only). */
+/**
+ * Empties every table except the migration log. The audit log refuses TRUNCATE, so tests switch
+ * triggers off for this one transaction (needs a superuser, which only the test database has).
+ */
 export async function reset(db: Db) {
   const { rows } = await sql<{ tablename: string }>`select tablename from pg_tables where schemaname = 'public' and tablename <> 'schema_migration'`.execute(db);
-  if (rows.length) await sql.raw(`truncate ${rows.map((r) => `"${r.tablename}"`).join(', ')} restart identity cascade`).execute(db);
+  if (!rows.length) return;
+  await db.transaction().execute(async (tx) => {
+    await sql`set local session_replication_role = replica`.execute(tx);
+    await sql.raw(`truncate ${rows.map((r) => `"${r.tablename}"`).join(', ')} restart identity cascade`).execute(tx);
+  });
 }
 
 type App = Awaited<ReturnType<typeof testApp>>['app'];

@@ -7,14 +7,22 @@ import { unauthorized } from '../http/problem.ts';
 export const SESSION_COOKIE = 'ov_session';
 const IDLE_MS = 8 * 60 * 60 * 1000; // admin idle timeout (spec auth: 8 h)
 
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-export async function createSession(db: Db, reply: FastifyReply, userId: string, userAgent?: string) {
+/**
+ * Inserts a session row inside the caller's transaction and returns the raw token.
+ * Set the cookie only after the transaction committed (setSessionCookie).
+ */
+export async function insertSession(tx: Db, userId: string, userAgent?: string) {
   const token = randomBytes(32).toString('base64url');
-  await db
+  await tx
     .insertInto('session')
     .values({ token_hash: sha256(token), user_id: userId, expires_at: new Date(Date.now() + IDLE_MS), user_agent: userAgent?.slice(0, 300) ?? null })
     .execute();
+  return token;
+}
+
+export function setSessionCookie(reply: FastifyReply, token: string) {
   reply.setCookie(SESSION_COOKIE, token, { path: '/', httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, maxAge: IDLE_MS / 1000 });
 }
 
@@ -24,8 +32,8 @@ export async function destroySession(db: Db, req: FastifyRequest, reply: Fastify
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
 }
 
-/** Resolves the session cookie to an active user and slides the idle timeout. */
-export async function userFromRequest(db: Db, req: FastifyRequest): Promise<AppUser | null> {
+/** Resolves the session cookie to an active user, slides the idle timeout and refreshes the cookie. */
+export async function userFromRequest(db: Db, req: FastifyRequest, reply: FastifyReply): Promise<AppUser | null> {
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return null;
   const hashed = sha256(token);
@@ -43,6 +51,7 @@ export async function userFromRequest(db: Db, req: FastifyRequest): Promise<AppU
     .set({ last_seen_at: new Date(), expires_at: new Date(Date.now() + IDLE_MS) })
     .where('token_hash', '=', hashed)
     .execute();
+  setSessionCookie(reply, token);
   return row;
 }
 

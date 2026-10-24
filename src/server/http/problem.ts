@@ -24,6 +24,11 @@ export const conflict = (detail: string) => new Problem(409, 'conflict', 'Konfli
 
 const base = 'https://openverein.org/problems/';
 
+/** Safe German messages for known constraints; modules add theirs. */
+export const CONSTRAINT_MESSAGES: Record<string, string> = {
+  app_user_email_key: 'Es gibt schon ein Konto mit dieser E-Mail-Adresse.',
+};
+
 export function sendProblem(reply: FastifyReply, p: Problem, instance?: string) {
   return reply
     .status(p.status)
@@ -37,10 +42,12 @@ export function errorHandler(err: FastifyError, req: FastifyRequest, reply: Fast
     const errors = err.validation.map((v) => ({ field: v.instancePath.replace(/^\//, '').replaceAll('/', '.'), message: v.message }));
     return sendProblem(reply, new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors }), req.url);
   }
-  // Postgres unique / exclusion violations are user-facing conflicts, not crashes.
-  const code = (err as { code?: string }).code;
-  if (code === '23505' || code === '23P01') {
-    return sendProblem(reply, conflict((err as { detail?: string }).detail ?? err.message), req.url);
+  // Postgres unique / exclusion / check violations are user-facing conflicts, not crashes.
+  // The raw database detail can contain submitted values, so it is logged, never returned.
+  const pg = err as { code?: string; constraint?: string };
+  if (pg.code === '23505' || pg.code === '23P01' || pg.code === '23514') {
+    req.log.info({ constraint: pg.constraint, code: pg.code }, 'constraint violation');
+    return sendProblem(reply, conflict(CONSTRAINT_MESSAGES[pg.constraint ?? ''] ?? 'Diese Angaben kollidieren mit einem vorhandenen Eintrag.'), req.url);
   }
   if (err.statusCode && err.statusCode < 500) {
     return sendProblem(reply, new Problem(err.statusCode, 'http-' + err.statusCode, err.message), req.url);

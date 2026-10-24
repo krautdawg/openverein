@@ -1,10 +1,12 @@
-import { hash, verify } from '@node-rs/argon2';
+import { hash, verify, type Algorithm } from '@node-rs/argon2';
+
+const ARGON2ID = 2 as Algorithm; // const enum Algorithm.Argon2id (not importable under verbatimModuleSyntax)
 
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;
 
-// Argon2id with the library's defaults (m=19456 KiB, t=2, p=1; OWASP minimum).
-export const hashPassword = (password: string) => hash(password);
+// Argon2id, OWASP minimum parameters, pinned so a library update cannot weaken them.
+export const hashPassword = (password: string) => hash(password, { algorithm: ARGON2ID, memoryCost: 19456, timeCost: 2, parallelism: 1 });
 
 export async function verifyPassword(stored: string | null, password: string) {
   if (!stored) return false;

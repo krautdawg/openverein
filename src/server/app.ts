@@ -17,22 +17,30 @@ import { systemRoutes } from './routes/system.ts';
 declare module 'fastify' {
   interface FastifyInstance {
     db: Db;
+    /** Requests per minute and IP on login, setup and invitation endpoints. */
+    authRateLimit: number;
   }
   interface FastifyRequest {
     user: AppUser | null;
   }
 }
 
-export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: boolean } = {}) {
-  const app = Fastify({ logger: opts.logger ?? false, trustProxy: true }).withTypeProvider<ZodTypeProvider>();
+export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: boolean; authRateLimit?: number } = {}) {
+  const app = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy.length ? config.trustProxy : false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.setErrorHandler(errorHandler);
   app.decorate('db', db);
+  app.decorate('authRateLimit', opts.authRateLimit ?? 10);
   app.decorateRequest('user', null);
 
   await app.register(cookie);
-  await app.register(rateLimit, { global: true, max: 600, timeWindow: '1 minute' });
+  await app.register(rateLimit, {
+    global: true,
+    max: 600,
+    timeWindow: '1 minute',
+    errorResponseBuilder: (_req, ctx) => new Problem(429, 'rate-limited', 'Zu viele Anfragen. Bitte warte einen Moment.', `Wieder möglich in ${Math.ceil(ctx.ttl / 1000)} Sekunden.`),
+  });
   await app.register(swagger, {
     openapi: {
       openapi: '3.1.0',
@@ -44,8 +52,22 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
 
-  app.addHook('onRequest', async (req) => {
-    if (req.url.startsWith('/api/')) req.user = await userFromRequest(db, req);
+  const isApi = (url: string) => {
+    const path = url.split('?')[0]!;
+    return path === '/api' || path.startsWith('/api/');
+  };
+
+  app.addHook('onRequest', async (req, reply) => {
+    if (!isApi(req.url)) return;
+    // CSRF: state-changing API calls must be JSON (a cross-site form cannot send that without a
+    // CORS preflight we never answer) and, when the browser sends an Origin, come from this host.
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+      if (type !== 'application/json') throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
+      const origin = req.headers.origin;
+      if (origin && new URL(origin).host !== req.headers.host) throw new Problem(403, 'cross-origin', 'Anfragen von fremden Seiten werden abgelehnt.');
+    }
+    req.user = await userFromRequest(db, req, reply);
   });
 
   await app.register(
@@ -65,7 +87,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   app.setNotFoundHandler((req, reply) => {
     // Client-side routes get the SPA shell; unknown API paths get a problem document.
     const path = req.url.split('?')[0]!;
-    if (serveWeb && req.method === 'GET' && !path.startsWith('/api/') && !/\.\w+$/.test(path)) return reply.sendFile('index.html');
+    if (serveWeb && req.method === 'GET' && !isApi(req.url) && !/\.\w+$/.test(path)) return reply.sendFile('index.html');
     return sendProblem(reply, new Problem(404, 'not-found', 'Diese Adresse gibt es nicht.'), req.url);
   });
 

@@ -15,7 +15,7 @@ Deliverable A proposes NestJS, Better Auth, pg-boss, RLS and a separate worker. 
 - **Node 24 type stripping in production.** The server runs `.ts` files directly (`erasableSyntaxOnly`); no server build step.
 - **Plain SQL migrations with an advisory lock**, applied on start and by `npm run migrate`.
 - **Plain CSS with tokens** instead of a utility framework: one tokens file, one component stylesheet.
-- **CSRF:** cookies are SameSite=Lax and every write endpoint accepts only `application/json`, which a cross-site form cannot send without a CORS preflight.
+- **CSRF:** cookies are SameSite=Lax, every write must be `application/json` (enforced centrally, 415 otherwise) and a present `Origin` header must match the host.
 
 ## Risks / Trade-offs
 

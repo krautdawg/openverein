@@ -57,3 +57,5 @@ end $$;
 
 create trigger audit_event_append_only before update or delete on audit_event
   for each row execute function ov_reject_change();
+create trigger audit_event_no_truncate before truncate on audit_event
+  for each statement execute function ov_reject_change();

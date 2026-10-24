@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-export const email = z.email('Bitte gib eine gültige E-Mail-Adresse an.').max(254).transform((e) => e.trim().toLowerCase());
+export const email = z.preprocess(
+  (v) => (typeof v === 'string' ? v.trim().toLowerCase() : v),
+  z.email('Bitte gib eine gültige E-Mail-Adresse an.').max(254),
+);
 
 export const loginBody = z.object({ email, password: z.string().min(1).max(128) });
 

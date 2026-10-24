@@ -9,9 +9,9 @@ export async function migrate(connectionString: string, log = console.log) {
   const client = new pg.Client({ connectionString });
   await client.connect();
   try {
-    await client.query('create table if not exists schema_migration (name text primary key, applied_at timestamptz not null default now())');
-    // One migrator at a time (two app containers starting together).
+    // One migrator at a time (two app containers starting together); taken before any DDL.
     await client.query('select pg_advisory_lock(727274)');
+    await client.query('create table if not exists schema_migration (name text primary key, applied_at timestamptz not null default now())');
     const done = new Set((await client.query<{ name: string }>('select name from schema_migration')).rows.map((r) => r.name));
     const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
     for (const file of files) {

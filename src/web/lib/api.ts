@@ -20,12 +20,15 @@ export class ApiError extends Error {
 
 /** The UI talks only to the public REST API, so every UI action is also an API action. */
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  const res = await fetch(`/api/v1${path}`, {
-    method: init.method ?? 'GET',
-    headers: init.body === undefined ? undefined : { 'content-type': 'application/json' },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    credentials: 'same-origin',
-  });
+  const method = init.method ?? 'GET';
+  // Every write is JSON, even without payload: the server rejects other content types (CSRF guard).
+  const body = method === 'GET' ? undefined : JSON.stringify(init.body ?? {});
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body, credentials: 'same-origin' });
+  } catch {
+    throw new ApiError({ type: 'network', title: 'Keine Verbindung zum Server. Bitte prüfe Deine Internetverbindung.', status: 0 });
+  }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({ title: 'Keine Antwort vom Server.', status: res.status, type: 'network' }));
   if (!res.ok) throw new ApiError(data as ApiProblem);
