@@ -44,7 +44,7 @@ const messageDto = z.object({
   createdAt: z.string(),
   counts: z.object({ total: z.number(), sent: z.number(), queued: z.number(), failed: z.number() }),
 });
-const deliveryDto = z.object({ id: z.uuid(), memberId: z.uuid().nullable(), name: z.string(), email: z.string(), status: z.enum(['queued', 'sending', 'sent', 'failed', 'bounced']), error: z.string().nullable(), sentAt: z.string().nullable(), invoiceNumber: z.string().nullable() });
+const deliveryDto = z.object({ id: z.uuid(), memberId: z.uuid().nullable(), name: z.string(), email: z.string(), status: z.enum(['queued', 'sending', 'sent', 'failed', 'bounced', 'skipped']), error: z.string().nullable(), sentAt: z.string().nullable(), invoiceNumber: z.string().nullable() });
 
 /** Plain-language hints about the sender domain's SPF and DMARC records (DKIM needs the provider's selector, so only a reminder). */
 async function dnsHints(address: string) {
@@ -72,7 +72,8 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       .innerJoin('person', 'person.id', 'member.person_id')
       .select(['member.id', 'member.person_id', 'member.status', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
       .where('member.organization_id', '=', actor.organizationId)
-      .where(applyScope(actor, today, 'read', 'communication'));
+      // Sending reaches only members the actor may write to (current group members, not last year's).
+      .where(applyScope(actor, today, 'write', 'communication'));
     if (f.mode === 'group') {
       if (!f.groupId) throw new Problem(400, 'validation', 'Bitte eine Gruppe wählen.');
       q = q.where(scopePredicate([f.groupId], today, 'write'));
@@ -158,15 +159,17 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
           template: z.enum(['invoice', 'dunning']).default('invoice'),
           subject: z.string().trim().min(1).max(200).optional(),
           body: z.string().trim().min(1).max(20_000).optional(),
+          /** Without it, invoices that already went out by e-mail with this text are left out. */
+          resend: z.boolean().default(false),
         }),
-        response: { 201: z.object({ message: messageDto.nullable(), toPrint: z.array(z.object({ invoiceId: z.uuid(), number: z.string(), name: z.string(), reason: z.string() })) }) },
+        response: { 201: z.object({ messages: z.array(messageDto), sent: z.number(), alreadySent: z.number(), toPrint: z.array(z.object({ invoiceId: z.uuid(), number: z.string(), name: z.string(), reason: z.string() })) }) },
       },
     },
     async (req, reply) => {
       const actor = requireActor(req);
       requirePermission(actor, 'communication', 'write');
       requirePermission(actor, 'invoices', 'read');
-      if (scopeOf(actor, 'invoices', 'read') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', undefined, { permission: 'invoices:read (ganzer Verein)' });
+      if (scopeOf(actor, 'invoices', 'read') !== null || scopeOf(actor, 'communication', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', undefined, { permission: 'invoices:read (ganzer Verein)' });
       if (!req.body.invoiceIds?.length && !req.body.feeRunId) throw new Problem(400, 'validation', 'Bitte Rechnungen oder einen Beitragslauf angeben.');
       const text = await templateFor(actor.organizationId, req.body.template);
       let q = db
@@ -179,10 +182,20 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       // Dunning mails only make sense for invoices that are still open.
       if (req.body.template === 'dunning') q = q.where('invoice.status', 'in', ['open', 'partially_paid']);
       const rows = await q.orderBy('invoice.number').execute();
-      const suppressed = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId).where('reason', '=', 'bounce').execute()).map((s) => s.email_hash));
+      const suppressed = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId).where('reason', 'in', ['bounce', 'manual']).execute()).map((s) => s.email_hash));
+      const mailed = new Set(
+        req.body.resend || !rows.length
+          ? []
+          : (await db.selectFrom('delivery').innerJoin('message', 'message.id', 'delivery.message_id').select('delivery.invoice_id').where('delivery.invoice_id', 'in', rows.map((r) => r.id)).where('delivery.status', 'in', ['queued', 'sending', 'sent']).where(sql<boolean>`message.recipient_filter->>'template' = ${req.body.template}`).execute()).map((r) => r.invoice_id),
+      );
+      let alreadySent = 0;
       const toPrint: { invoiceId: string; number: string; name: string; reason: string }[] = [];
       const send: { personId: string; memberId: string | null; email: string; invoiceId: string }[] = [];
       for (const r of rows) {
+        if (mailed.has(r.id)) {
+          alreadySent++;
+          continue;
+        }
         const name = (r.recipient as { recipient: { name: string } } | null)?.recipient.name ?? '';
         if (r.status === 'draft' || r.status === 'cancelled' || !r.number) continue;
         const reason = r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !r.email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(r.email)) ? 'Adresse unzustellbar' : null;
@@ -196,15 +209,15 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
         if (batch) batch.push(s);
         else batches.push([s]);
       }
-      let first: string | null = null;
+      const ids: string[] = [];
       await db.transaction().execute(async (tx) => {
         for (const b of batches) {
           const id = await createMessage(tx, actor, { kind: 'invoices', category: 'notice', subject: req.body.subject ?? text.subject, body: req.body.body ?? text.body, filter: { template: req.body.template, invoiceIds: b.map((x) => x.invoiceId) } }, b);
-          first ??= id;
+          ids.push(id);
         }
       });
       reply.status(201);
-      return { message: first ? await dto(actor, first) : null, toPrint };
+      return { messages: await Promise.all(ids.map((id) => dto(actor, id))), sent: send.length, alreadySent, toPrint };
     },
   );
 
@@ -266,7 +279,8 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     if (isKey(id)) requirePermission(actor, 'settings', 'write');
     await db.transaction().execute(async (tx) => {
       const q = tx.deleteFrom('mail_template').where('organization_id', '=', actor.organizationId);
-      await (isKey(id) ? q.where('key', '=', id) : q.where('id', '=', id).where('key', 'is', null)).execute();
+      const r = await (isKey(id) ? q.where('key', '=', id) : q.where('id', '=', id).where('key', 'is', null)).executeTakeFirst();
+      if (!Number(r.numDeletedRows) && !isKey(id)) throw notFound('Vorlage');
       await audit(tx, actor.organizationId, actor, { action: 'mail_template.deleted', entityType: 'mail_template', entityId: isKey(id) ? null : id, diff: { template: [id, null] } });
     });
     reply.status(204);
@@ -345,7 +359,7 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       .where('delivery.message_id', '=', req.params.id)
       .orderBy('person.last_name')
       .execute();
-    return { ...m, deliveries: deliveries.map((d) => ({ id: d.id, memberId: d.member_id, name: displayName({ kind: d.kind, firstName: d.first_name, lastName: d.last_name, companyName: d.company_name }), email: hide ? '•••' : d.email, status: d.status, error: d.error, sentAt: d.sent_at?.toISOString() ?? null, invoiceNumber: d.number })) };
+    return { ...m, deliveries: deliveries.map((d) => ({ id: d.id, memberId: d.member_id, name: displayName({ kind: d.kind, firstName: d.first_name, lastName: d.last_name, companyName: d.company_name }), email: hide ? '•••' : d.email, status: d.status, error: hide ? (d.error ? 'Fehler (Details nur mit Recht auf E-Mail-Adressen)' : null) : d.error, sentAt: d.sent_at?.toISOString() ?? null, invoiceNumber: d.number })) };
   });
 
   app.get('/members/:id/deliveries', { schema: { tags, summary: 'E-Mails an ein Mitglied', params: idParam, response: { 200: z.array(z.object({ messageId: z.uuid(), subject: z.string(), status: z.string(), at: z.string() })) } } }, async (req) => {
@@ -373,13 +387,30 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     }
   });
 
-  app.post('/unsubscribe', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } }, schema: { tags, summary: 'Vom Rundschreiben abmelden (Link aus der E-Mail)', security: [], body: z.object({ token: z.string().max(200) }), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => {
-    const id = deliveryFromToken(req.body.token);
-    if (!id) throw new Problem(400, 'invalid-token', 'Dieser Abmeldelink ist ungültig.');
-    const d = await db.selectFrom('delivery').select(['organization_id', 'email']).where('id', '=', id).executeTakeFirst();
-    if (!d) throw new Problem(400, 'invalid-token', 'Dieser Abmeldelink ist ungültig.');
-    await db.insertInto('suppression').values({ organization_id: d.organization_id, email_hash: emailHash(d.email), reason: 'unsubscribe' }).onConflict((oc) => oc.doNothing()).execute();
-    await audit(db, d.organization_id, null, { action: 'mail.unsubscribed', entityType: 'delivery', entityId: id });
+  async function unsubscribe(token: string) {
+    const id = deliveryFromToken(token);
+    const d = id ? await db.selectFrom('delivery').select(['organization_id', 'email']).where('id', '=', id).executeTakeFirst() : undefined;
+    if (!id || !d) throw new Problem(400, 'invalid-token', 'Dieser Abmeldelink ist ungültig.');
+    await db.transaction().execute(async (tx) => {
+      await tx.insertInto('suppression').values({ organization_id: d.organization_id, email_hash: emailHash(d.email), reason: 'unsubscribe' }).onConflict((oc) => oc.doNothing()).execute();
+      await audit(tx, d.organization_id, null, { action: 'mail.unsubscribed', entityType: 'delivery', entityId: id });
+    });
+    return { ok: true };
+  }
+
+  app.post('/unsubscribe', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } }, schema: { tags, summary: 'Vom Rundschreiben abmelden (Link aus der E-Mail)', security: [], body: z.object({ token: z.string().max(200) }), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => unsubscribe(req.body.token));
+
+  // RFC 8058 one-click: mail programs POST "List-Unsubscribe=One-Click" as a form to the header URL.
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 1024 }, (_req, body, done) => done(null, body));
+  app.post('/unsubscribe/:token', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } }, schema: { tags, summary: 'Ein-Klick-Abmeldung (RFC 8058, für Mailprogramme)', security: [], params: z.object({ token: z.string().max(200) }), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => unsubscribe(req.params.token));
+
+  app.post('/mail/resume', { schema: { tags, summary: 'Angehaltenen Versand fortsetzen (nachdem die SMTP-Einstellungen stimmen)', body: z.object({}).optional(), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'settings', 'write');
+    await db.transaction().execute(async (tx) => {
+      await tx.updateTable('organization').set({ mail_paused_reason: null }).where('id', '=', actor.organizationId).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'mail.resumed', entityType: 'organization', entityId: actor.organizationId });
+    });
     return { ok: true };
   });
 };

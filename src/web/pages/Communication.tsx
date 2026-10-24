@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
 import { PLACEHOLDERS } from '../../shared/mail.ts';
 import { PageHead } from '../components/PageHead.tsx';
@@ -14,7 +14,7 @@ interface Recipients { recipients: { memberId: string; name: string; email: stri
 interface Message { id: string; kind: 'free' | 'invoices'; category: 'notice' | 'newsletter'; subject: string; body: string; status: 'sending' | 'sent'; createdBy: string; createdAt: string; counts: { total: number; sent: number; queued: number; failed: number } }
 interface Delivery { id: string; memberId: string | null; name: string; email: string; status: string; error: string | null; sentAt: string | null; invoiceNumber: string | null }
 
-const DELIVERY_LABEL: Record<string, string> = { queued: 'Wartet', sending: 'Wird gesendet', sent: 'Zugestellt an den Mailserver', failed: 'Fehlgeschlagen', bounced: 'Unzustellbar' };
+const DELIVERY_LABEL: Record<string, string> = { queued: 'Wartet', sending: 'Wird gesendet', sent: 'Zugestellt an den Mailserver', failed: 'Fehlgeschlagen', bounced: 'Unzustellbar', skipped: 'Ausgelassen' };
 
 export function Communication({ me }: { me: Me }) {
   useTitle('Kommunikation');
@@ -42,11 +42,16 @@ export function Communication({ me }: { me: Me }) {
   const recipients = useQuery({ queryKey: ['recipients', mode, groupId, category, picked], queryFn: () => api<Recipients>('/messages/recipients', { method: 'POST', body: { filter, category } }), enabled: canWrite && ready });
   const first = recipients.data?.recipients[0];
   const [preview, setPreview] = useState<{ subject: string; body: string }>();
+  const previewSeq = useRef(0);
   useEffect(() => {
     if (!first) return setPreview(undefined);
-    const t = setTimeout(() => void api<{ subject: string; body: string }>('/messages/preview', { method: 'POST', body: { subject, body, memberId: first.memberId } }).then(setPreview, () => undefined), 300);
+    // Only the newest request may update the preview; slower older answers are dropped.
+    const seq = ++previewSeq.current;
+    const t = setTimeout(() => void api<{ subject: string; body: string }>('/messages/preview', { method: 'POST', body: { subject, body, memberId: first.memberId } }).then((p) => seq === previewSeq.current && setPreview(p), () => undefined), 300);
     return () => clearTimeout(t);
   }, [subject, body, first]);
+  const [sending, setSending] = useState(false);
+  const org = useQuery({ queryKey: ['organization'], queryFn: () => api<{ mailPausedReason: string | null }>('/organization') });
   const templates = useQuery({ queryKey: ['mail-templates'], queryFn: () => api<MailTemplate[]>('/mail-templates'), enabled: canWrite });
   const own = templates.data?.filter((t) => !t.key) ?? [];
   const [naming, setNaming] = useState<string | null>(null);
@@ -69,6 +74,8 @@ export function Communication({ me }: { me: Me }) {
   }
 
   async function send() {
+    if (sending) return;
+    setSending(true);
     setError(undefined);
     try {
       const m = await api<Message>('/messages', { method: 'POST', body: { subject, body, category, filter } });
@@ -79,6 +86,8 @@ export function Communication({ me }: { me: Me }) {
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);
       setConfirming(false);
+    } finally {
+      setSending(false);
     }
   }
 
@@ -86,6 +95,11 @@ export function Communication({ me }: { me: Me }) {
   return (
     <div className="page">
       <PageHead title="Kommunikation" intro="E-Mails an Mitglieder, über den Mailserver des Vereins. Wer keine Adresse hat oder nicht mehr Mitglied ist, wird angezeigt und ausgelassen." />
+      {org.data?.mailPausedReason && (
+        <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-5)', maxWidth: '80ch' }}>
+          Der Versand ist angehalten, weil der Mailserver die Anmeldung oder den Absender abgelehnt hat: {org.data.mailPausedReason}. Neue E-Mails warten, bis jemand mit Einstellungsrechten den Versand unter <Link to="/einstellungen/email">Einstellungen → E-Mail</Link> fortsetzt.
+        </div>
+      )}
       {canWrite && (
         <section className="compose" aria-label="Neue E-Mail">
           <div className="compose-form">
@@ -144,7 +158,7 @@ export function Communication({ me }: { me: Me }) {
               {confirming ? (
                 <>
                   <span>Wirklich an {count} Empfänger:innen senden?</span>
-                  <button className="btn btn-primary" onClick={() => void send()}>Ja, senden</button>
+                  <button className="btn btn-primary" aria-busy={sending} disabled={sending} onClick={() => void send()}>Ja, senden</button>
                   <button className="btn btn-ghost" onClick={() => setConfirming(false)}>Abbrechen</button>
                 </>
               ) : (

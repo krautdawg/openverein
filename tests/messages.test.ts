@@ -45,6 +45,9 @@ describe('messages', () => {
     await processQueue(ctx.db, { baseUrl: 'https://verein.example' });
     const msg = await (await fetch(`${MAILPIT}/api/v1/message/${(await inbox('abo@example.org'))[0]!.ID}`)).json();
     const token = String(msg.Text).match(/abmelden#([^\s]+)/)![1]!;
+    expect(msg.Text).not.toContain('List-Unsubscribe'); // header, not body
+    const oneClick = await ctx.app.inject({ method: 'POST', url: `/api/v1/unsubscribe/${token}`, headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://mail.example' }, payload: 'List-Unsubscribe=One-Click' });
+    expect(oneClick.statusCode, oneClick.body).toBe(200);
     expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/unsubscribe', payload: { token } })).statusCode).toBe(200);
     expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/unsubscribe', payload: { token: token.slice(0, -2) + 'xx' } })).statusCode).toBe(400);
     expect((await admin.post('/messages/recipients', { filter: { mode: 'all' }, category: 'newsletter' })).body.recipients).toHaveLength(0);
@@ -52,10 +55,10 @@ describe('messages', () => {
     void nl;
   });
 
-  it('marks hard bounces and suppresses the address; retries temporary failures', async () => {
+  it('marks hard bounces and suppresses the address; retries temporary failures; pauses on setup errors', async () => {
     await member('Bounce', 'nobody@example.org');
     let calls = 0;
-    setMailer({ sendMail: async () => { calls++; throw Object.assign(new Error('550 mailbox unavailable'), { responseCode: 550 }); } } as never);
+    setMailer({ sendMail: async () => { calls++; throw Object.assign(new Error('550 mailbox unavailable'), { responseCode: 550, code: 'EENVELOPE', rejected: ['nobody@example.org'] }); } } as never);
     const m = await admin.post('/messages', { subject: 'X', body: 'Y', filter: { mode: 'all' } });
     await processQueue(ctx.db);
     expect((await admin.get(`/messages/${m.body.id}`)).body.deliveries[0].status).toBe('bounced');
@@ -67,6 +70,18 @@ describe('messages', () => {
     const t = await admin.post('/messages', { subject: 'X', body: 'Y', filter: { mode: 'members', memberIds: [(await admin.get('/members?q=temp')).body.items[0].id] } });
     await processQueue(ctx.db);
     expect((await admin.get(`/messages/${t.body.id}`)).body.deliveries[0].status).toBe('queued');
+    expect(await processQueue(ctx.db)).toBe(0); // backoff: not due yet
+
+    // A wrong SMTP password pauses the queue instead of blocking every address.
+    await ctx.db.updateTable('delivery').set({ next_attempt_at: new Date(0) }).execute();
+    setMailer({ sendMail: async () => { throw Object.assign(new Error('535 auth failed'), { responseCode: 535, code: 'EAUTH' }); } } as never);
+    await processQueue(ctx.db);
+    expect((await admin.get('/organization')).body.mailPausedReason).toContain('535');
+    expect((await admin.get(`/messages/${t.body.id}`)).body.deliveries[0].status).toBe('queued');
+    expect((await admin.post('/messages/recipients', { filter: { mode: 'all' } })).body.recipients).toHaveLength(1);
+    expect(await processQueue(ctx.db)).toBe(0);
+    await admin.post('/mail/resume', {});
+    expect((await admin.get('/organization')).body.mailPausedReason).toBeNull();
   });
 
   it('sends invoices with their PDF and lists letter recipients for printing', async () => {
@@ -81,6 +96,7 @@ describe('messages', () => {
     }
     const res = await admin.post('/invoices/send-mail', { invoiceIds: ids });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((await admin.post('/invoices/send-mail', { invoiceIds: ids })).body).toMatchObject({ sent: 0, alreadySent: 1 });
     expect(res.body.toPrint).toHaveLength(1);
     expect(res.body.toPrint[0].reason).toBe('bevorzugt Brief');
     await processQueue(ctx.db);
@@ -107,11 +123,11 @@ describe('messages', () => {
     await admin.post(`/invoices/${paid.body.id}/payments`, { amountCents: 1000, method: 'cash', bookedOn: '2026-01-02' });
     const res = await admin.post('/invoices/send-mail', { invoiceIds: [d.body.id, paid.body.id], template: 'dunning' });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(res.body.message.counts.total).toBe(1);
+    expect(res.body.sent).toBe(1);
     await processQueue(ctx.db);
     expect((await inbox('offen@example.org'))[0]!.Subject).toMatch(/^Erinnerung R-\d{4}-00001: 30,00\s€ offen$/);
 
-    const del = (await admin.get(`/messages/${res.body.message.id}`)).body.deliveries[0];
+    const del = (await admin.get(`/messages/${res.body.messages[0].id}`)).body.deliveries[0];
     expect((await admin.post(`/deliveries/${del.id}/bounce`, {})).status).toBe(200);
     expect((await admin.post('/messages/recipients', { filter: { mode: 'all' } })).body.recipients).toHaveLength(0);
     expect((await admin.post('/mail/unblock', { email: 'OFFEN@example.org' })).body.removed).toBe(true);

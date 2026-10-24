@@ -50,9 +50,15 @@ export function MailSettings({ me }: { me: Me }) {
           <dt>Antworten an</dt><dd>{edit('Antwortadresse', 'mailReplyTo', 'an den Absender')}</dd>
           <dt>Tempo</dt><dd>{canWrite ? <InlineEdit label="E-Mails pro Minute" field="mailPerMinute" value={String(org.mailPerMinute)} display={(v) => `${v} E-Mails pro Minute`} onSave={(v) => save({ mailPerMinute: Number(v) })} /> : `${org.mailPerMinute} E-Mails pro Minute`}</dd>
         </dl>
+        {org.mailPausedReason && (
+          <div className="alert alert-error" role="alert" style={{ marginTop: 'var(--s-4)', maxWidth: '70ch' }}>
+            Versand angehalten: {org.mailPausedReason}. Prüf SMTP-Zugang und Absenderadresse, schick Dir eine Test-E-Mail und setz den Versand dann fort.
+          </div>
+        )}
         {canWrite && (
           <div className="actions-row">
             <button className="btn" aria-busy={busy} disabled={busy} onClick={() => void sendTest()}>Test-E-Mail an mich</button>
+            {org.mailPausedReason && <button className="btn btn-primary" onClick={() => void api('/mail/resume', { method: 'POST', body: {} }).then(() => qc.invalidateQueries({ queryKey: ['organization'] }))}>Versand fortsetzen</button>}
           </div>
         )}
         {test && (

@@ -5,7 +5,10 @@ let transport: Transporter | null = null;
 
 /** The club's SMTP relay from SMTP_URL (smtp://user:pass@host:port or smtps://…). */
 export function mailer() {
-  transport ??= nodemailer.createTransport(config.smtpUrl);
+  // Short timeouts: a dead relay must not hang a request (invitations) or the worker for minutes.
+  const url = new URL(config.smtpUrl);
+  for (const [k, v] of [['connectionTimeout', '10000'], ['greetingTimeout', '10000'], ['socketTimeout', '30000']] as const) if (!url.searchParams.has(k)) url.searchParams.set(k, v);
+  transport ??= nodemailer.createTransport(url.toString());
   return transport;
 }
 

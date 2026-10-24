@@ -490,3 +490,4 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .compose-form .field { margin-bottom: var(--s-4); }
 .inline-form.narrow { max-width: 480px; }
 .inline-form.narrow .btn { justify-self: start; width: auto; }
+.actions-inline { display: inline-flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }

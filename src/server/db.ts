@@ -37,6 +37,7 @@ export interface OrganizationTable {
   mail_from_address: string | null;
   mail_reply_to: string | null;
   mail_per_minute: Generated<number>;
+  mail_paused_reason: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -540,8 +541,10 @@ export interface DeliveryTable {
   member_id: string | null;
   email: string;
   invoice_id: string | null;
-  status: Generated<'queued' | 'sending' | 'sent' | 'failed' | 'bounced'>;
+  status: Generated<'queued' | 'sending' | 'sent' | 'failed' | 'bounced' | 'skipped'>;
   attempts: Generated<number>;
+  claimed_at: Date | null;
+  next_attempt_at: Generated<Date>;
   error: string | null;
   provider_id: string | null;
   sent_at: Date | null;

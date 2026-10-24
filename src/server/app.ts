@@ -71,7 +71,9 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     if (!isApi(req.url)) return;
     // CSRF: state-changing API calls must be JSON (a cross-site form cannot send that without a
     // CORS preflight we never answer) and, when the browser sends an Origin, come from this host.
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    // One-click unsubscribe (RFC 8058) comes from mail programs as a form post; it carries its own token and no cookie matters.
+    const oneClick = req.method === 'POST' && /^\/api\/v1\/unsubscribe\/[\w.-]+$/.test(req.url);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !oneClick) {
       const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
       if (type !== 'application/json') throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
       const origin = req.headers.origin;

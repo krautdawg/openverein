@@ -21,11 +21,17 @@ export function fill(template: string, values: PlaceholderValues) {
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// Trailing punctuation and an escaped ">" belong to the sentence, not the link.
+const link = (url: string) => {
+  const m = url.match(/^(.*?)((?:[.,;:!?)]|&gt;)*)$/)!;
+  return `<a href="${m[1]}">${m[1]}</a>${m[2]}`;
+};
+
 /** Plain text to simple HTML: paragraphs, line breaks, links. */
 export function textToHtml(text: string) {
   return text
     .split(/\n{2,}/)
-    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>').replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')}</p>`)
+    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>').replace(/https?:\/\/[^\s<]+/g, link)}</p>`)
     .join('\n');
 }
 

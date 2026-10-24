@@ -26,6 +26,7 @@ export const organization = z.object({
   mailFromAddress: z.string().nullable(),
   mailReplyTo: z.string().nullable(),
   mailPerMinute: z.number(),
+  mailPausedReason: z.string().nullable(),
 });
 export type Organization = z.infer<typeof organization>;
 

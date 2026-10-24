@@ -7,6 +7,7 @@ import { Login } from './pages/Login.tsx';
 import { Overview } from './pages/Overview.tsx';
 import { Setup } from './pages/Setup.tsx';
 import { AcceptInvite } from './pages/AcceptInvite.tsx';
+import { Unsubscribe } from './pages/Unsubscribe.tsx';
 import { Groups } from './pages/Groups.tsx';
 import { FeePlans } from './pages/Fees.tsx';
 import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
@@ -51,6 +52,7 @@ export function App() {
       <Routes>
         <Route path="/anmelden" element={<Login />} />
         <Route path="/einladung" element={<AcceptInvite />} />
+        <Route path="/abmelden" element={<Unsubscribe />} />
         <Route path="*" element={<Navigate to="/anmelden" replace />} />
       </Routes>
     );

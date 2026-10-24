@@ -31,6 +31,7 @@ const toDto = (o: Selectable<Database['organization']>) => ({
   mailFromAddress: o.mail_from_address,
   mailReplyTo: o.mail_reply_to,
   mailPerMinute: o.mail_per_minute,
+  mailPausedReason: o.mail_paused_reason,
 });
 
 /** API field → column; only fields present in the body are written. */
