@@ -16,6 +16,17 @@ export interface OrganizationTable {
   member_number_pattern: Generated<string>;
   notice_weeks: Generated<number>;
   exit_at: Generated<ExitAt>;
+  street: string | null;
+  postal_code: string | null;
+  city: string | null;
+  email: string | null;
+  iban: string | null;
+  bic: string | null;
+  bank_name: string | null;
+  invoice_number_pattern: Generated<string>;
+  cancellation_number_pattern: Generated<string>;
+  payment_terms_days: Generated<number>;
+  dunning_levels: Generated<DunningLevel[]>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -100,6 +111,7 @@ export interface MemberTable {
   notice_date: string | null;
   exit_date: string | null;
   exit_reason: string | null;
+  payment_method: Generated<PaymentMethod>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -163,6 +175,150 @@ export interface ApiTokenTable {
   created_at: Timestamp;
 }
 
+export type PaymentMethod = 'none' | 'direct_debit' | 'transfer' | 'cash';
+export interface DunningLevel {
+  level: number;
+  label: string;
+  days: number;
+  feeCents: number;
+}
+export type InvoiceKind = 'membership' | 'other' | 'credit_note' | 'cancellation' | 'dunning_fee';
+export type InvoiceStatus = 'draft' | 'issued' | 'open' | 'partially_paid' | 'paid' | 'cancelled' | 'written_off';
+
+export interface FeePlanTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  line_text: Generated<string>;
+  status: Generated<'active' | 'retired'>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface FeePlanVersionTable {
+  id: Generated<string>;
+  organization_id: string;
+  fee_plan_id: string;
+  valid_from: string;
+  amount_cents: number;
+  interval_months: number | null;
+  anchor: Generated<'calendar' | 'entry'>;
+  proration: Generated<'none' | 'month'>;
+  admission_fee_cents: Generated<number>;
+  created_at: Timestamp;
+}
+
+export interface FeeAssignmentTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  fee_plan_id: string;
+  is_main: Generated<boolean>;
+  valid_from: string;
+  valid_to: string | null;
+  first_period_start: string | null;
+  override_cents: number | null;
+  override_reason: string | null;
+  created_at: Timestamp;
+}
+
+export interface FeeRunTable {
+  id: Generated<string>;
+  organization_id: string;
+  until: string;
+  issue_date: string;
+  due_date: string;
+  group_id: string | null;
+  status: Generated<'preview' | 'posted' | 'cancelled'>;
+  preview: unknown;
+  input_hash: string;
+  created_by: string | null;
+  created_at: Timestamp;
+  posted_at: Date | null;
+  cancelled_at: Date | null;
+}
+
+export interface InvoiceTable {
+  id: Generated<string>;
+  organization_id: string;
+  number: string | null;
+  kind: InvoiceKind;
+  status: Generated<InvoiceStatus>;
+  recipient_person_id: string;
+  member_id: string | null;
+  recipient: unknown;
+  issue_date: string | null;
+  due_date: string | null;
+  total_cents: Generated<number>;
+  paid_cents: Generated<number>;
+  cover_text: string | null;
+  cancels_invoice_id: string | null;
+  fee_run_id: string | null;
+  pdf: Buffer | null;
+  pdf_sha256: string | null;
+  written_off_reason: string | null;
+  dunning_hold_until: string | null;
+  dunning_hold_reason: string | null;
+  created_by: string | null;
+  created_at: Timestamp;
+  issued_at: Date | null;
+  updated_at: Timestamp;
+}
+
+export interface InvoiceLineTable {
+  id: Generated<string>;
+  organization_id: string;
+  invoice_id: string;
+  position: number;
+  text: string;
+  quantity: ColumnType<string, string | number | undefined, string | number>;
+  unit_cents: number;
+  total_cents: number;
+  tax_rate: ColumnType<string, string | number | undefined, string | number>;
+  assessment_id: string | null;
+}
+
+export interface AssessmentTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  assignment_id: string;
+  fee_run_id: string | null;
+  charge_slot: string;
+  period_start: string;
+  period_end: string;
+  amount_cents: number;
+  snapshot: unknown;
+  status: Generated<'posted' | 'cancelled'>;
+  created_at: Timestamp;
+}
+
+export interface AllocationTable {
+  id: Generated<string>;
+  organization_id: string;
+  invoice_id: string;
+  amount_cents: number;
+  booked_on: string;
+  method: 'cash' | 'transfer' | 'direct_debit' | 'other' | 'write_off';
+  note: string | null;
+  status: Generated<'confirmed' | 'reversed'>;
+  created_by: string | null;
+  created_at: Timestamp;
+  reversed_at: Date | null;
+}
+
+export interface DunningEventTable {
+  id: Generated<string>;
+  organization_id: string;
+  invoice_id: string;
+  level: number;
+  label: string;
+  fee_cents: Generated<number>;
+  fee_invoice_id: string | null;
+  created_by: string | null;
+  created_at: Timestamp;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -176,6 +332,15 @@ export interface Database {
   role: RoleTable;
   role_grant: RoleGrantTable;
   api_token: ApiTokenTable;
+  fee_plan: FeePlanTable;
+  fee_plan_version: FeePlanVersionTable;
+  fee_assignment: FeeAssignmentTable;
+  fee_run: FeeRunTable;
+  invoice: InvoiceTable;
+  invoice_line: InvoiceLineTable;
+  assessment: AssessmentTable;
+  allocation: AllocationTable;
+  dunning_event: DunningEventTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

@@ -13,6 +13,8 @@ import type { Actor } from './policy.ts';
 import { errorHandler, Problem, sendProblem } from './http/problem.ts';
 import { authRoutes } from './routes/auth.ts';
 import { accessRoutes } from './routes/access.ts';
+import { feeRoutes } from './routes/fees.ts';
+import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
 import { memberRoutes } from './routes/members.ts';
 import { organizationRoutes } from './routes/organization.ts';
@@ -84,6 +86,8 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(memberRoutes);
       await api.register(groupRoutes);
       await api.register(accessRoutes);
+      await api.register(feeRoutes);
+      await api.register(invoiceRoutes);
     },
     { prefix: '/api/v1' },
   );

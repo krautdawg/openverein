@@ -8,6 +8,9 @@ import { Overview } from './pages/Overview.tsx';
 import { Setup } from './pages/Setup.tsx';
 import { AcceptInvite } from './pages/AcceptInvite.tsx';
 import { Groups } from './pages/Groups.tsx';
+import { FeePlans } from './pages/Fees.tsx';
+import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
+import { Dunning, Invoices } from './pages/Invoices.tsx';
 import { Members } from './pages/Members.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
 import { AuditLog } from './pages/settings/AuditLog.tsx';
@@ -56,6 +59,14 @@ export function App() {
         <Route path="/mitglieder/:id" element={<Members me={me.data} />} />
         <Route path="/gruppen" element={<Groups me={me.data} />} />
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
+        <Route path="/beitraege" element={<FeePlans me={me.data} />} />
+        <Route path="/beitraege/laeufe" element={<FeeRuns me={me.data} />} />
+        <Route path="/beitraege/laeufe/:id" element={<FeeRunDetail me={me.data} />} />
+        <Route path="/beitraege/:id" element={<FeePlans me={me.data} />} />
+        <Route path="/rechnungen" element={<Invoices me={me.data} />} />
+        <Route path="/rechnungen/mahnwesen" element={<Dunning me={me.data} />} />
+        <Route path="/rechnungen/mahnwesen/:id" element={<Dunning me={me.data} />} />
+        <Route path="/rechnungen/:id" element={<Invoices me={me.data} />} />
         <Route path="/einstellungen" element={<SettingsLayout me={me.data} />}>
           <Route index element={<ClubSettings me={me.data} />} />
           <Route path="zugaenge" element={<Users me={me.data} />} />

@@ -1,4 +1,4 @@
-import { LayoutGrid, Settings, Shapes, Users, type LucideIcon } from 'lucide-react';
+import { Coins, FileText, LayoutGrid, Settings, Shapes, Users, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   label: string;
@@ -14,5 +14,7 @@ export const nav: NavItem[] = [
   { label: 'Übersicht', path: '/', icon: LayoutGrid, keywords: 'start dashboard home' },
   { label: 'Mitglieder', path: '/mitglieder', icon: Users, keywords: 'personen liste members', module: 'members' },
   { label: 'Gruppen', path: '/gruppen', icon: Shapes, keywords: 'abteilungen mannschaften sparten groups', module: 'groups' },
+  { label: 'Beiträge', path: '/beitraege', icon: Coins, keywords: 'beitragsarten beitragslauf gebühren fees', module: 'fees' },
+  { label: 'Rechnungen', path: '/rechnungen', icon: FileText, keywords: 'offene posten mahnung zahlung invoices', module: 'invoices' },
   { label: 'Einstellungen', path: '/einstellungen', icon: Settings, keywords: 'verein stammdaten zugänge rollen api protokoll settings' },
 ];

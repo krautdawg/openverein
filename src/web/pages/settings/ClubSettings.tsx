@@ -20,6 +20,8 @@ export function ClubSettings({ me }: { me: Me }) {
   }
 
   if (!org) return <div className="skeleton" style={{ width: 280 }} />;
+  const edit = (label: string, key: keyof Organization, field?: string) =>
+    canWrite ? <InlineEdit label={label} field={field ?? (key as string)} value={(org[key] as string | null) ?? ''} onSave={(v) => save({ [key]: v } as Partial<Organization>)} /> : ((org[key] as string | null) ?? '—');
   return (
     <>
       <section aria-labelledby="club">
@@ -29,6 +31,42 @@ export function ClubSettings({ me }: { me: Me }) {
           <dd>{canWrite ? <InlineEdit label="Name des Vereins" value={org.name} onSave={(name) => save({ name })} /> : org.name}</dd>
           <dt>Zeitzone</dt>
           <dd>{org.timeZone}</dd>
+        </dl>
+      </section>
+      <section className="section" aria-labelledby="letterhead">
+        <h2 id="letterhead">Briefkopf und Bankverbindung</h2>
+        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '70ch' }}>Steht auf jeder Rechnung. Mit IBAN druckt OpenVerein einen GiroCode, den Mitglieder mit der Banking-App scannen.</p>
+        <dl className="facts">
+          <dt>Straße</dt><dd>{edit('Straße', 'street')}</dd>
+          <dt>PLZ</dt><dd>{edit('PLZ', 'postalCode')}</dd>
+          <dt>Ort</dt><dd>{edit('Ort', 'city')}</dd>
+          <dt>E-Mail</dt><dd>{edit('E-Mail', 'email')}</dd>
+          <dt>Bank</dt><dd>{edit('Bank', 'bankName')}</dd>
+          <dt>IBAN</dt><dd>{edit('IBAN', 'iban')}</dd>
+          <dt>BIC</dt><dd>{edit('BIC', 'bic')}</dd>
+        </dl>
+      </section>
+      <section className="section" aria-labelledby="invoicing">
+        <h2 id="invoicing">Rechnungen</h2>
+        <dl className="facts">
+          <dt>Rechnungsnummern</dt><dd>{edit('Muster für Rechnungsnummern', 'invoiceNumberPattern')}</dd>
+          <dt>Stornonummern</dt><dd>{edit('Muster für Stornonummern', 'cancellationNumberPattern')}</dd>
+          <dt>Zahlungsziel</dt>
+          <dd>
+            <div className="inline-edit">
+              <input className="input" type="number" min={0} max={120} style={{ width: 88 }} aria-label="Zahlungsziel in Tagen" disabled={!canWrite} defaultValue={org.paymentTermsDays} onBlur={(e) => Number(e.target.value) !== org.paymentTermsDays && void save({ paymentTermsDays: Number(e.target.value) })} />
+              <span>Tage nach Rechnungsdatum</span>
+            </div>
+          </dd>
+          <dt>Mahnstufen</dt>
+          <dd>
+            <ol className="timeline">
+              {org.dunningLevels.map((l) => (
+                <li key={l.level} style={{ gridTemplateColumns: '2rem 1fr' }}><span className="num">{l.level}.</span><span>{l.label} <span className="muted">nach {l.days} Tagen{l.feeCents > 0 && `, Gebühr ${(l.feeCents / 100).toFixed(2).replace('.', ',')} €`}</span></span></li>
+              ))}
+            </ol>
+            <p className="meta">Änderbar über die API (<code>PATCH /api/v1/organization</code>, Feld dunningLevels).</p>
+          </dd>
         </dl>
       </section>
       <section className="section" aria-labelledby="membership">

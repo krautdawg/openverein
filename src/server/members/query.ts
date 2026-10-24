@@ -3,7 +3,7 @@ import type { Database, Db, MemberTable, PersonTable } from '../db.ts';
 import { todayIn } from '../../shared/dates.ts';
 import type { MemberDetail, MemberListItem } from '../../shared/members.ts';
 import { notFound } from '../http/problem.ts';
-import { restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
 
 export async function orgToday(db: Db, organizationId: string) {
   const org = await db.selectFrom('organization').select('time_zone').where('id', '=', organizationId).executeTakeFirstOrThrow();
@@ -23,8 +23,8 @@ export function scopePredicate(groups: string[], today: string, mode: 'read' | '
       and (gm.valid_to is null or gm.valid_to >= ${window}))`;
 }
 
-export function applyScope(actor: Actor, today: string, mode: 'read' | 'write') {
-  const groups = scopeOf(actor, 'members', mode);
+export function applyScope(actor: Actor, today: string, mode: 'read' | 'write', module: Module = 'members') {
+  const groups = scopeOf(actor, module, mode);
   return (eb: ExpressionBuilder<Database, 'member'>) => (groups === null ? eb.val(true) : scopePredicate(groups, today, mode));
 }
 
@@ -97,8 +97,11 @@ export function toListItem(r: Row, groups: MemberListItem['groups'], hidden: Set
   };
 }
 
-/** Loads one member within the actor's scope; out-of-scope members do not exist for the actor. */
-export async function loadMemberRow(db: Db, actor: Actor, id: string, mode: 'read' | 'write' = 'read') {
+/**
+ * Loads one member within the actor's scope; out-of-scope members do not exist for the actor.
+ * `module` decides whose scope applies: a treasurer writes invoices for members they may only read.
+ */
+export async function loadMemberRow(db: Db, actor: Actor, id: string, mode: 'read' | 'write' = 'read', module: Module = 'members') {
   const today = await orgToday(db, actor.organizationId);
   const row = await db
     .selectFrom('member')
@@ -106,7 +109,7 @@ export async function loadMemberRow(db: Db, actor: Actor, id: string, mode: 'rea
     .select(memberColumns)
     .where('member.id', '=', id)
     .where('member.organization_id', '=', actor.organizationId)
-    .where(applyScope(actor, today, mode))
+    .where(applyScope(actor, today, mode, module))
     .executeTakeFirst();
   if (!row) throw notFound('Mitglied');
   return { row, today };
