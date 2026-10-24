@@ -26,12 +26,10 @@ const inbox = async (to: string) => (await (await fetch(`${MAILPIT}/api/v1/searc
 const person = { firstName: 'Lena', lastName: 'Lustig', birthDate: '2014-05-02', email: 'lena@example.org', street: 'Am Bad 3', postalCode: '12345', city: 'Musterstadt' };
 const withPlan = () => ({ feePlanId: planId });
 
-async function submit(data: Record<string, unknown>, opts: { wait?: boolean; honeypot?: boolean } = {}) {
-  const form = (await ctx.app.inject({ method: 'GET', url: '/api/v1/public/forms/mitmachen' })).json();
-  // Pretend the form was open for a while (tokens carry the time they were issued).
-  const [ts, mac] = form.token.split('.');
-  void ts;
-  const token = opts.wait === false ? form.token : await (async () => { await new Promise((r) => setTimeout(r, 3100)); return `${ts}.${mac}`; })();
+async function submit(data: Record<string, unknown>, opts: { wait?: boolean; honeypot?: boolean; token?: string } = {}) {
+  const token = opts.token ?? (await ctx.app.inject({ method: 'GET', url: '/api/v1/public/forms/mitmachen' })).json().token;
+  // Real people need a few seconds; the token carries the time the form was shown.
+  if (opts.wait !== false && !opts.token) await new Promise((r) => setTimeout(r, 3100));
   return ctx.app.inject({ method: 'POST', url: '/api/v1/public/forms/mitmachen/submit', payload: { token, consent: true, website: opts.honeypot ? 'http://spam' : undefined, data } });
 }
 
@@ -60,16 +58,30 @@ describe('applications', () => {
     const mandate = await ctx.db.selectFrom('sepa_mandate').selectAll().executeTakeFirstOrThrow();
     expect(mandate.account_holder).toBe('Lars Lustig');
     expect(await ctx.db.selectFrom('fee_assignment').select('id').execute()).toHaveLength(1);
-    // The stored submission stays as it was sent.
-    await expect(ctx.db.updateTable('application').set({ payload: JSON.stringify({}) }).execute()).rejects.toThrow(/immutable/);
+    // The stored submission stays as it was sent, and its IBAN is encrypted, not in the payload.
+    const stored = await ctx.db.selectFrom('application').selectAll().executeTakeFirstOrThrow();
+    expect(JSON.stringify(stored.payload)).not.toContain('DE02');
+    expect(stored.iban_last4).toBe('2051');
+    await expect(ctx.db.updateTable('application').set({ payload: JSON.stringify({ firstName: 'X' }) }).execute()).rejects.toThrow(/immutable/);
     expect((await inbox('eltern@example.org')).some((x) => x.Subject.startsWith('Willkommen'))).toBe(true);
   });
 
   it('keeps bots out of the inbox and asks before accepting a likely duplicate', async () => {
     expect((await submit({ ...person, ...withPlan() }, { wait: false })).statusCode).toBe(201);
     expect((await submit({ ...person, ...withPlan() }, { honeypot: true })).statusCode).toBe(201);
-    expect((await admin.get('/applications')).body).toHaveLength(0);
-    expect((await admin.get('/applications?status=spam')).body).toHaveLength(2);
+    // A token works once; replaying it files spam and sends nothing.
+    const token = (await ctx.app.inject({ method: 'GET', url: '/api/v1/public/forms/mitmachen' })).json().token;
+    await new Promise((r) => setTimeout(r, 3100));
+    const grown = { ...person, ...withPlan(), birthDate: '1990-01-01', email: 'once@example.org' };
+    expect((await submit(grown, { token })).statusCode).toBe(201);
+    expect((await submit({ ...grown, email: 'victim@example.org' }, { token })).statusCode).toBe(201);
+    expect(await inbox('victim@example.org')).toHaveLength(0);
+    expect((await admin.get('/applications')).body).toHaveLength(1);
+    const spam = (await admin.get('/applications?status=spam')).body;
+    expect(spam).toHaveLength(3);
+    // The board can bring a real person back from spam.
+    expect((await admin.post('/applications/decide', { ids: [spam[0].id], action: 'restore' })).body.decided).toBe(1);
+    await admin.post('/applications/decide', { ids: (await admin.get('/applications')).body.map((x: { id: string }) => x.id), action: 'spam' });
 
     await admin.post('/members', { firstName: 'Lena', lastName: 'Lustig', birthDate: '2014-05-02', joinDate: '2020-01-01' });
     const r = await submit({ ...person, ...withPlan(), birthDate: '1990-01-01', guardian: null });

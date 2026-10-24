@@ -659,7 +659,11 @@ export interface ApplicationTable {
   form_id: string;
   payload: unknown;
   consent: unknown;
-  ip_hash: string | null;
+  application_date: string;
+  email_hash: string;
+  iban_encrypted: string | null;
+  iban_last4: string | null;
+  token_mac: string | null;
   status: Generated<'new' | 'accepted' | 'rejected' | 'spam'>;
   reason: string | null;
   member_id: string | null;

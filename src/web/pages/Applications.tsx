@@ -37,7 +37,7 @@ export function Applications({ me }: { me: Me }) {
   const canWrite = me.permissions.members === 'write';
 
   async function markSpam() {
-    await api('/applications/decide', { method: 'POST', body: { ids: selected, action: 'spam' } });
+    await api('/applications/decide', { method: 'POST', body: { ids: selected, action: status === 'spam' ? 'restore' : 'spam' } });
     setSelected([]);
     await qc.invalidateQueries({ queryKey: ['applications'] });
   }
@@ -49,18 +49,18 @@ export function Applications({ me }: { me: Me }) {
         <div className="segmented" role="group" aria-label="Status">
           {TABS.map(([k, label]) => <button key={k} aria-pressed={status === k} onClick={() => { setSelected([]); setParams(k === 'new' ? {} : { status: k }); }}>{label}</button>)}
         </div>
-        {canWrite && status === 'new' && selected.length > 0 && <button className="btn" onClick={() => void markSpam()}>{selected.length} als Spam markieren</button>}
+        {canWrite && (status === 'new' || status === 'spam') && selected.length > 0 && <button className="btn" onClick={() => void markSpam()}>{status === 'spam' ? `${selected.length} zurückholen` : `${selected.length} als Spam markieren`}</button>}
       </div>
       <div className="table-wrap">
         {data?.length === 0 ? (
           <div className="empty-state"><h3>{status === 'new' ? 'Keine neuen Anträge.' : 'Hier ist nichts.'}</h3><p>{status === 'new' ? 'Neue Anträge aus dem Formular erscheinen hier.' : ''}</p></div>
         ) : (
           <table className="table" aria-label="Anträge">
-            <thead><tr>{canWrite && status === 'new' && <th scope="col" style={{ width: 40 }}><span className="sr-only">Auswahl</span></th>}<th scope="col">Name</th><th scope="col" className="hide-sm">Gruppen</th><th scope="col" className="hide-sm">Hinweise</th><th scope="col" className="num">Eingang</th></tr></thead>
+            <thead><tr>{canWrite && (status === 'new' || status === 'spam') && <th scope="col" style={{ width: 40 }}><span className="sr-only">Auswahl</span></th>}<th scope="col">Name</th><th scope="col" className="hide-sm">Gruppen</th><th scope="col" className="hide-sm">Hinweise</th><th scope="col" className="num">Eingang</th></tr></thead>
             <tbody>
               {data?.map((a) => (
                 <tr key={a.id} data-href tabIndex={0} aria-selected={a.id === id} onClick={() => navigate(`/antraege/${a.id}${status === 'new' ? '' : `?status=${status}`}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/antraege/${a.id}`)}>
-                  {canWrite && status === 'new' && (
+                  {canWrite && (status === 'new' || status === 'spam') && (
                     <td onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" aria-label={`${a.data.firstName} ${a.data.lastName} auswählen`} checked={selected.includes(a.id)} onChange={(e) => setSelected((s) => (e.target.checked ? [...s, a.id] : s.filter((x) => x !== a.id)))} />
                     </td>

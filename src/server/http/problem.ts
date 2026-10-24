@@ -53,6 +53,5 @@ export function errorHandler(err: FastifyError, req: FastifyRequest, reply: Fast
     return sendProblem(reply, new Problem(err.statusCode, 'http-' + err.statusCode, err.message), req.url);
   }
   req.log.error(err);
-  if (process.env.OV_DEBUG_ERRORS) console.error(err);
   return sendProblem(reply, new Problem(500, 'internal', 'Da ist etwas schiefgegangen.'), req.url);
 }

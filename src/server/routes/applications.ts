@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -6,13 +6,14 @@ import { ageOn, applicationDataOut, formInput, publicForm, submission, type Appl
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { config } from '../config.ts';
-import { blindIndex } from '../crypto.ts';
+import { blindIndex, decrypt, encrypt } from '../crypto.ts';
+import { emailHash } from '../mail/worker.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { applicationPdf } from '../applications/pdf.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { orgToday } from '../members/query.ts';
-import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 import { insertMember } from './members.ts';
 import { insertMandate } from './sepa.ts';
 
@@ -22,7 +23,7 @@ const MIN_FILL_MS = 3_000;
 const TOKEN_TTL_MS = 24 * 3_600_000;
 
 // The form token carries the time the form was shown, signed, so bots that post instantly or replay old tokens stand out.
-const sign = (slug: string, ts: number) => createHmac('sha256', config.dataKey).update(`form:${slug}:${ts}`).digest('base64url').slice(0, 32);
+const sign = (slug: string, ts: number) => blindIndex(`form-token:${slug}:${ts}`).slice(0, 32);
 const formToken = (slug: string) => {
   const ts = Date.now();
   return `${ts}.${sign(slug, ts)}`;
@@ -33,8 +34,11 @@ function tokenAge(slug: string, token: string) {
   if (!mac || !Number.isFinite(n)) return null;
   const want = Buffer.from(sign(slug, n));
   const got = Buffer.from(mac);
-  return want.length === got.length && timingSafeEqual(want, got) ? Date.now() - n : null;
+  return want.length === got.length && timingSafeEqual(want, got) ? { age: Date.now() - n, mac } : null;
 }
+// IPv6 clients usually own a whole /64; rate limits count that network, not single addresses.
+const ipKey = (ip: string) => (ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip);
+const FORM_HOURLY_CAP = 60;
 
 const addMonths = (date: string, n: number) => {
   const d = new Date(`${date.slice(0, 7)}-01T00:00:00Z`);
@@ -104,14 +108,20 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/public/forms/:slug/submit',
-    { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Aufnahmeantrag abschicken (öffentlich; Honeypot, Mindest-Ausfüllzeit, Rate-Limit)', security: [], params: z.object({ slug: z.string().max(60) }), body: submission, response: { 201: z.object({ ok: z.boolean() }) } } },
+    { config: { rateLimit: { max: 10, timeWindow: '10 minutes', keyGenerator: (req) => ipKey(req.ip) } }, schema: { tags, summary: 'Aufnahmeantrag abschicken (öffentlich; Honeypot, einmaliger Formular-Token mit Mindest-Ausfüllzeit, Rate-Limits)', security: [], params: z.object({ slug: z.string().max(60) }), body: submission, response: { 201: z.object({ ok: z.boolean() }) } } },
     async (req, reply) => {
       const f = await loadForm(req.params.slug);
       const { data } = req.body;
-      const age = tokenAge(f.slug, req.body.token);
+      const token = tokenAge(f.slug, req.body.token);
+      // A genuine token that is too old means a person left the tab open: ask for a reload instead of filing it as spam.
+      if (token && token.age > TOKEN_TTL_MS) throw new Problem(409, 'form-expired', 'Das Formular war zu lange offen.', 'Lade die Seite neu; Deine Eingaben musst Du leider noch einmal machen.');
+      const recent = await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('form_id', '=', f.id).where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
+      if (recent.n >= FORM_HOURLY_CAP) throw new Problem(429, 'busy', 'Gerade gehen sehr viele Anträge ein.', 'Versuch es in einer Stunde noch einmal.');
+      const reused = token ? await db.selectFrom('application').select('id').where('token_mac', '=', token.mac).executeTakeFirst() : undefined;
       const today = await orgToday(db, f.organization_id);
-      // Bots get the same answer as people; their submission is kept as spam for the record but never shown as new.
-      const spam = !!req.body.website || age === null || age < MIN_FILL_MS || age > TOKEN_TTL_MS;
+      const org = await db.selectFrom('organization').select(['name', 'creditor_id', 'electronic_mandates_agreed']).where('id', '=', f.organization_id).executeTakeFirstOrThrow();
+      // Bots get the same answer as people; their submission is kept as spam (without bank data) and never mailed.
+      const spam = !!req.body.website || !token || token.age < MIN_FILL_MS || !!reused;
       if (!spam) {
         const invalid = (field: string, message: string) => new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message }] });
         if (data.birthDate > today) throw invalid('data.birthDate', 'Das Geburtsdatum liegt in der Zukunft.');
@@ -119,29 +129,46 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
         if (data.groupIds.some((g) => !f.group_ids.includes(g))) throw invalid('data.groupIds', 'Diese Gruppe gibt es im Formular nicht.');
         if (data.feePlanId && !f.fee_plan_ids.includes(data.feePlanId)) throw invalid('data.feePlanId', 'Diesen Beitrag gibt es im Formular nicht.');
         if (f.fee_plan_ids.length && !data.feePlanId) throw invalid('data.feePlanId', 'Bitte wähle einen Beitrag.');
-        if (data.mandate && !f.ask_mandate) throw invalid('data.mandate', 'Dieses Formular nimmt keine Lastschrift an.');
-        // A minor never signs a mandate: the account holder must be someone else.
-        if (data.mandate && ageOn(data.birthDate, today) < 18 && data.mandate.accountHolder.trim().toLowerCase() === `${data.firstName} ${data.lastName}`.trim().toLowerCase()) {
+        if (data.mandate && (!f.ask_mandate || !org.creditor_id)) throw invalid('data.mandate', 'Dieses Formular nimmt keine Lastschrift an.');
+        // A minor never signs a mandate: the account holder must be someone else (a hint; the board checks too).
+        const squash = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
+        if (data.mandate && ageOn(data.birthDate, today) < 18 && squash(data.mandate.accountHolder) === squash(`${data.firstName} ${data.lastName}`)) {
           throw invalid('data.mandate.accountHolder', 'Bei Minderjährigen ist die erziehungsberechtigte Person Kontoinhaber:in.');
         }
       }
+      const to = data.guardian?.email ?? data.email;
       const acceptedAt = new Date();
-      const row = await db.transaction().execute(async (tx) => {
+      // The IBAN never sits in the payload; it is stored encrypted, and not at all for spam.
+      const { mandate, ...rest } = data;
+      const payload = { ...rest, mandate: mandate ? { accountHolder: mandate.accountHolder } : null };
+      await db.transaction().execute(async (tx) => {
         const a = await tx
           .insertInto('application')
-          .values({ organization_id: f.organization_id, form_id: f.id, payload: JSON.stringify(data), consent: JSON.stringify({ text: f.consent_text, version: f.consent_version, acceptedAt: acceptedAt.toISOString() }), ip_hash: blindIndex(`ip:${req.ip}:${today.slice(0, 7)}`), status: spam ? 'spam' : 'new' })
+          .values({
+            organization_id: f.organization_id,
+            form_id: f.id,
+            payload: JSON.stringify(spam ? { ...payload, mandate: null } : payload),
+            consent: JSON.stringify({ text: f.consent_text, version: f.consent_version, acceptedAt: acceptedAt.toISOString() }),
+            application_date: today,
+            email_hash: emailHash(to),
+            iban_encrypted: !spam && mandate ? encrypt(mandate.iban) : null,
+            iban_last4: !spam && mandate ? mandate.iban.slice(-4) : null,
+            token_mac: reused ? null : (token?.mac ?? null),
+            status: spam ? 'spam' : 'new',
+          })
           .returning('id')
           .executeTakeFirstOrThrow();
         await audit(tx, f.organization_id, null, { action: spam ? 'application.spam' : 'application.received', entityType: 'application', entityId: a.id });
-        return a;
       });
       if (!spam) {
-        const org = await db.selectFrom('organization').select(['name', 'creditor_id', 'electronic_mandates_agreed']).where('id', '=', f.organization_id).executeTakeFirstOrThrow();
-        const { groups, feePlans } = await formChoices(f.organization_id, data.groupIds, data.feePlanId ? [data.feePlanId] : []);
-        const pdf = await applicationPdf({ club: org.name, creditorId: org.creditor_id, submittedAt: acceptedAt, data, groups: groups.map((g) => g.name), feePlan: feePlans[0]?.name ?? null, consentText: f.consent_text, mandatePending: !!data.mandate && !org.electronic_mandates_agreed });
-        const to = data.guardian?.email ?? data.email;
-        await sendSystemMail(db, f.organization_id, 'application_received', to, { vorname: data.firstName }, [{ filename: 'Aufnahmeantrag.pdf', content: pdf, contentType: 'application/pdf' }]);
-        void row;
+        // One confirmation per address and day, never to blocked addresses: the form cannot be used to flood strangers.
+        const earlier = await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('email_hash', '=', emailHash(to)).where('status', '!=', 'spam').where('created_at', '>', new Date(Date.now() - 86_400_000)).executeTakeFirstOrThrow();
+        const blocked = await db.selectFrom('suppression').select('id').where('organization_id', '=', f.organization_id).where('email_hash', '=', emailHash(to)).where('reason', 'in', ['bounce', 'manual']).executeTakeFirst();
+        if (earlier.n <= 1 && !blocked) {
+          const { groups, feePlans } = await formChoices(f.organization_id, data.groupIds, data.feePlanId ? [data.feePlanId] : []);
+          const pdf = await applicationPdf({ club: org.name, creditorId: org.creditor_id, submittedAt: acceptedAt, data, groups: groups.map((g) => g.name), feePlan: feePlans[0]?.name ?? null, consentText: f.consent_text, mandatePending: !!data.mandate && !org.electronic_mandates_agreed });
+          await sendSystemMail(db, f.organization_id, 'application_received', to, { vorname: data.firstName }, [{ filename: 'Aufnahmeantrag.pdf', content: pdf, contentType: 'application/pdf' }]);
+        }
       }
       reply.status(201);
       return { ok: true };
@@ -195,23 +222,46 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     return toFormDto(f);
   });
 
-  async function dto(actor: Actor, rows: { id: string; form_id: string; payload: unknown; consent: unknown; status: 'new' | 'accepted' | 'rejected' | 'spam'; member_id: string | null; reason: string | null; created_at: Date }[]) {
-    const forms = await db.selectFrom('application_form').select(['id', 'title']).where('organization_id', '=', actor.organizationId).execute();
-    const groups = await db.selectFrom('club_group').select(['id', 'name']).where('organization_id', '=', actor.organizationId).execute();
-    const plans = await db.selectFrom('fee_plan').select(['id', 'name']).where('organization_id', '=', actor.organizationId).execute();
+  type AppRow = { id: string; form_id: string; payload: unknown; consent: unknown; status: 'new' | 'accepted' | 'rejected' | 'spam'; member_id: string | null; reason: string | null; created_at: Date; application_date: string; iban_last4: string | null };
+
+  async function duplicatesOf(q: Db, actor: Actor, data: ApplicationData) {
+    const like = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
+    return q
+      .selectFrom('member')
+      .innerJoin('person', 'person.id', 'member.person_id')
+      .select(['member.id', 'member.membership_number', 'person.first_name', 'person.last_name', 'person.birth_date'])
+      .where('member.organization_id', '=', actor.organizationId)
+      .where((eb) => eb.or([eb(sql`lower(person.email)`, '=', data.email.toLowerCase()).and('person.first_name', 'ilike', like(data.firstName)), eb('person.last_name', 'ilike', like(data.lastName)).and('person.birth_date', '=', data.birthDate)]))
+      .limit(5)
+      .execute();
+  }
+
+  async function dto(actor: Actor, rows: AppRow[], q: Db = db) {
+    const forms = await q.selectFrom('application_form').select(['id', 'title']).where('organization_id', '=', actor.organizationId).execute();
+    const groups = await q.selectFrom('club_group').select(['id', 'name']).where('organization_id', '=', actor.organizationId).execute();
+    const plans = await q.selectFrom('fee_plan').select(['id', 'name']).where('organization_id', '=', actor.organizationId).execute();
+    const hidden = restrictedFields(actor);
+    const mask = (field: string, v: string | undefined | null) => (v && hidden.has(field) ? '•••' : v);
     const out = [];
     for (const r of rows) {
       const data = r.payload as ApplicationData;
-      const dupes = await db
-        .selectFrom('member')
-        .innerJoin('person', 'person.id', 'member.person_id')
-        .select(['member.id', 'member.membership_number', 'person.first_name', 'person.last_name', 'person.email', 'person.birth_date'])
-        .where('member.organization_id', '=', actor.organizationId)
-        .where((eb) => eb.or([eb(sql`lower(person.email)`, '=', data.email.toLowerCase()).and('person.first_name', 'ilike', data.firstName), eb('person.last_name', 'ilike', data.lastName).and('person.birth_date', '=', data.birthDate)]))
-        .limit(5)
-        .execute();
-      // Bank details only for roles that may see IBANs.
-      const shown = data.mandate && restrictedFields(actor).has('iban') ? { ...data, mandate: { ...data.mandate, iban: `•••• ${data.mandate.iban.slice(-4)}` } } : data;
+      if (!data.firstName) {
+        // Scrubbed after the retention period.
+        out.push({ id: r.id, formTitle: forms.find((f) => f.id === r.form_id)?.title ?? '', status: r.status, data: { firstName: '', lastName: '(gelöscht)', birthDate: r.application_date, email: '', street: '', postalCode: '', city: '', groupIds: [] }, consent: r.consent as { text: string; version: number; acceptedAt: string }, groups: [], feePlan: null, minor: false, duplicates: [], memberId: r.member_id, reason: r.reason, createdAt: r.created_at.toISOString() });
+        continue;
+      }
+      // Only new applications need the duplicate check; decided ones skip the queries.
+      const dupes = r.status === 'new' ? await duplicatesOf(q, actor, data) : [];
+      const shown = {
+        ...data,
+        birthDate: hidden.has('birth_date') ? r.application_date : data.birthDate,
+        email: mask('email', data.email)!,
+        phone: mask('phone', data.phone) ?? undefined,
+        note: mask('note', data.note) ?? undefined,
+        guardian: data.guardian ? { ...data.guardian, email: mask('email', data.guardian.email)!, phone: mask('phone', data.guardian.phone) ?? undefined } : null,
+        // Bank details only for roles that may see IBANs.
+        mandate: data.mandate ? { accountHolder: data.mandate.accountHolder, iban: hidden.has('iban') ? '••••' : `•••• ${r.iban_last4 ?? ''}` } : null,
+      };
       out.push({
         id: r.id,
         formTitle: forms.find((f) => f.id === r.form_id)?.title ?? '',
@@ -220,7 +270,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
         consent: r.consent as { text: string; version: number; acceptedAt: string },
         groups: data.groupIds.map((g) => ({ id: g, name: groups.find((x) => x.id === g)?.name ?? 'gelöschte Gruppe' })),
         feePlan: data.feePlanId ? { id: data.feePlanId, name: plans.find((p) => p.id === data.feePlanId)?.name ?? 'gelöschter Beitrag' } : null,
-        minor: ageOn(data.birthDate, r.created_at.toISOString().slice(0, 10)) < 18,
+        minor: ageOn(data.birthDate, r.application_date) < 18,
         duplicates: dupes.map((d) => ({ memberId: d.id, name: `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim(), number: d.membership_number, reason: d.birth_date === data.birthDate ? 'gleicher Name und Geburtstag' : 'gleiche E-Mail-Adresse' })),
         memberId: r.member_id,
         reason: r.reason,
@@ -238,10 +288,10 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     return dto(actor, rows);
   });
 
-  async function loadNew(tx: Db, actor: Actor, id: string) {
+  async function loadNew(tx: Db, actor: Actor, id: string, status: AppRow['status'] = 'new') {
     const a = await tx.selectFrom('application').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
     if (!a) throw notFound('Antrag');
-    if (a.status !== 'new') throw new Problem(409, 'decided', 'Über diesen Antrag ist schon entschieden.');
+    if (a.status !== status) throw new Problem(409, 'decided', 'Über diesen Antrag ist schon entschieden.');
     return a;
   }
 
@@ -259,34 +309,48 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       unscoped(actor);
+      // Accepting writes every field of the application; a role that may not see some of them may not write them either.
+      const hidden = [...restrictedFields(actor)].filter((f) => ['birth_date', 'email', 'phone', 'street', 'note'].includes(f));
+      if (hidden.length) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Aufnehmen dürfen Zugänge, die alle Personendaten sehen.', { permission: `members.field.${hidden[0]}` });
       const today = await orgToday(db, actor.organizationId);
       const org = await db.selectFrom('organization').select(['join_rule', 'electronic_mandates_agreed']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
       const result = await db.transaction().execute(async (tx) => {
         const a = await loadNew(tx, actor, req.params.id);
         const data = a.payload as ApplicationData;
-        if (!req.body?.ignoreDuplicates) {
-          const [d] = await dto(actor, [a]);
-          if (d!.duplicates.length) throw new Problem(409, 'duplicate', 'Diese Person ist vielleicht schon Mitglied.', `Mögliche Treffer: ${d!.duplicates.map((x) => `${x.name} (${x.number}, ${x.reason})`).join('; ')}. Prüfe sie und nimm den Antrag dann ausdrücklich an.`);
+        if (a.iban_encrypted && (!can(actor, 'sepa', 'write') || restrictedFields(actor).has('iban'))) {
+          throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Der Antrag enthält ein SEPA-Mandat; aufnehmen kann nur, wer Mandate erfassen darf.', { permission: 'sepa:write' });
         }
-        const joinDate = req.body?.joinDate ?? joinDateFor(org.join_rule, a.created_at.toISOString().slice(0, 10), today);
+        if (!req.body?.ignoreDuplicates) {
+          const dupes = await duplicatesOf(tx, actor, data);
+          if (dupes.length) throw new Problem(409, 'duplicate', 'Diese Person ist vielleicht schon Mitglied.', `Mögliche Treffer: ${dupes.map((x) => `${x.first_name ?? ''} ${x.last_name ?? ''} (${x.membership_number})`).join('; ')}. Prüfe sie und nimm den Antrag dann ausdrücklich an.`);
+        }
+        // The club's rule, but never in the past unless the board says so explicitly.
+        const ruled = joinDateFor(org.join_rule, a.application_date, today);
+        const joinDate = req.body?.joinDate ?? (ruled < today ? today : ruled);
+        if (joinDate < a.application_date) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'joinDate', message: 'Der Eintritt liegt vor dem Antrag.' }] });
+        const planId = req.body?.feePlanId !== undefined ? req.body.feePlanId : data.feePlanId;
+        if (planId) {
+          const plan = await tx.selectFrom('fee_plan').select(['id', 'status']).where('id', '=', planId).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+          if (!plan) throw notFound('Beitrag');
+          if (plan.status !== 'active') throw new Problem(409, 'plan-retired', 'Der gewählte Beitrag ist stillgelegt. Wähle einen anderen.');
+        }
         const memberId = await insertMember(
           tx,
           actor,
-          { kind: 'natural', firstName: data.firstName, lastName: data.lastName, birthDate: data.birthDate, email: data.guardian?.email ?? data.email, phone: data.phone ?? data.guardian?.phone ?? null, street: data.street, postalCode: data.postalCode, city: data.city, country: 'DE', preferredChannel: 'email', note: data.guardian ? `Erziehungsberechtigt: ${data.guardian.name}${data.note ? `\n${data.note}` : ''}` : (data.note ?? null), joinDate, applicationDate: a.created_at.toISOString().slice(0, 10), groupIds: req.body?.groupIds ?? data.groupIds, companyName: null },
+          { kind: 'natural', firstName: data.firstName, lastName: data.lastName, birthDate: data.birthDate, email: data.guardian?.email ?? data.email, phone: data.phone ?? data.guardian?.phone ?? null, street: data.street, postalCode: data.postalCode, city: data.city, country: 'DE', preferredChannel: 'email', note: data.guardian ? `Erziehungsberechtigt: ${data.guardian.name}${data.note ? `\n${data.note}` : ''}` : (data.note ?? null), joinDate, applicationDate: a.application_date, groupIds: req.body?.groupIds ?? data.groupIds, companyName: null },
           today,
           'member.created_from_application',
         );
         const member = await tx.selectFrom('member').select(['person_id', 'membership_number']).where('id', '=', memberId).executeTakeFirstOrThrow();
-        const planId = req.body?.feePlanId !== undefined ? req.body.feePlanId : data.feePlanId;
         if (planId) {
           await tx.insertInto('fee_assignment').values({ organization_id: actor.organizationId, member_id: memberId, fee_plan_id: planId, is_main: true, valid_from: joinDate }).execute();
           await audit(tx, actor.organizationId, actor, { action: 'member.fee_assigned', entityType: 'member', entityId: memberId, diff: { plan: [null, planId], validFrom: [null, joinDate] } });
         }
         let mandateStatus: 'active' | 'pending_evidence' | null = null;
-        if (data.mandate) {
+        if (data.mandate && a.iban_encrypted) {
           // Without the bank's written agreement to online mandates, the mandate waits for a signature.
           const pending = !org.electronic_mandates_agreed;
-          await insertMandate(tx, actor, { personId: member.person_id, memberId, membershipNumber: member.membership_number, today, signedOn: a.created_at.toISOString().slice(0, 10), accountHolder: data.mandate.accountHolder, iban: data.mandate.iban, type: 'recurrent', pendingEvidence: pending });
+          await insertMandate(tx, actor, { personId: member.person_id, memberId, membershipNumber: member.membership_number, today, signedOn: a.application_date, accountHolder: data.mandate.accountHolder, iban: decrypt(a.iban_encrypted), type: 'recurrent', pendingEvidence: pending });
           await tx.updateTable('member').set({ payment_method: 'direct_debit' }).where('id', '=', memberId).execute();
           mandateStatus = pending ? 'pending_evidence' : 'active';
         }
@@ -302,7 +366,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/applications/decide',
-    { schema: { tags, summary: 'Anträge ablehnen oder als Spam markieren (einzeln oder mehrere)', body: z.object({ ids: z.array(z.uuid()).min(1).max(200), action: z.enum(['reject', 'spam']), reason: z.string().trim().max(500).optional() }), response: { 200: z.object({ decided: z.number() }) } } },
+    { schema: { tags, summary: 'Anträge ablehnen, als Spam markieren oder aus dem Spam zurückholen (einzeln oder mehrere)', body: z.object({ ids: z.array(z.uuid()).min(1).max(200), action: z.enum(['reject', 'spam', 'restore']), reason: z.string().trim().max(500).optional() }), response: { 200: z.object({ decided: z.number() }) } } },
     async (req) => {
       const actor = requireActor(req);
       unscoped(actor);
@@ -311,9 +375,9 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
       const decided = await db.transaction().execute(async (tx) => {
         const out: ApplicationData[] = [];
         for (const id of ids) {
-          const a = await loadNew(tx, actor, id);
-          await tx.updateTable('application').set({ status: action === 'reject' ? 'rejected' : 'spam', reason: reason ?? null, decided_by: actor.userId, decided_at: new Date() }).where('id', '=', a.id).execute();
-          await audit(tx, actor.organizationId, actor, { action: action === 'reject' ? 'application.rejected' : 'application.marked_spam', entityType: 'application', entityId: a.id });
+          const a = await loadNew(tx, actor, id, action === 'restore' ? 'spam' : 'new');
+          await tx.updateTable('application').set({ status: action === 'reject' ? 'rejected' : action === 'spam' ? 'spam' : 'new', reason: action === 'restore' ? null : (reason ?? null), decided_by: action === 'restore' ? null : actor.userId, decided_at: action === 'restore' ? null : new Date() }).where('id', '=', a.id).execute();
+          await audit(tx, actor.organizationId, actor, { action: `application.${action === 'reject' ? 'rejected' : action === 'spam' ? 'marked_spam' : 'restored'}`, entityType: 'application', entityId: a.id });
           if (action === 'reject') out.push(a.payload as ApplicationData);
         }
         return out;
@@ -323,3 +387,9 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 };
+
+/** Retention: spam goes after 30 days, rejected applications are scrubbed after 6 months (hourly job). */
+export async function pruneApplications(db: Db) {
+  await db.deleteFrom('application').where('status', '=', 'spam').where('created_at', '<', new Date(Date.now() - 30 * 86_400_000)).execute();
+  await db.updateTable('application').set({ payload: JSON.stringify({}), iban_encrypted: null }).where('status', '=', 'rejected').where('decided_at', '<', new Date(Date.now() - 183 * 86_400_000)).where(sql<boolean>`payload <> '{}'::jsonb`).execute();
+}

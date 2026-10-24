@@ -59,7 +59,7 @@ export const formInput = z.object({
   askMandate: z.boolean().default(true),
   consentText: required(4000, 'Bitte einen Einwilligungstext angeben.'),
   privacyUrl: z.url('Bitte eine vollständige Adresse angeben (https://…).').max(500).nullish().or(z.literal('').transform(() => null)),
-  allowedOrigins: z.array(z.url().transform((u) => new URL(u).origin)).max(10).default([]),
+  allowedOrigins: z.array(z.url({ protocol: /^https?$/, error: 'Bitte eine Adresse mit https:// angeben.' }).transform((u) => new URL(u).origin)).max(10).default([]),
   active: z.boolean().default(true),
 });
 
