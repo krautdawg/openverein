@@ -46,6 +46,14 @@ export function ClubSettings({ me }: { me: Me }) {
           <dt>BIC</dt><dd>{edit('BIC', 'bic')}</dd>
           <dt>Gläubiger-ID</dt>
           <dd>{edit('Gläubiger-Identifikationsnummer', 'creditorId')}<p className="meta">Für SEPA-Lastschriften, von der Bundesbank vergeben (z. B. DE98ZZZ09999999999).</p></dd>
+          <dt>Vorabankündigung</dt>
+          <dd>
+            <div className="inline-edit">
+              <input className="input" type="number" min={1} max={60} style={{ width: 88 }} aria-label="Vorabankündigung in Tagen" disabled={!canWrite} defaultValue={org.prenotificationDays} onBlur={(e) => Number(e.target.value) !== org.prenotificationDays && void save({ prenotificationDays: Number(e.target.value) })} />
+              <span>Tage zwischen Rechnung und Lastschrift</span>
+            </div>
+            <p className="meta">Standard sind 14 Tage. Eine kürzere Frist nur, wenn sie im Mandat vereinbart ist.</p>
+          </dd>
         </dl>
       </section>
       <section className="section" aria-labelledby="invoicing">

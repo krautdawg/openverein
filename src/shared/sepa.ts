@@ -58,7 +58,7 @@ export const bankAccount = z.object({
 });
 export type BankAccount = z.infer<typeof bankAccount>;
 
-export const READINESS_LABEL = { ok: 'Bereit', no_mandate: 'Kein aktives Mandat', in_run: 'Bereits in einem Einzug', not_debit: 'Zahlt nicht per Lastschrift', no_iban: 'Keine Bankverbindung' } as const;
+export const READINESS_LABEL = { ok: 'Bereit', no_mandate: 'Kein aktives Mandat', in_run: 'Bereits in einem Einzug', not_debit: 'Zahlt nicht per Lastschrift', no_iban: 'Keine Bankverbindung', no_prenotification: 'Keine Vorabankündigung mit diesem Mandat' } as const;
 export const candidate = z.object({
   invoiceId: z.uuid(),
   number: z.string(),
@@ -68,7 +68,7 @@ export const candidate = z.object({
   openCents: z.number(),
   kind: z.string(),
   mandateReference: z.string().nullable(),
-  readiness: z.enum(['ok', 'no_mandate', 'in_run', 'not_debit', 'no_iban']),
+  readiness: z.enum(['ok', 'no_mandate', 'in_run', 'not_debit', 'no_iban', 'no_prenotification']),
 });
 export type Candidate = z.infer<typeof candidate>;
 
@@ -100,6 +100,8 @@ export const importInput = z.object({
   format: z.enum(['camt053', 'csv']),
   fileName: z.string().max(200).optional(),
   content: z.string().min(1).max(50 * 1024 * 1024),
+  /** import although the closing balance does not match, with the reason */
+  balanceOverrideReason: z.string().trim().min(3).max(300).optional(),
 });
 export const importResult = z.object({
   id: z.uuid(),

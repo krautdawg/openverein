@@ -12,3 +12,8 @@ it('reads a Sparkasse-style CSV export', () => {
   expect(transactions[1]).toMatchObject({ amountCents: -12300, returnReason: 'MS03' });
   expect(skipped).toBe(1);
 });
+
+it('reads English-formatted amounts', () => {
+  const { transactions } = parseBankCsv('Date,Amount,Purpose\n2026-11-03,"1,234.56",x\n2026-11-03,-12.5,y');
+  expect(transactions.map((t) => t.amountCents)).toEqual([123456, -1250]);
+});

@@ -4,6 +4,7 @@ import { addDays, formatDate } from '../../shared/dates.ts';
 import type { Db, InvoiceKind } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import { nextNumber } from '../members/numbers.ts';
+import { assertNotLive } from '../sepa/live.ts';
 import { epcPayload, formatIban, renderInvoicePdf } from './pdf.ts';
 
 /** Everything the PDF needs, frozen at issue time so the document never changes afterwards. */
@@ -197,6 +198,7 @@ export async function cancelInvoice(tx: Db, organizationId: string, invoiceId: s
   if (!['open', 'partially_paid', 'paid', 'written_off'].includes(inv.status) || inv.kind === 'cancellation') {
     throw new Problem(409, 'not-cancellable', 'Nur ausgestellte Rechnungen lassen sich stornieren.');
   }
+  await assertNotLive(tx, inv.id);
   const paid = await tx.selectFrom('allocation').select('method').where('invoice_id', '=', inv.id).where('status', '=', 'confirmed').executeTakeFirst();
   if (paid) {
     throw new Problem(409, 'has-payments', paid.method === 'write_off' ? 'Die Rechnung ist ausgebucht. Nimm die Ausbuchung zuerst zurück, dann kannst Du stornieren.' : 'Auf die Rechnung sind Zahlungen gebucht. Buche sie zuerst zurück, dann kannst Du stornieren.');

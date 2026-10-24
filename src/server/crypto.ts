@@ -15,6 +15,9 @@ function keys() {
   };
 }
 let cached: ReturnType<typeof keys> | null = null;
+
+/** Called at startup, so a missing or short DATA_KEY stops the server instead of failing on first use. */
+export const assertDataKey = () => void k();
 const k = () => (cached ??= keys());
 
 /** "v1:" + base64(iv | tag | ciphertext) */

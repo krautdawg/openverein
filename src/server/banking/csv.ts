@@ -20,12 +20,12 @@ function splitLine(line: string, sep: string) {
 }
 
 const COLUMNS = {
-  date: ['buchungstag', 'buchungsdatum', 'datum', 'buchung'],
+  date: ['buchungstag', 'buchungsdatum', 'datum', 'buchung', 'date', 'booking date'],
   valueDate: ['valuta', 'wertstellung', 'valutadatum'],
-  amount: ['betrag', 'umsatz', 'betrag (eur)', 'betrag in eur', 'betrag (€)'],
+  amount: ['betrag', 'umsatz', 'betrag (eur)', 'betrag in eur', 'betrag (€)', 'amount'],
   name: ['beguenstigter/zahlungspflichtiger', 'begünstigter/zahlungspflichtiger', 'name zahlungsbeteiligter', 'auftraggeber/empfänger', 'auftraggeber / begünstigter', 'zahlungsempfänger', 'empfänger', 'zahlungspflichtiger', 'name'],
   iban: ['kontonummer/iban', 'iban zahlungsbeteiligter', 'iban', 'kontonummer', 'iban auftraggeber'],
-  purpose: ['verwendungszweck', 'buchungstext verwendungszweck', 'vorgang/verwendungszweck', 'zweck'],
+  purpose: ['verwendungszweck', 'buchungstext verwendungszweck', 'vorgang/verwendungszweck', 'zweck', 'purpose', 'reference'],
   e2e: ['kundenreferenz (end-to-end)', 'end-to-end-referenz', 'end-to-end-id'],
   mandate: ['mandatsreferenz'],
 };
@@ -35,10 +35,13 @@ const parseDate = (s: string) => {
   if (m) return `${m[3]!.length === 2 ? '20' + m[3] : m[3]}-${m[2]!.padStart(2, '0')}-${m[1]!.padStart(2, '0')}`;
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 };
+/** German "1.234,56" and English "1,234.56": the last separator is the decimal point. */
 const parseAmount = (s: string) => {
   const t = s.replace(/\s|€|EUR/g, '');
-  const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
-  return Number.isFinite(n) ? Math.round(n * 100) : null;
+  const decimal = Math.max(t.lastIndexOf(','), t.lastIndexOf('.'));
+  const normalized = decimal < 0 ? t : t.slice(0, decimal).replace(/[.,]/g, '') + '.' + t.slice(decimal + 1);
+  const n = Number(normalized);
+  return t && Number.isFinite(n) ? Math.round(n * 100) : null;
 };
 
 /**
@@ -48,7 +51,7 @@ const parseAmount = (s: string) => {
 export function parseBankCsv(content: string): { transactions: BankTx[]; skipped: number } {
   const text = content.replace(/^\uFEFF/, '');
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  const headerIndex = lines.findIndex((l) => /buchung|datum/i.test(l) && /betrag|umsatz/i.test(l));
+  const headerIndex = lines.findIndex((l) => /buchung|datum|date/i.test(l) && /betrag|umsatz|amount/i.test(l));
   if (headerIndex < 0) throw new Error('Keine Kopfzeile mit Buchungsdatum und Betrag gefunden.');
   const sep = (lines[headerIndex]!.match(/;/g)?.length ?? 0) >= (lines[headerIndex]!.match(/,/g)?.length ?? 0) ? ';' : ',';
   const header = splitLine(lines[headerIndex]!, sep).map((h) => h.toLowerCase());

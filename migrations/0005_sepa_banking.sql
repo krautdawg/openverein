@@ -2,7 +2,9 @@
 -- matching and return debits. IBANs of members are stored encrypted with a blind index for lookups.
 
 alter table organization
-  add column creditor_id text check (creditor_id is null or creditor_id ~ '^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$');
+  add column creditor_id text check (creditor_id is null or creditor_id ~ '^[A-Z]{2}[0-9]{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$'),
+  -- Days between the invoice (pre-notification) and the earliest collection date.
+  add column prenotification_days int not null default 14 check (prenotification_days between 1 and 60);
 
 create table bank_account (
   id uuid primary key default uuidv7(),
@@ -118,6 +120,7 @@ create table bank_statement_import (
   opening_cents bigint,
   closing_cents bigint,
   transaction_count int not null default 0,
+  raw_encrypted text,
   created_by uuid references app_user(id),
   created_at timestamptz not null default now(),
   unique (bank_account_id, file_sha256)
@@ -150,6 +153,10 @@ create index bank_transaction_status_idx on bank_transaction (organization_id, s
 alter table allocation add column bank_transaction_id uuid references bank_transaction(id);
 alter table allocation add column collection_item_id uuid references collection_item(id);
 create index allocation_tx_idx on allocation (bank_transaction_id);
+create index allocation_item_idx on allocation (collection_item_id);
+create index collection_item_run_idx on collection_item (run_id);
+create index collection_item_file_idx on collection_item (file_id);
+create index bank_transaction_import_idx on bank_transaction (import_id);
 
 create table return_debit (
   id uuid primary key default uuidv7(),

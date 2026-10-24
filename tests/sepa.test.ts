@@ -16,7 +16,7 @@ beforeEach(async () => {
   await reset(ctx.db);
   adminCookie = (await setupClub(ctx.app)).cookie;
   admin = client(ctx.app, { cookie: adminCookie });
-  await admin.patch('/organization', { creditorId: 'DE98ZZZ09999999999', iban: 'DE89370400440532013000', street: 'Sportplatzweg 1', postalCode: '12345', city: 'Musterstadt' });
+  await admin.patch('/organization', { creditorId: 'DE98ZZZ09999999999', iban: 'DE89370400440532013000', street: 'Sportplatzweg 1', postalCode: '12345', city: 'Musterstadt', prenotificationDays: 1 });
   accountId = (await admin.post('/bank-accounts', { name: 'Vereinskonto', iban: 'DE89370400440532013000', bic: 'COBADEFFXXX', openingDate: '2026-01-01', openingBalanceCents: 100000 })).body.id;
 });
 
@@ -160,5 +160,79 @@ describe('bank import and matching', () => {
     const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Trainer:in', null) });
     expect((await trainer.get('/bank-accounts')).status).toBe(403);
     expect((await trainer.get('/bank-transactions')).status).toBe(403);
+  });
+});
+
+describe('review fixes', () => {
+  const camtEntry = (amount: string, sign: 'CRDT' | 'DBIT', e2e: string | null, text: string, d: string) =>
+    `<Ntry><Amt Ccy="EUR">${amount}</Amt><CdtDbtInd>${sign}</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts><BookgDt><Dt>${d}</Dt></BookgDt><NtryDtls><TxDtls>${e2e ? `<Refs><EndToEndId>${e2e}</EndToEndId></Refs>` : ''}<RmtInf><Ustrd>${text}</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>`;
+  const camt = (entries: string) => `<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08"><BkToCstmrStmt><Stmt><Acct><Id><IBAN>DE89370400440532013000</IBAN></Id></Acct>${entries}</Stmt></BkToCstmrStmt></Document>`;
+
+  it('a credit-note transfer leaving the account pays the credit note instead of counting as a return', async () => {
+    const { memberId } = await debitor('Erstattung');
+    const note = await admin.post('/invoices', { memberId, kind: 'credit_note', lines: [{ text: 'Erstattung', unitCents: 3000 }] });
+    await admin.post(`/invoices/${note.body.id}/issue`, {});
+    const run = await admin.post('/collection-runs', { kind: 'transfer', bankAccountId: accountId, collectionDate: date(), invoiceIds: [note.body.id] });
+    expect(run.status, JSON.stringify(run.body)).toBe(201);
+    const imp = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: camt(camtEntry('30.00', 'DBIT', run.body.items[0].endToEndId, 'Erstattung', date())) });
+    expect(imp.body).toMatchObject({ autoMatched: 1, returns: 0 });
+    expect((await admin.get(`/invoices/${note.body.id}`)).body.status).toBe('paid');
+    expect((await admin.get('/collection-runs/candidates?kind=transfer')).body).toHaveLength(0);
+  });
+
+  it('an invoice in a running debit cannot be paid, cancelled or auto-matched elsewhere', async () => {
+    const a = await debitor('Doppelt');
+    await admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: [a.invoiceId] });
+    expect((await admin.post(`/invoices/${a.invoiceId}/payments`, { amountCents: 12000, bookedOn: today(), method: 'transfer' })).status).toBe(409);
+    expect((await admin.post(`/invoices/${a.invoiceId}/cancel`)).status).toBe(409);
+    expect((await admin.post(`/invoices/${a.invoiceId}/write-off`, { reason: 'Test der Sperre' })).status).toBe(409);
+    const number = (await admin.get(`/invoices/${a.invoiceId}`)).body.number;
+    const imp = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: camt(camtEntry('120.00', 'CRDT', null, `Beitrag ${number}`, date())) });
+    expect(imp.body.autoMatched).toBe(0);
+    const inbox = (await admin.get('/bank-transactions')).body;
+    expect(inbox[0].suggestions).toHaveLength(0);
+  });
+
+  it('a one-off mandate is collected once', async () => {
+    const m = (await admin.post('/members', { lastName: 'Einmal', joinDate: '2024-01-01' })).body;
+    await admin.patch(`/members/${m.id}/payment-method`, { paymentMethod: 'direct_debit' });
+    await admin.post(`/members/${m.id}/mandates`, { signedOn: '2024-01-15', accountHolder: 'Test Einmal', iban: 'DE02120300000000202051', type: 'one_off' });
+    const ids: string[] = [];
+    for (const c of [1000, 2000]) {
+      const inv = await admin.post('/invoices', { memberId: m.id, dueDate: today(), lines: [{ text: 'X', unitCents: c }] });
+      await admin.post(`/invoices/${inv.body.id}/issue`, {});
+      ids.push(inv.body.id);
+    }
+    expect((await admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: ids })).status).toBe(409);
+    const run = await admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: [ids[0]] });
+    expect(run.body.files[0].sequenceType).toBe('OOFF');
+    await ctx.app.inject({ url: `/api/v1/collection-runs/${run.body.id}/files/1`, headers: { cookie: adminCookie } });
+    await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: camt(camtEntry('10.00', 'CRDT', run.body.items[0].endToEndId, 'OOFF', date())) });
+    expect((await admin.get('/collection-runs/candidates')).body.find((c: { invoiceId: string }) => c.invoiceId === ids[1]).readiness).toBe('no_mandate');
+  });
+
+  it('keeps real repeats, refuses balance mismatches without a reason and rolls back only the latest import', async () => {
+    const csv = 'Buchungstag;Verwendungszweck;Betrag\n03.11.2026;Beitrag;30,00\n03.11.2026;Beitrag;30,00';
+    const first = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'csv', content: csv });
+    expect(first.body.imported).toBe(2);
+    const second = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'csv', content: csv + '\n04.11.2026;Spende;10,00' });
+    expect(second.body).toMatchObject({ imported: 1, duplicates: 2 });
+    expect((await admin.del(`/bank-imports/${first.body.id}`)).status).toBe(409);
+    expect((await admin.del(`/bank-imports/${second.body.id}`)).status).toBe(204);
+    const off = camt(camtEntry('5.00', 'CRDT', null, 'x', '2026-11-05')).replace('</Acct>', '</Acct><Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>');
+    const blocked = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: off });
+    expect(blocked.body.type).toContain('balance-mismatch');
+    const forced = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: off, balanceOverrideReason: 'Auszug vom Vormonat fehlt' });
+    expect(forced.status).toBe(201);
+  });
+
+  it('refuses to revoke a mandate that is in a running debit and enforces the pre-notification period', async () => {
+    const a = await debitor('Frist');
+    await admin.patch('/organization', { prenotificationDays: 14 });
+    const tooEarly = await admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: [a.invoiceId] });
+    expect(tooEarly.body.detail).toContain('Vorabankündigungsfrist');
+    await admin.patch('/organization', { prenotificationDays: 1 });
+    await admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: [a.invoiceId] });
+    expect((await admin.post(`/mandates/${a.mandate.id}/revoke`, { reason: 'Mitglied widerruft' })).status).toBe(409);
   });
 });

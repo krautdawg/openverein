@@ -65,7 +65,7 @@ export function pain008(o: {
 <InstdAmt Ccy="EUR">${amount(i.amountCents)}</InstdAmt>
 <DrctDbtTx><MndtRltdInf><MndtId>${esc(i.mandateId)}</MndtId><DtOfSgntr>${i.mandateSignedOn}</DtOfSgntr></MndtRltdInf></DrctDbtTx>
 <DbtrAgt>${agent(i.debtorBic)}</DbtrAgt>
-<Dbtr><Nm>${esc(sepaText(i.debtorName, 70))}</Nm></Dbtr>
+<Dbtr><Nm>${esc(sepaText(i.debtorName, 70) || 'Kontoinhaber')}</Nm></Dbtr>
 <DbtrAcct><Id><IBAN>${i.debtorIban}</IBAN></Id></DbtrAcct>
 <RmtInf><Ustrd>${esc(sepaText(i.remittance, 140))}</Ustrd></RmtInf>
 </DrctDbtTxInf>`,
@@ -99,7 +99,7 @@ export function pain001(o: { messageId: string; createdAt: string; debtor: Party
 <PmtId><EndToEndId>${esc(i.endToEndId)}</EndToEndId></PmtId>
 <Amt><InstdAmt Ccy="EUR">${amount(i.amountCents)}</InstdAmt></Amt>
 ${i.creditorBic ? `<CdtrAgt><FinInstnId><BICFI>${esc(i.creditorBic)}</BICFI></FinInstnId></CdtrAgt>` : ''}
-<Cdtr><Nm>${esc(sepaText(i.creditorName, 70))}</Nm></Cdtr>
+<Cdtr><Nm>${esc(sepaText(i.creditorName, 70) || 'Kontoinhaber')}</Nm></Cdtr>
 <CdtrAcct><Id><IBAN>${i.creditorIban}</IBAN></Id></CdtrAcct>
 <RmtInf><Ustrd>${esc(sepaText(i.remittance, 140))}</Ustrd></RmtInf>
 </CdtTrfTxInf>`,

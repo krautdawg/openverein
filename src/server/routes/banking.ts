@@ -12,6 +12,7 @@ import { blindIndex, decrypt, encrypt, maskIban } from '../crypto.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { refreshPayment } from '../invoices/service.ts';
 import { requirePermission, scopeOf, type Actor } from '../policy.ts';
+import { assertNotLive } from '../sepa/live.ts';
 
 CONSTRAINT_MESSAGES.bank_account_organization_id_iban_key = 'Ein Konto mit dieser IBAN gibt es schon.';
 CONSTRAINT_MESSAGES.bank_statement_import_bank_account_id_file_sha256_key = 'Diese Datei wurde für dieses Konto schon importiert.';
@@ -133,15 +134,20 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
       const result = await db.transaction().execute(async (tx) => {
         const imp = await tx
           .insertInto('bank_statement_import')
-          .values({ organization_id: actor.organizationId, bank_account_id: account.id, format: req.body.format, file_name: req.body.fileName ?? null, file_sha256: sha, period_from: parsed.from, period_to: parsed.to, opening_cents: parsed.opening, closing_cents: parsed.closing, created_by: actor.userId })
+          .values({ organization_id: actor.organizationId, bank_account_id: account.id, format: req.body.format, file_name: req.body.fileName ?? null, file_sha256: sha, period_from: parsed.from, period_to: parsed.to, opening_cents: parsed.opening, closing_cents: parsed.closing, raw_encrypted: encrypt(req.body.content), created_by: actor.userId })
           .returning('id')
           .executeTakeFirstOrThrow();
         let imported = 0;
         let duplicates = 0;
         const ids: string[] = [];
+        const seen = new Map<string, number>();
         for (const t of parsed.transactions) {
-          // Overlapping statements: the same booking twice has the same fingerprint and is skipped.
-          const dedupe = createHash('sha256').update([t.bookingDate, t.amountCents, t.counterpartyIban ?? '', t.remittance, t.endToEndId ?? '', t.bankReference ?? ''].join('|')).digest('hex');
+          // Overlapping statements: the same booking twice has the same fingerprint and is skipped. The running
+          // number within the file keeps real repeats (two equal transfers on one day) apart.
+          const base = [t.bookingDate, t.amountCents, t.counterpartyIban ?? '', t.remittance, t.endToEndId ?? '', t.bankReference ?? ''].join('|');
+          const n = (seen.get(base) ?? 0) + 1;
+          seen.set(base, n);
+          const dedupe = createHash('sha256').update(`${base}|${n}`).digest('hex');
           const row = await tx
             .insertInto('bank_transaction')
             .values({
@@ -170,14 +176,19 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
           } else duplicates++;
         }
         await tx.updateTable('bank_statement_import').set({ transaction_count: imported }).where('id', '=', imp.id).execute();
+        // Balance check: opening balance + every booking must equal the statement's closing balance.
+        if (parsed.closing !== null) {
+          const sum = await tx.selectFrom('bank_transaction').select(sql<number>`coalesce(sum(amount_cents), 0)::bigint`.as('s')).where('bank_account_id', '=', account.id).executeTakeFirstOrThrow();
+          const balance = account.openingBalanceCents + Number(sum.s);
+          if (balance !== parsed.closing) {
+            const msg = `Der Saldo laut Auszug (${(parsed.closing / 100).toFixed(2)} €) weicht vom Saldo in OpenVerein (${(balance / 100).toFixed(2)} €) ab.`;
+            if (!req.body.balanceOverrideReason) throw new Problem(409, 'balance-mismatch', msg, 'Prüfe Anfangssaldo und fehlende Auszüge, oder importiere mit Begründung trotzdem.', { closingCents: parsed.closing, balanceCents: balance });
+            warnings.push(`${msg} Trotzdem eingelesen: ${req.body.balanceOverrideReason}`);
+          }
+        }
         await audit(tx, actor.organizationId, actor, { action: 'bank_import.created', entityType: 'bank_account', entityId: account.id, diff: { imported: [null, imported], duplicates: [null, duplicates] } });
         return { id: imp.id, imported, duplicates, ids };
       });
-      // Balance check: the statement's closing balance must equal opening balance + every booking so far.
-      if (parsed.closing !== null) {
-        const now = (await accountDto(actor, account.id))[0]!;
-        if (now.balanceCents !== parsed.closing) warnings.push(`Der Saldo laut Auszug (${(parsed.closing / 100).toFixed(2)} €) weicht vom Saldo in OpenVerein (${(now.balanceCents / 100).toFixed(2)} €) ab. Prüfe Anfangssaldo und fehlende Auszüge.`);
-      }
       const matched = await autoMatch(db, actor.organizationId, actor, result.ids);
       reply.status(201);
       return { id: result.id, imported: result.imported, duplicates: result.duplicates, autoMatched: matched.matched, returns: matched.returns, warnings };
@@ -190,8 +201,13 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const imp = await tx.selectFrom('bank_statement_import').select(['id', 'bank_account_id']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!imp) throw notFound('Import');
+      // Only the latest import of an account: a later, overlapping import may have skipped these bookings as duplicates.
+      const later = await tx.selectFrom('bank_statement_import').select('id').where('bank_account_id', '=', imp.bank_account_id).where('id', '>', imp.id).executeTakeFirst();
+      if (later) throw new Problem(409, 'not-latest', 'Nur der zuletzt eingelesene Auszug lässt sich zurückrollen.');
       const used = await tx.selectFrom('bank_transaction').select('id').where('import_id', '=', imp.id).where('status', '<>', 'unmatched').executeTakeFirst();
-      if (used) throw new Problem(409, 'in-use', 'Buchungen aus diesem Import sind schon zugeordnet. Hebe die Zuordnung zuerst auf.');
+      // Reversed allocations still point at the bookings, so they count as "used" too.
+      const touched = await tx.selectFrom('allocation').innerJoin('bank_transaction', 'bank_transaction.id', 'allocation.bank_transaction_id').select('allocation.id').where('bank_transaction.import_id', '=', imp.id).executeTakeFirst();
+      if (used || touched) throw new Problem(409, 'in-use', 'Buchungen aus diesem Import wurden schon zugeordnet. Der Auszug bleibt deshalb stehen.');
       await tx.deleteFrom('bank_transaction').where('import_id', '=', imp.id).execute();
       await tx.deleteFrom('bank_statement_import').where('id', '=', imp.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'bank_import.rolled_back', entityType: 'bank_account', entityId: imp.bank_account_id });
@@ -266,6 +282,7 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
         const inv = await tx.selectFrom('invoice').select(['id', 'status', 'total_cents', 'paid_cents', 'kind']).where('id', '=', a.invoiceId).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!inv || !['open', 'partially_paid'].includes(inv.status) || inv.kind === 'credit_note') throw new Problem(409, 'not-open', 'Eine der Rechnungen ist nicht offen.');
         if (a.amountCents > inv.total_cents - inv.paid_cents) throw new Problem(400, 'overpayment', 'Ein Betrag ist höher als der offene Betrag der Rechnung.');
+        await assertNotLive(tx, inv.id);
         await tx.insertInto('allocation').values({ organization_id: actor.organizationId, invoice_id: inv.id, amount_cents: a.amountCents, booked_on: t.booking_date, method: 'transfer', bank_transaction_id: t.id, created_by: actor.userId }).execute();
         await refreshPayment(tx, inv.id);
       }
@@ -319,8 +336,15 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
         const t = await tx.selectFrom('bank_transaction').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!t) throw notFound('Buchung');
         if (t.status !== 'unmatched' || t.amount_cents >= 0) throw new Problem(409, 'not-return', 'Nur offene Belastungen lassen sich als Rücklastschrift buchen.');
-        const item = await tx.selectFrom('collection_item').select(['id', 'status']).where('organization_id', '=', actor.organizationId).where('end_to_end_id', '=', req.body.endToEndId).executeTakeFirst();
-        if (!item || !['included', 'settled'].includes(item.status)) throw new Problem(404, 'not-found', 'Keine passende Einzugsposition gefunden.');
+        const item = await tx
+          .selectFrom('collection_item')
+          .innerJoin('collection_run', 'collection_run.id', 'collection_item.run_id')
+          .select(['collection_item.id', 'collection_item.status'])
+          .where('collection_item.organization_id', '=', actor.organizationId)
+          .where('collection_item.end_to_end_id', '=', req.body.endToEndId)
+          .where('collection_run.kind', '=', 'debit')
+          .executeTakeFirst();
+        if (!item || !['included', 'settled'].includes(item.status)) throw new Problem(404, 'not-found', 'Keine passende Lastschrift-Position gefunden.');
         await processReturn(tx, t, item.id, actor);
       });
       return (await txDto(actor, [await loadTx(actor, req.params.id)]))[0]!;

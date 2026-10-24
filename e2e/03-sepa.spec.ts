@@ -6,7 +6,7 @@ const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin'
 
 test('SEPA: mandate, direct debit file, statement import settles the invoice', async ({ page }) => {
   await signIn(page);
-  await page.request.patch('/api/v1/organization', { data: { creditorId: 'DE98ZZZ09999999999', iban: 'DE89370400440532013000' } });
+  await page.request.patch('/api/v1/organization', { data: { creditorId: 'DE98ZZZ09999999999', iban: 'DE89370400440532013000', prenotificationDays: 1 } });
   await page.request.post('/api/v1/bank-accounts', { data: { name: 'Vereinskonto', iban: 'DE89370400440532013000', openingDate: '2026-01-01' } });
   const m = await (await page.request.post('/api/v1/members', { data: { firstName: 'Lara', lastName: 'Lastschrift', joinDate: '2024-01-01' } })).json();
   await page.request.patch(`/api/v1/members/${m.id}/payment-method`, { data: { paymentMethod: 'direct_debit' } });

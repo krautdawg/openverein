@@ -12,6 +12,7 @@ import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
 import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 import { isValidCreditorId } from '../../shared/iban.ts';
 import { addBusinessDays, isTargetDay, pain001, pain008, splitIntoFiles } from '../sepa/pain.ts';
+import { addDays } from '../../shared/dates.ts';
 import { validateSepa } from '../sepa/validate.ts';
 import type { Selectable } from 'kysely';
 
@@ -46,6 +47,19 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // ---------- Mandates ----------
 
+  /** A mandate in a file that is generated, downloaded or submitted will still be debited. */
+  async function assertMandateNotLive(mandateId: string) {
+    const live = await db
+      .selectFrom('collection_item')
+      .innerJoin('collection_run', 'collection_run.id', 'collection_item.run_id')
+      .select('collection_item.id')
+      .where('collection_item.mandate_id', '=', mandateId)
+      .where('collection_item.status', '=', 'included')
+      .where('collection_run.status', 'in', ['generated', 'downloaded', 'submitted'])
+      .executeTakeFirst();
+    if (live) throw new Problem(409, 'mandate-in-run', 'Mit diesem Mandat läuft gerade ein Einzug.', 'Gib den Einzug zuerst frei oder warte die Gutschrift ab.');
+  }
+
   app.get('/members/:id/mandates', { schema: { tags, summary: 'SEPA-Mandate des Mitglieds (Kontoinhaber:in ist die Person des Mitglieds)', params: idParam, response: { 200: z.array(mandate) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'sepa', 'read');
@@ -60,6 +74,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Du darfst keine IBAN sehen oder erfassen.', { permission: 'members.field.iban' });
     const { row, today } = await loadMemberRow(db, actor, req.params.id, 'write', 'sepa');
     if (req.body.signedOn > today) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'signedOn', message: 'Das Datum liegt in der Zukunft.' }] });
+    const old = await db.selectFrom('sepa_mandate').select('id').where('person_id', '=', row.person_id).where('status', 'in', ['active', 'pending_evidence']).execute();
+    for (const o of old) await assertMandateNotLive(o.id);
     const m = await db.transaction().execute(async (tx) => {
       const count = await tx.selectFrom('sepa_mandate').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', row.person_id).executeTakeFirstOrThrow();
       const reference = req.body.reference ?? `${row.membership_number}-${count.n + 1}`.replace(/[^A-Za-z0-9/?:().,'+ -]/g, '-').slice(0, 35);
@@ -106,6 +122,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/mandates/:id/revoke', { schema: { tags, summary: 'Mandat widerrufen', params: idParam, body: z.object({ reason: z.string().trim().min(2).max(200), on: z.iso.date().optional() }), response: { 200: mandate } } }, async (req) => {
     const actor = requireActor(req);
+    await assertMandateNotLive(req.params.id);
     return changeMandate(actor, req.params.id, (m, today) => {
       if (m.status === 'revoked') throw new Problem(409, 'already-revoked', 'Das Mandat ist bereits widerrufen.');
       return { status: 'revoked', revoked_on: req.body.on ?? today, revoke_reason: req.body.reason };
@@ -129,7 +146,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
       .selectFrom('invoice')
       .innerJoin('member', 'member.id', 'invoice.member_id')
       .leftJoin('sepa_mandate as m', (j) => j.onRef('m.person_id', '=', 'invoice.recipient_person_id').on('m.status', '=', 'active'))
-      .select(['invoice.id', 'invoice.number', 'invoice.kind', 'invoice.due_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.member_id', 'invoice.recipient', 'member.payment_method', 'm.reference'])
+      .select(['invoice.id', 'invoice.number', 'invoice.kind', 'invoice.due_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.member_id', 'invoice.recipient', 'member.payment_method', 'm.reference', 'm.type as mandate_type', 'm.first_collected'])
       .select((eb) => eb.exists(eb.selectFrom('collection_item_invoice as c').select('c.id').whereRef('c.invoice_id', '=', 'invoice.id').where('c.live', '=', true)).as('in_run'))
       .where('invoice.organization_id', '=', actor.organizationId)
       .where('invoice.status', 'in', ['open', 'partially_paid'])
@@ -137,17 +154,27 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     const scope = scopeOf(actor, 'sepa', 'write');
     if (scope !== null) q = q.where(scopePredicate(scope, today, 'write'));
     const rows = await q.orderBy('invoice.due_date').execute();
-    return rows.map((r) => ({
+    return rows.map((r) => {
+      const snap = r.recipient as { recipient: { name: string }; mandateReference?: string | null };
+      let readiness: Candidate['readiness'];
+      if (r.in_run) readiness = 'in_run';
+      else if (kind === 'debit' && r.payment_method !== 'direct_debit') readiness = 'not_debit';
+      else if (!r.reference || (kind === 'debit' && r.mandate_type === 'one_off' && r.first_collected)) readiness = kind === 'debit' ? 'no_mandate' : 'no_iban';
+      // The invoice is the pre-notification: it must have announced exactly this mandate.
+      else if (kind === 'debit' && snap.mandateReference !== r.reference) readiness = 'no_prenotification';
+      else readiness = 'ok';
+      return {
       invoiceId: r.id,
       number: r.number!,
-      recipientName: (r.recipient as { recipient: { name: string } }).recipient.name,
+      recipientName: snap.recipient.name,
       memberId: r.member_id,
       dueDate: r.due_date,
       openCents: r.total_cents - r.paid_cents,
       kind: r.kind,
       mandateReference: r.reference,
-      readiness: r.in_run ? 'in_run' : kind === 'debit' && r.payment_method !== 'direct_debit' ? 'not_debit' : !r.reference ? (kind === 'debit' ? 'no_mandate' : 'no_iban') : 'ok',
-    }));
+      readiness,
+    };
+    });
   }
 
   app.get('/collection-runs/candidates', { schema: { tags, summary: 'Offene Posten mit Einzugsbereitschaft', querystring: z.object({ kind: z.enum(['debit', 'transfer']).default('debit') }), response: { 200: z.array(candidate) } } }, async (req) => {
@@ -155,6 +182,12 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'sepa', 'read');
     return candidates(actor, req.query.kind);
   });
+
+  /** Collection runs span the whole club: only unscoped grants may see or act on them. */
+  function requireClubWide(actor: Actor, level: 'read' | 'write') {
+    requirePermission(actor, 'sepa', level);
+    if (scopeOf(actor, 'sepa', level) !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Einzüge sind nur für Zugänge für den ganzen Verein.', { permission: `sepa:${level} (ganzer Verein)` });
+  }
 
   async function runDto(actor: Actor, id: string) {
     const r = await db.selectFrom('collection_run').innerJoin('bank_account', 'bank_account.id', 'collection_run.bank_account_id').selectAll('collection_run').select('bank_account.name as account_name').where('collection_run.id', '=', id).where('collection_run.organization_id', '=', actor.organizationId).executeTakeFirst();
@@ -186,7 +219,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/collection-runs', { schema: { tags, summary: 'Lastschrifteinzüge und Überweisungsläufe', response: { 200: z.array(runSummary) } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'sepa', 'read');
+    requireClubWide(actor, 'read');
     const ids = await db.selectFrom('collection_run').select('id').where('organization_id', '=', actor.organizationId).orderBy('created_at', 'desc').limit(50).execute();
     return Promise.all(ids.map(async ({ id }) => {
       const { items: _i, files: _f, ...rest } = await runDto(actor, id);
@@ -196,7 +229,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/collection-runs/:id', { schema: { tags, summary: 'Einzug mit Dateien und Positionen', params: idParam, response: { 200: run } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'sepa', 'read');
+    requireClubWide(actor, 'read');
     return runDto(actor, req.params.id);
   });
 
@@ -205,8 +238,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { tags, summary: 'Einzug anlegen und SEPA-Datei erzeugen (XSD-geprüft). Jede Rechnung kann nur in einem laufenden Einzug sein.', body: runCreate, response: { 201: run } } },
     async (req, reply) => {
       const actor = requireActor(req);
-      requirePermission(actor, 'sepa', 'write');
-      if (scopeOf(actor, 'sepa', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Einzüge erstellen dürfen nur Zugänge für den ganzen Verein.', { permission: 'sepa:write (ganzer Verein)' });
+      requireClubWide(actor, 'write');
+      if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Die SEPA-Datei enthält IBANs, die Du nicht sehen darfst.', { permission: 'members.field.iban' });
       const today = await orgToday(db, actor.organizationId);
       const { kind, bankAccountId, collectionDate, invoiceIds } = req.body;
       const org = await db.selectFrom('organization').select(['name', 'creditor_id']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
@@ -228,6 +261,12 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
       // Pre-notification: the invoice announced the due date, so we never collect before it.
       const early = chosen.filter((c) => kind === 'debit' && c!.dueDate && c!.dueDate > collectionDate);
       if (early.length) throw field(`${early.length} Rechnungen sind erst nach dem Einzugsdatum fällig (Vorabankündigung). Wähle ein späteres Datum.`);
+      if (kind === 'debit') {
+        const days = (await db.selectFrom('organization').select('prenotification_days').where('id', '=', actor.organizationId).executeTakeFirstOrThrow()).prenotification_days;
+        const issued = await db.selectFrom('invoice').select(['number', 'issue_date']).where('id', 'in', invoiceIds).execute();
+        const tooSoon = issued.filter((i) => i.issue_date && addDays(i.issue_date, days) > collectionDate);
+        if (tooSoon.length) throw field(`${tooSoon.length} Rechnungen wurden vor weniger als ${days} Tagen angekündigt (Vorabankündigungsfrist). Wähle ein späteres Datum.`);
+      }
 
       const id = await db.transaction().execute(async (tx) => {
         const r = await tx.insertInto('collection_run').values({ organization_id: actor.organizationId, kind, bank_account_id: account.id, collection_date: collectionDate, created_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
@@ -237,7 +276,9 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
         for (const c of chosen as Candidate[]) {
           const inv = await tx.selectFrom('invoice').select(['recipient_person_id', 'total_cents', 'paid_cents', 'status']).where('id', '=', c.invoiceId).forUpdate().executeTakeFirstOrThrow();
           if (!['open', 'partially_paid'].includes(inv.status)) throw new Problem(409, 'not-open', `Rechnung ${c.number} ist nicht mehr offen.`);
-          const m = await tx.selectFrom('sepa_mandate').selectAll().where('person_id', '=', inv.recipient_person_id).where('status', '=', 'active').executeTakeFirstOrThrow();
+          const m = await tx.selectFrom('sepa_mandate').selectAll().where('person_id', '=', inv.recipient_person_id).where('status', '=', 'active').forUpdate().executeTakeFirst();
+          if (!m) throw new Problem(409, 'no-mandate', `Für Rechnung ${c.number} gibt es kein aktives Mandat mehr.`);
+          if (kind === 'debit' && m.type === 'one_off' && items.some((x) => x.mandate.id === m.id)) throw new Problem(409, 'one-off', `Das Einmal-Mandat ${m.reference} kann nur einmal eingezogen werden.`);
           const amount = inv.total_cents - inv.paid_cents;
           const e2e = `OV${seq}${String(++n).padStart(5, '0')}`;
           const item = await tx
@@ -280,7 +321,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
             try {
               validateSepa(xml, kind === 'debit' ? 'pain.008.001.08' : 'pain.001.001.09');
             } catch (err) {
-              req.log.error({ err }, 'generated SEPA file failed XSD validation');
+              // No details in the log: libxml2 messages can contain IBANs.
+              req.log.error({ schemaError: (err as Error).name }, 'generated SEPA file failed XSD validation');
               throw new Problem(500, 'xsd', 'Die erzeugte SEPA-Datei hat die Schema-Prüfung nicht bestanden. Es wurde nichts gespeichert.');
             }
             const file = await tx
@@ -305,7 +347,10 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/collection-runs/:id/files/:position', { schema: { tags, summary: 'SEPA-Datei herunterladen (immer dieselben Bytes; der erste Download markiert den Einzug als heruntergeladen)', params: z.object({ id: z.uuid(), position: z.coerce.number().int().min(1) }) } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'sepa', 'write');
+    requireClubWide(actor, 'write');
+    if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Die SEPA-Datei enthält IBANs, die Du nicht sehen darfst.', { permission: 'members.field.iban' });
+    // The download changes state (the run becomes live); a link on a foreign site must not trigger it.
+    if (req.headers['sec-fetch-site'] === 'cross-site') throw new Problem(403, 'cross-origin', 'Anfragen von fremden Seiten werden abgelehnt.');
     const f = await db.transaction().execute(async (tx) => {
       const r = await tx.selectFrom('collection_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!r) throw notFound('Einzug');
@@ -324,7 +369,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/collection-runs/:id/submitted', { schema: { tags, summary: 'Vermerken, dass die Datei bei der Bank eingereicht wurde', params: idParam, body: z.object({}).optional(), response: { 200: run } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'sepa', 'write');
+    requireClubWide(actor, 'write');
     await db.transaction().execute(async (tx) => {
       const r = await tx.selectFrom('collection_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!r) throw notFound('Einzug');
@@ -348,7 +393,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) => {
       const actor = requireActor(req);
-      requirePermission(actor, 'sepa', 'write');
+      requireClubWide(actor, 'write');
       await db.transaction().execute(async (tx) => {
         const r = await tx.selectFrom('collection_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!r) throw notFound('Einzug');
@@ -361,6 +406,11 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
         await tx.updateTable('collection_item').set({ status: 'withdrawn' }).where('run_id', '=', r.id).where('status', '=', 'included').execute();
         await tx.updateTable('collection_item_invoice').set({ live: false }).where('item_id', 'in', tx.selectFrom('collection_item').select('id').where('run_id', '=', r.id)).execute();
         await tx.updateTable('collection_run').set({ status: 'released', released_at: new Date(), release_reason: req.body.reason }).where('id', '=', r.id).execute();
+        // A released run never reached the bank: the mandates' last use comes from the remaining runs again.
+        await sql`update sepa_mandate m set
+            last_collected_on = (select max(cr.collection_date) from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released'),
+            first_collected = exists (select 1 from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released')
+          where m.id in (select mandate_id from collection_item where run_id = ${r.id} and mandate_id is not null)`.execute(tx);
         await audit(tx, actor.organizationId, actor, { action: 'collection_run.released', entityType: 'collection_run', entityId: r.id, diff: { status: [r.status, 'released'], reason: [null, req.body.reason], confirmedNotSubmitted: [null, req.body.confirmNotSubmitted] } });
       });
       return runDto(actor, req.params.id);

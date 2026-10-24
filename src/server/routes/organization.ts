@@ -26,6 +26,7 @@ const toDto = (o: Selectable<Database['organization']>) => ({
   paymentTermsDays: o.payment_terms_days,
   dunningLevels: o.dunning_levels,
   creditorId: o.creditor_id,
+  prenotificationDays: o.prenotification_days,
 });
 
 /** API field → column; only fields present in the body are written. */
@@ -46,6 +47,7 @@ const COLUMNS = {
   paymentTermsDays: 'payment_terms_days',
   dunningLevels: 'dunning_levels',
   creditorId: 'creditor_id',
+  prenotificationDays: 'prenotification_days',
 } as const;
 
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {

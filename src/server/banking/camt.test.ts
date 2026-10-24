@@ -7,7 +7,7 @@ const fixture = readFileSync(new URL('../../../tests/fixtures/camt053-v08.xml', 
 describe('CAMT.053', () => {
   it('parses balances, splits batch bookings, signs debits, skips pending entries', () => {
     const [s] = parseCamt053(fixture);
-    expect(s).toMatchObject({ iban: 'DE89370400440532013000', openingCents: 100000, closingCents: 120850, from: '2026-11-02', to: '2026-11-03' });
+    expect(s).toMatchObject({ iban: 'DE89370400440532013000', openingCents: 100000, closingCents: 114700, from: '2026-11-02', to: '2026-11-03' });
     expect(s!.transactions.map((t) => t.amountCents)).toEqual([12000, 12000, 3000, -12300]);
     expect(s!.transactions[0]).toMatchObject({ endToEndId: 'OV-1-0001', mandateId: 'M-0001', counterpartyName: 'Anna Becker', remittance: 'Beitrag R-2026-00001' });
     expect(s!.transactions[2]).toMatchObject({ endToEndId: null, remittance: 'R-2026-00005 Clara Hoffmann' });

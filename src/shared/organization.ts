@@ -21,6 +21,7 @@ export const organization = z.object({
   paymentTermsDays: z.number(),
   dunningLevels: z.array(z.object({ level: z.number(), label: z.string(), days: z.number(), feeCents: z.number() })),
   creditorId: z.string().nullable(),
+  prenotificationDays: z.number(),
 });
 export type Organization = z.infer<typeof organization>;
 
@@ -43,6 +44,7 @@ export const organizationPatch = z.object({
   invoiceNumberPattern: numberPattern.optional(),
   cancellationNumberPattern: numberPattern.optional(),
   paymentTermsDays: z.number().int().min(0).max(120).optional(),
+  prenotificationDays: z.number().int().min(1).max(60).optional(),
   creditorId: z.preprocess((v) => (typeof v === 'string' ? v.replace(/\s+/g, '').toUpperCase() : v), z.string().max(35).nullish().transform((v) => (v === '' ? null : v)).refine((v) => !v || isValidCreditorId(v), 'Diese Gläubiger-ID ist nicht gültig (Prüfziffer).')).optional(),
   dunningLevels: z
     .array(z.object({ level: z.number().int().min(1).max(9), label: z.string().trim().min(1).max(60), days: z.number().int().min(1).max(365), feeCents: z.number().int().min(0).max(10_000) }))

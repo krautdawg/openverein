@@ -28,6 +28,7 @@ export interface OrganizationTable {
   payment_terms_days: Generated<number>;
   dunning_levels: Generated<DunningLevel[]>;
   creditor_id: string | null;
+  prenotification_days: Generated<number>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -423,6 +424,7 @@ export interface BankStatementImportTable {
   opening_cents: number | null;
   closing_cents: number | null;
   transaction_count: Generated<number>;
+  raw_encrypted: string | null;
   created_by: string | null;
   created_at: Timestamp;
 }

@@ -47,6 +47,7 @@ export function BankAccounts({ me }: { me: Me }) {
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [target, setTarget] = useState<string>();
+  const [pending, setPending] = useState<{ file: File; message: string } | null>(null);
 
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -61,18 +62,20 @@ export function BankAccounts({ me }: { me: Me }) {
     }
   }
 
-  async function upload(file: File) {
+  async function upload(file: File, balanceOverrideReason?: string) {
     if (!target) return;
     setBusy(true);
     setResult(undefined);
+    setPending(null);
     try {
       const content = await file.text();
       const format = /<\?xml|<Document/i.test(content.slice(0, 500)) ? 'camt053' : 'csv';
-      const r = await api<{ imported: number; duplicates: number; autoMatched: number; returns: number; warnings: string[] }>(`/bank-accounts/${target}/imports`, { method: 'POST', body: { format, fileName: file.name, content } });
+      const r = await api<{ imported: number; duplicates: number; autoMatched: number; returns: number; warnings: string[] }>(`/bank-accounts/${target}/imports`, { method: 'POST', body: { format, fileName: file.name, content, balanceOverrideReason } });
       setResult(`${r.imported} Buchungen eingelesen${r.duplicates ? `, ${r.duplicates} doppelte übersprungen` : ''}. ${r.autoMatched} automatisch zugeordnet${r.returns ? `, ${r.returns} Rücklastschriften verbucht` : ''}.${r.warnings.length ? ' ' + r.warnings.join(' ') : ''}`);
       await Promise.all([qc.invalidateQueries({ queryKey: ['bank-accounts'] }), qc.invalidateQueries({ queryKey: ['bank-imports'] }), qc.invalidateQueries({ queryKey: ['bank-tx'] }), qc.invalidateQueries({ queryKey: ['invoices'] })]);
     } catch (err) {
-      setResult(errText(err));
+      if (err instanceof ApiError && err.problem.type.endsWith('/balance-mismatch')) setPending({ file, message: errText(err) });
+      else setResult(errText(err));
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -92,6 +95,13 @@ export function BankAccounts({ me }: { me: Me }) {
     <BankLayout me={me}>
       <input ref={fileRef} type="file" accept=".xml,.csv,.txt" hidden onChange={(e) => e.target.files?.[0] && void upload(e.target.files[0])} aria-label="Kontoauszug auswählen" />
       {result && <div className="alert alert-ok" role="status" style={{ marginBottom: 'var(--s-4)' }}>{result}{' '}<Link to="/bank/abgleich">Zum Abgleich</Link></div>}
+      {pending && (
+        <form className="inline-form" style={{ marginTop: 0, marginBottom: 'var(--s-4)' }} onSubmit={(e) => { e.preventDefault(); void upload(pending.file, String(new FormData(e.currentTarget).get('reason'))); }}>
+          <div className="alert alert-warn" role="alert">{pending.message}</div>
+          <Field label="Trotzdem einlesen, weil …" name="reason" required minLength={3} placeholder="z. B. der Auszug vom Vormonat fehlt noch" />
+          <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">Mit Begründung einlesen</button><button type="button" className="btn btn-ghost" onClick={() => setPending(null)}>Abbrechen</button></div>
+        </form>
+      )}
       <div className="table-wrap">
         {accounts.data?.length === 0 ? (
           <div className="empty-state">
@@ -202,7 +212,8 @@ export function Reconciliation({ me }: { me: Me }) {
 
 function TxRow({ t, canWrite, expanded, onToggle, act }: { t: BankTx; canWrite: boolean; expanded: boolean; onToggle: () => void; act: (path: string, body: unknown) => Promise<void> }) {
   const best = t.suggestions[0];
-  const oneClick = best && best.openCents >= t.amountCents;
+  // One click only for a confident suggestion that settles the invoice exactly.
+  const oneClick = best && best.score >= 75 && best.openCents === t.amountCents;
   return (
     <>
       <tr>
