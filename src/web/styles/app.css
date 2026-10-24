@@ -491,3 +491,11 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .inline-form.narrow { max-width: 480px; }
 .inline-form.narrow .btn { justify-self: start; width: auto; }
 .actions-inline { display: inline-flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+
+/* Documents: breadcrumb trail and a drop target that shows itself only while dragging. */
+.crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-3); font-size: var(--text-sm); min-height: 36px; }
+.crumbs > span { display: inline-flex; align-items: center; gap: var(--s-1); color: var(--ink-2); }
+.crumbs [aria-current='page'] { color: var(--ink); font-weight: 600; }
+.drop[data-dragging='true'] { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.file-name { display: inline-flex; align-items: center; gap: var(--s-2); }
+.file-name svg { color: var(--ink-2); flex: none; }

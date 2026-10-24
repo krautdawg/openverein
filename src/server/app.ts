@@ -17,6 +17,7 @@ import { bankingRoutes } from './routes/banking.ts';
 import { eventRoutes } from './routes/events.ts';
 import { feeRoutes } from './routes/fees.ts';
 import { messageRoutes } from './routes/messages.ts';
+import { documentRoutes } from './routes/documents.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -75,7 +76,9 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     const oneClick = req.method === 'POST' && /^\/api\/v1\/unsubscribe\/[\w.-]+$/.test(req.url);
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !oneClick) {
       const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
-      if (type !== 'application/json') throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
+      // File uploads send raw bytes; octet-stream is not CORS-simple either, so it needs the same preflight.
+      const upload = type === 'application/octet-stream' && /^\/api\/v1\/files(\/[^/]+\/versions)?(\?|$)/.test(req.url);
+      if (type !== 'application/json' && !upload) throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
       const origin = req.headers.origin;
       // Bearer-token clients carry no ambient credentials, so the origin check only guards cookies.
       if (origin && new URL(origin).host !== req.headers.host) throw new Problem(403, 'cross-origin', 'Anfragen von fremden Seiten werden abgelehnt.');
@@ -98,6 +101,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(bankingRoutes);
       await api.register(eventRoutes);
       await api.register(messageRoutes);
+      await api.register(documentRoutes);
     },
     { prefix: '/api/v1' },
   );

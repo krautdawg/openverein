@@ -34,3 +34,29 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   if (!res.ok) throw new ApiError(data as ApiProblem);
   return data as T;
 }
+
+/** Uploads one file as raw bytes (the only non-JSON write the API accepts). */
+export async function uploadFile<T>(path: string, file: File, query: Record<string, string | undefined>): Promise<T> {
+  const qs = new URLSearchParams(Object.entries({ name: file.name, ...query }).filter((e): e is [string, string] => !!e[1]));
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}?${qs}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-type': file.type || 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+  } catch {
+    throw new ApiError({ type: 'network', title: 'Keine Verbindung zum Server. Bitte prüfe Deine Internetverbindung.', status: 0 });
+  }
+  const data = await res.json().catch(() => ({ title: res.status === 413 ? 'Die Datei ist größer als 20 MB.' : 'Keine Antwort vom Server.', status: res.status, type: 'network' }));
+  if (!res.ok) throw new ApiError(data as ApiProblem);
+  return data as T;
+}
+
+/** Uploads several files one after another; returns the error text of the first failure. */
+export async function uploadAll(files: FileList | File[], query: Record<string, string | undefined>) {
+  for (const f of Array.from(files)) {
+    try {
+      await uploadFile('/files', f, query);
+    } catch (err) {
+      return `${f.name}: ${err instanceof ApiError ? (err.problem.detail ?? err.problem.title) : 'Hochladen fehlgeschlagen.'}`;
+    }
+  }
+  return undefined;
+}

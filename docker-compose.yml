@@ -26,7 +26,9 @@ services:
       COOKIE_SECURE: "false"
       DEMO_MODE: ${DEMO_MODE:-false}
     ports: ["3300:3300"]
+    volumes: [files:/data]
     depends_on:
       db: { condition: service_healthy }
 volumes:
   pgdata:
+  files:
