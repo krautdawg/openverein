@@ -94,8 +94,8 @@ function ApplicationSheet({ application: a, canWrite, onClose }: { application: 
     setError(undefined);
     try {
       const r = await api<{ memberId: string }>(`/applications/${a!.id}/accept`, { method: 'POST', body: { ignoreDuplicates, ...(joinDate ? { joinDate } : {}) } });
-      await qc.invalidateQueries({ queryKey: ['applications'] });
       navigate(`/mitglieder/${r.memberId}`);
+      void qc.invalidateQueries({ queryKey: ['applications'] });
     } catch (err) {
       setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
     } finally {
