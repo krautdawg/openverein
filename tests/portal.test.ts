@@ -31,7 +31,7 @@ async function signIn(email: string) {
     mail = (await inbox(email))[0];
     if (!mail) await new Promise((r) => setTimeout(r, 50));
   }
-  const code = (await text(mail.ID)).match(/\b(\d{6})\b/)![1]!;
+  const code = (await text(mail!.ID)).match(/\b(\d{6})\b/)![1]!;
   const r = await post('/portal/auth/verify', { email, code });
   expect(r.statusCode, r.body).toBe(200);
   return String(r.headers['set-cookie']).split(';')[0]!;
