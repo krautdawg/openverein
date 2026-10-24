@@ -28,3 +28,6 @@ Small decisions made while building, especially where the spec was ambiguous or 
 | 2026-10-25 | Only the latest statement import of an account can be rolled back. | An older import may hold bookings that a later, overlapping import skipped as duplicates. |
 | 2026-10-25 | Stored ciphertexts have no associated data (row binding). | Swapping ciphertexts needs database write access, which already allows worse; revisit with key rotation. |
 | 2026-10-25 | PR #4 reviewed by the third counsel rung again (Codex quota out until 02:35, Gemini needs interactive login). | Lead's rule: never skip the review. |
+| 2026-10-25 | Events: month and list views only (no week/day view yet); no ICS import; no personal feeds until the portal slice. | Covers planning; week/day views and imports follow when clubs ask. |
+| 2026-10-25 | Own RRULE subset and ICS writer instead of `rrule` / `ical.js`. | Both libraries fail the 90-day maintenance rule; the subset we write is small and tested. |
+| 2026-10-25 | Cancelling a paid event place keeps the invoice. | Refund or cancellation is the treasurer's decision. |

@@ -42,7 +42,7 @@ export async function setupClub(app: App, overrides: Partial<{ clubName: string;
 /** JSON request helper bound to a cookie or bearer token. */
 export function client(app: App, auth: { cookie?: string; token?: string }) {
   const headers = { ...(auth.cookie ? { cookie: auth.cookie } : {}), ...(auth.token ? { authorization: `Bearer ${auth.token}` } : {}) };
-  const call = async (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown) => {
+  const call = async (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) => {
     const res = await app.inject({ method, url: `/api/v1${url}`, headers, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
     return { status: res.statusCode, body: res.body ? (res.headers['content-type']?.includes('json') ? res.json() : res.body) : null, headers: res.headers };
   };
@@ -50,6 +50,7 @@ export function client(app: App, auth: { cookie?: string; token?: string }) {
     get: (url: string) => call('GET', url),
     post: (url: string, body?: unknown) => call('POST', url, body),
     patch: (url: string, body?: unknown) => call('PATCH', url, body),
+    put: (url: string, body?: unknown) => call('PUT', url, body),
     del: (url: string) => call('DELETE', url),
   };
 }
