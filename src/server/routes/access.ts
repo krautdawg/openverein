@@ -18,8 +18,7 @@ import {
 } from '../../shared/access.ts';
 import { audit } from '../audit.ts';
 import { config } from '../config.ts';
-import { fill, SYSTEM_TEMPLATES } from '../../shared/mail.ts';
-import { mailer, senderOf } from '../mail/transport.ts';
+import { sendSystemMail } from '../mail/system.ts';
 import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, Level } from '../db.ts';
 import { CONSTRAINT_MESSAGES, forbidden, notFound, Problem } from '../http/problem.ts';
@@ -135,17 +134,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /** Mails the invitation link; when no mail server works, the admin passes the shown link on by hand. */
   async function sendInvite(actor: Actor, email: string, name: string, token: string) {
-    const org = await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
-    const own = await db.selectFrom('mail_template').select(['subject', 'body']).where('organization_id', '=', org.id).where('key', '=', 'invitation').executeTakeFirst();
-    const t = own ?? SYSTEM_TEMPLATES.invitation;
-    const values = { name, vorname: name.split(' ')[0], verein: org.name, link: `${config.publicUrl}/einladung#${token}` };
-    const sender = senderOf(org);
-    try {
-      await mailer().sendMail({ from: { name: sender.name, address: sender.address }, replyTo: sender.replyTo ?? undefined, to: email, subject: fill(t.subject, values), text: fill(t.body, values) });
-      return true;
-    } catch {
-      return false;
-    }
+    return sendSystemMail(db, actor.organizationId, 'invitation', email, { name, vorname: name.split(' ')[0], link: `${config.publicUrl}/einladung#${token}` });
   }
 
   // ---------- Roles ----------

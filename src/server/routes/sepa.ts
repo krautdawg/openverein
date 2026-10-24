@@ -312,7 +312,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
             const xml = kind === 'debit'
               ? pain008({
                   messageId, createdAt, creditor: { name: org.name, iban: account.iban, bic: account.bic }, creditorId: org.creditor_id!, collectionDate, sequenceType: st as 'RCUR' | 'OOFF', batchBooking: true,
-                  items: chunk.map((it) => ({ endToEndId: it.e2e, amountCents: it.amountCents, mandateId: it.mandate.reference, mandateSignedOn: it.mandate.signed_on, debtorName: it.mandate.account_holder, debtorIban: decrypt(it.mandate.iban_encrypted), debtorBic: it.mandate.bic, remittance: it.remittance })),
+                  items: chunk.map((it) => ({ endToEndId: it.e2e, amountCents: it.amountCents, mandateId: it.mandate.reference, mandateSignedOn: it.mandate.signed_on, debtorName: it.mandate.account_holder, debtorIban: decrypt(it.mandate.iban_encrypted), debtorBic: it.mandate.bic, remittance: it.remittance, originalIban: it.mandate.amendment_pending && it.mandate.amended_from_iban_encrypted ? decrypt(it.mandate.amended_from_iban_encrypted) : null })),
                 })
               : pain001({
                   messageId, createdAt, debtor: { name: org.name, iban: account.iban, bic: account.bic }, executionDate: collectionDate, batchBooking: true,
@@ -335,6 +335,12 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         if (kind === 'debit') {
           await tx.updateTable('sepa_mandate').set({ last_collected_on: collectionDate, first_collected: true }).where('id', 'in', [...new Set(items.map((i) => i.mandate.id))]).execute();
+          // The amendment travels with this run; if the run is released, it goes back to the mandate.
+          const amended = items.filter((i) => i.mandate.amendment_pending);
+          if (amended.length) {
+            await tx.updateTable('collection_item').set({ carries_amendment: true }).where('id', 'in', amended.map((i) => i.itemId)).execute();
+            await tx.updateTable('sepa_mandate').set({ amendment_pending: false }).where('id', 'in', amended.map((i) => i.mandate.id)).execute();
+          }
         }
         await tx.updateTable('collection_run').set({ status: 'generated', generated_at: new Date() }).where('id', '=', r.id).execute();
         await audit(tx, actor.organizationId, actor, { action: 'collection_run.generated', entityType: 'collection_run', entityId: r.id, diff: { kind: [null, kind], items: [null, items.length], totalCents: [null, items.reduce((s, i) => s + i.amountCents, 0)] } });
@@ -411,6 +417,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
             last_collected_on = (select max(cr.collection_date) from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released'),
             first_collected = exists (select 1 from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released')
           where m.id in (select mandate_id from collection_item where run_id = ${r.id} and mandate_id is not null)`.execute(tx);
+        await sql`update sepa_mandate set amendment_pending = true
+          where id in (select mandate_id from collection_item where run_id = ${r.id} and carries_amendment)`.execute(tx);
         await audit(tx, actor.organizationId, actor, { action: 'collection_run.released', entityType: 'collection_run', entityId: r.id, diff: { status: [r.status, 'released'], reason: [null, req.body.reason], confirmedNotSubmitted: [null, req.body.confirmNotSubmitted] } });
       });
       return runDto(actor, req.params.id);

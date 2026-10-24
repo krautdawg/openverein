@@ -360,6 +360,8 @@ export interface SepaMandateTable {
   type: Generated<'recurrent' | 'one_off'>;
   status: Generated<'pending_evidence' | 'active' | 'revoked' | 'expired'>;
   first_collected: Generated<boolean>;
+  amended_from_iban_encrypted: string | null;
+  amendment_pending: Generated<boolean>;
   last_collected_on: string | null;
   revoked_on: string | null;
   revoke_reason: string | null;
@@ -410,6 +412,7 @@ export interface CollectionItemTable {
   sequence_type: string | null;
   status: Generated<'included' | 'settled' | 'returned' | 'withdrawn'>;
   created_at: Timestamp;
+  carries_amendment: Generated<boolean>;
 }
 
 export interface CollectionItemInvoiceTable {
@@ -554,7 +557,7 @@ export interface DeliveryTable {
 export interface MailTemplateTable {
   id: Generated<string>;
   organization_id: string;
-  key: 'invoice' | 'dunning' | 'invitation' | null;
+  key: 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | null;
   name: string;
   subject: string;
   body: string;
@@ -568,6 +571,7 @@ export interface FolderTable {
   parent_id: string | null;
   name: string;
   group_ids: string[] | null;
+  share_with_members: Generated<boolean>;
   created_at: Generated<Date>;
 }
 
@@ -588,6 +592,44 @@ export interface FileTable {
   superseded_at: Date | null;
   uploaded_by: string | null;
   created_at: Generated<Date>;
+}
+
+export interface LoginCodeTable {
+  id: Generated<string>;
+  organization_id: string;
+  email_hash: string;
+  code_hash: string;
+  expires_at: Date;
+  attempts: Generated<number>;
+  consumed_at: Date | null;
+  issued_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface PortalSessionTable {
+  token_hash: string;
+  organization_id: string;
+  email: string;
+  created_at: Generated<Date>;
+  last_seen_at: Generated<Date>;
+  expires_at: Date;
+}
+
+export type ChangeField = 'first_name' | 'last_name' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'iban' | 'resignation';
+export interface ChangeRequestTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  person_id: string;
+  field: ChangeField;
+  old_value: string | null;
+  new_value: string;
+  status: Generated<'pending' | 'accepted' | 'denied' | 'superseded' | 'applied'>;
+  reason: string | null;
+  requested_by_email: string;
+  requested_at: Generated<Date>;
+  decided_by: string | null;
+  decided_at: Date | null;
 }
 
 export interface SuppressionTable {
@@ -638,6 +680,9 @@ export interface Database {
   mail_template: MailTemplateTable;
   folder: FolderTable;
   file: FileTable;
+  login_code: LoginCodeTable;
+  portal_session: PortalSessionTable;
+  change_request: ChangeRequestTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

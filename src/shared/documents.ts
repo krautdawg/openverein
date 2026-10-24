@@ -3,12 +3,14 @@ import { z } from 'zod';
 export const RETENTION_LABEL = { document: 'Dokument', voucher: 'Beleg (8 Jahre aufbewahren)', temporary: 'Vorübergehend (7 Tage)' } as const;
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-export const folder = z.object({ id: z.uuid(), parentId: z.uuid().nullable(), name: z.string(), groupIds: z.array(z.uuid()).nullable(), restricted: z.boolean() });
+export const folder = z.object({ id: z.uuid(), parentId: z.uuid().nullable(), name: z.string(), groupIds: z.array(z.uuid()).nullable(), restricted: z.boolean(), shareWithMembers: z.boolean() });
 export type Folder = z.infer<typeof folder>;
 export const folderInput = z.object({
   name: z.string().trim().min(1, 'Bitte einen Namen angeben.').max(100).refine((n) => !/[/\\]/.test(n), 'Bitte ohne Schrägstrich.'),
   parentId: z.uuid().nullish(),
   groupIds: z.array(z.uuid()).max(50).nullish(),
+  /** Visible to every member in the portal under "Dokumente". */
+  shareWithMembers: z.boolean().optional(),
 });
 
 export const fileDto = z.object({

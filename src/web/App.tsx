@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useLocation } from 'react-router';
+import { PortalApp } from './portal/Portal.tsx';
 import { Shell } from './components/Shell.tsx';
 import { api } from './lib/api.ts';
 import { useInstanceConfig, useMe } from './lib/session.tsx';
@@ -26,7 +27,12 @@ import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
 import { Users } from './pages/settings/Users.tsx';
 import './lib/search.ts';
 
+/** The member portal is its own small app with its own sign-in; everything else is the admin app. */
 export function App() {
+  return useLocation().pathname.startsWith('/portal') ? <PortalApp /> : <AdminApp />;
+}
+
+function AdminApp() {
   const setup = useQuery({ queryKey: ['setup'], queryFn: () => api<{ needsSetup: boolean }>('/setup') });
   const me = useMe();
   const cfg = useInstanceConfig();

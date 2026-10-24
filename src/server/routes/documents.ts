@@ -98,7 +98,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // ---------- Folders ----------
 
-  const folderDto = (folders: FolderRow[], f: FolderRow) => ({ id: f.id, parentId: f.parent_id, name: f.name, groupIds: f.group_ids, restricted: effectiveGroups(folders, f.id) !== null });
+  const folderDto = (folders: FolderRow[], f: FolderRow) => ({ id: f.id, parentId: f.parent_id, name: f.name, groupIds: f.group_ids, restricted: effectiveGroups(folders, f.id) !== null, shareWithMembers: f.share_with_members });
 
   app.get('/folders', { schema: { tags, summary: 'Ordner, die Du sehen darfst', response: { 200: z.array(folder) } } }, async (req) => {
     const actor = requireActor(req);
@@ -117,7 +117,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     unscoped(actor);
     if (req.body.parentId) await folderFor(actor, req.body.parentId, 'write');
     const f = await db.transaction().execute(async (tx) => {
-      const f = await tx.insertInto('folder').values({ organization_id: actor.organizationId, parent_id: req.body.parentId ?? null, name: req.body.name, group_ids: req.body.groupIds?.length ? req.body.groupIds : null }).returningAll().executeTakeFirstOrThrow();
+      const f = await tx.insertInto('folder').values({ organization_id: actor.organizationId, parent_id: req.body.parentId ?? null, name: req.body.name, group_ids: req.body.groupIds?.length ? req.body.groupIds : null, share_with_members: req.body.shareWithMembers ?? false }).returningAll().executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'folder.created', entityType: 'folder', entityId: f.id, diff: { name: [null, f.name] } });
       return f;
     });
@@ -146,11 +146,12 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
           ...(req.body.name ? { name: req.body.name } : {}),
           ...(req.body.parentId !== undefined ? { parent_id: req.body.parentId ?? null } : {}),
           ...(req.body.groupIds !== undefined ? { group_ids: req.body.groupIds?.length ? req.body.groupIds : null } : {}),
+          ...(req.body.shareWithMembers !== undefined ? { share_with_members: req.body.shareWithMembers } : {}),
         })
         .where('id', '=', before.id)
         .returningAll()
         .executeTakeFirstOrThrow();
-      await audit(tx, actor.organizationId, actor, { action: 'folder.updated', entityType: 'folder', entityId: f.id, diff: { name: [before.name, f.name], groupIds: [before.group_ids, f.group_ids] } });
+      await audit(tx, actor.organizationId, actor, { action: 'folder.updated', entityType: 'folder', entityId: f.id, diff: { name: [before.name, f.name], groupIds: [before.group_ids, f.group_ids], shared: [before.share_with_members, f.share_with_members] } });
       return f;
     });
     return folderDto(await allFolders(actor), f);

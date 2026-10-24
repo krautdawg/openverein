@@ -10,7 +10,10 @@ export const PLACEHOLDERS = {
   offen: 'Offener Betrag (nur bei Rechnungsversand)',
   faellig: 'Fälligkeitsdatum (nur bei Rechnungsversand)',
   mahnstufe: 'Bezeichnung der letzten Mahnstufe (nur bei Mahnungen)',
-  link: 'Einladungslink (nur bei Einladungen)',
+  link: 'Link (nur bei Einladungen und Anmeldecodes)',
+  code: 'Anmeldecode (nur beim Anmeldecode)',
+  entscheidung: 'Entscheidung mit Begründung (nur bei Änderungswünschen)',
+  austritt: 'Austrittsdatum (nur bei Kündigungen)',
 } as const;
 export type PlaceholderValues = Partial<Record<keyof typeof PLACEHOLDERS, string>>;
 
@@ -35,7 +38,7 @@ export function textToHtml(text: string) {
     .join('\n');
 }
 
-export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation';
+export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received';
 export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject: string; body: string }> = {
   invoice: {
     name: 'Rechnung',
@@ -51,5 +54,20 @@ export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject
     name: 'Einladung für einen Zugang',
     subject: 'Dein Zugang zu {{verein}}',
     body: 'Hallo {{name}},\n\nfür Dich ist ein Zugang zur Vereinsverwaltung von {{verein}} eingerichtet. Leg hier Dein Passwort fest (der Link gilt 7 Tage):\n\n{{link}}\n\nViele Grüße\n{{verein}}',
+  },
+  login_code: {
+    name: 'Anmeldecode für das Mitgliederportal',
+    subject: 'Dein Anmeldecode: {{code}}',
+    body: 'Hallo,\n\nDein Code für das Mitgliederportal von {{verein}} lautet:\n\n{{code}}\n\nEr gilt 10 Minuten. Du kannst ihn eingeben oder diesen Link öffnen und dort auf „Anmelden“ klicken:\n{{link}}\n\nWenn Du keinen Code angefordert hast, ignoriere diese E-Mail.\n\n{{verein}}',
+  },
+  change_decided: {
+    name: 'Änderungswunsch entschieden',
+    subject: 'Deine Änderung bei {{verein}}',
+    body: 'Hallo {{vorname}},\n\n{{entscheidung}}\n\nViele Grüße\n{{verein}}',
+  },
+  resignation_received: {
+    name: 'Kündigung bestätigt',
+    subject: 'Deine Kündigung bei {{verein}}',
+    body: 'Hallo {{vorname}},\n\nwir haben Deine Kündigung erhalten. Nach der Satzung endet Deine Mitgliedschaft am {{austritt}}; der Vorstand bestätigt das noch.\n\nSchade, dass Du gehst. Danke für Deine Zeit im Verein!\n\n{{verein}}',
   },
 };
