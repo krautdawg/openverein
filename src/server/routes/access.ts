@@ -17,6 +17,9 @@ import {
   userPatch,
 } from '../../shared/access.ts';
 import { audit } from '../audit.ts';
+import { config } from '../config.ts';
+import { fill, SYSTEM_TEMPLATES } from '../../shared/mail.ts';
+import { mailer, senderOf } from '../mail/transport.ts';
 import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, Level } from '../db.ts';
 import { CONSTRAINT_MESSAGES, forbidden, notFound, Problem } from '../http/problem.ts';
@@ -130,6 +133,21 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     return { inviteToken: token, expiresAt: expiresAt.toISOString() };
   }
 
+  /** Mails the invitation link; when no mail server works, the admin passes the shown link on by hand. */
+  async function sendInvite(actor: Actor, email: string, name: string, token: string) {
+    const org = await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+    const own = await db.selectFrom('mail_template').select(['subject', 'body']).where('organization_id', '=', org.id).where('key', '=', 'invitation').executeTakeFirst();
+    const t = own ?? SYSTEM_TEMPLATES.invitation;
+    const values = { name, vorname: name.split(' ')[0], verein: org.name, link: `${config.publicUrl}/einladung#${token}` };
+    const sender = senderOf(org);
+    try {
+      await mailer().sendMail({ from: { name: sender.name, address: sender.address }, replyTo: sender.replyTo ?? undefined, to: email, subject: fill(t.subject, values), text: fill(t.body, values) });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ---------- Roles ----------
 
   app.get('/roles', { schema: { tags: ['access'], summary: 'Rollen (eingebaute und eigene)', response: { 200: z.array(role) } } }, async (req) => {
@@ -222,7 +240,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       return { id: u.id, invite: await newInvite(tx, u.id) };
     });
     reply.status(201);
-    return { user: await userDto(result.id), ...result.invite };
+    return { user: await userDto(result.id), ...result.invite, mailed: await sendInvite(actor, req.body.email, req.body.name, result.invite.inviteToken) };
   });
 
   app.post('/users/:id/invite', { schema: { tags: ['access'], summary: 'Neuen Einladungslink erzeugen (der alte wird ungültig)', params: idParam, body: z.object({}).optional(), response: { 200: inviteResult } } }, async (req) => {
@@ -238,7 +256,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       await audit(tx, actor.organizationId, actor, { action: 'user.invited', entityType: 'app_user', entityId: u.id });
       return invite;
     });
-    return { user: await userDto(u.id), ...invite };
+    return { user: await userDto(u.id), ...invite, mailed: await sendInvite(actor, u.email, u.name, invite.inviteToken) };
   });
 
   app.patch('/users/:id', { schema: { tags: ['access'], summary: 'Zugang ändern: Name, sperren/entsperren, Rollen', params: idParam, body: userPatch, response: { 200: user } } }, async (req) => {

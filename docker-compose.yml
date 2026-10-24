@@ -22,6 +22,7 @@ services:
     environment:
       DATABASE_URL: postgres://openverein:openverein@db:5432/openverein
       SMTP_URL: smtp://mail:1025
+      PUBLIC_URL: http://localhost:3300
       COOKIE_SECURE: "false"
       DEMO_MODE: ${DEMO_MODE:-false}
     ports: ["3300:3300"]

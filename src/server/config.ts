@@ -8,6 +8,8 @@ export const config = {
   // Empty = trust no proxy, so clients cannot pick their own rate-limit key.
   trustProxy: (env.TRUST_PROXY ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   demoMode: env.DEMO_MODE === 'true',
+  // Public address of this installation, used in links inside e-mails.
+  publicUrl: (env.PUBLIC_URL ?? `http://localhost:${env.PORT ?? 3300}`).replace(/\/$/, ''),
   smtpUrl: env.SMTP_URL ?? 'smtp://localhost:11025',
   mailFrom: env.MAIL_FROM ?? 'OpenVerein <verein@example.org>',
   // shortcut: a fixed development key when DATA_KEY is unset outside production; set a real one for any club data.

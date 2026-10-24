@@ -12,6 +12,8 @@ import { FeePlans } from './pages/Fees.tsx';
 import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
 import { Dunning, Invoices } from './pages/Invoices.tsx';
 import { Events } from './pages/Events.tsx';
+import { Communication } from './pages/Communication.tsx';
+import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
@@ -63,6 +65,8 @@ export function App() {
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
         <Route path="/termine" element={<Events me={me.data} />} />
         <Route path="/termine/:id/:date" element={<Events me={me.data} />} />
+        <Route path="/kommunikation" element={<Communication me={me.data} />} />
+        <Route path="/kommunikation/:id" element={<Communication me={me.data} />} />
         <Route path="/beitraege" element={<FeePlans me={me.data} />} />
         <Route path="/beitraege/laeufe" element={<FeeRuns me={me.data} />} />
         <Route path="/beitraege/laeufe/:id" element={<FeeRunDetail me={me.data} />} />
@@ -77,6 +81,7 @@ export function App() {
         <Route path="/bank/lastschriften/:id" element={<CollectionRunDetail me={me.data} />} />
         <Route path="/einstellungen" element={<SettingsLayout me={me.data} />}>
           <Route index element={<ClubSettings me={me.data} />} />
+          <Route path="email" element={<MailSettings me={me.data} />} />
           <Route path="zugaenge" element={<Users me={me.data} />} />
           <Route path="rollen" element={<Roles me={me.data} />} />
           <Route path="api" element={<ApiTokens me={me.data} />} />

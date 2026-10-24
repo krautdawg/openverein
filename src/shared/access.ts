@@ -51,7 +51,7 @@ export type User = z.infer<typeof user>;
 
 export const userCreate = z.object({ name: z.string().trim().min(2).max(120), email, grants: z.array(grantInput).min(1, 'Mindestens eine Rolle.') });
 export const userPatch = z.object({ name: z.string().trim().min(2).max(120).optional(), status: z.enum(['active', 'disabled']).optional(), grants: z.array(grantInput).min(1).optional() });
-export const inviteResult = z.object({ user, inviteToken: z.string(), expiresAt: z.string() });
+export const inviteResult = z.object({ user, inviteToken: z.string(), expiresAt: z.string(), mailed: z.boolean() });
 
 export const effectivePermissions = z.object({
   modules: z.array(z.object({ module: z.string(), level: levelSchema, scope: z.array(z.string()).nullable() })),

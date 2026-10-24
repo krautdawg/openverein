@@ -16,6 +16,7 @@ import { accessRoutes } from './routes/access.ts';
 import { bankingRoutes } from './routes/banking.ts';
 import { eventRoutes } from './routes/events.ts';
 import { feeRoutes } from './routes/fees.ts';
+import { messageRoutes } from './routes/messages.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -94,6 +95,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(sepaRoutes);
       await api.register(bankingRoutes);
       await api.register(eventRoutes);
+      await api.register(messageRoutes);
     },
     { prefix: '/api/v1' },
   );

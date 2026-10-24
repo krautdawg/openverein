@@ -33,6 +33,10 @@ export interface OrganizationTable {
   dunning_levels: Generated<DunningLevel[]>;
   creditor_id: string | null;
   prenotification_days: Generated<number>;
+  mail_from_name: string | null;
+  mail_from_address: string | null;
+  mail_reply_to: string | null;
+  mail_per_minute: Generated<number>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -513,6 +517,56 @@ export interface ParticipationTable {
   updated_at: Timestamp;
 }
 
+export interface MessageTable {
+  id: Generated<string>;
+  organization_id: string;
+  kind: Generated<'free' | 'invoices'>;
+  category: Generated<'notice' | 'newsletter'>;
+  subject: string;
+  body: string;
+  recipient_filter: unknown;
+  status: Generated<'sending' | 'sent'>;
+  created_by: string | null;
+  created_by_label: string;
+  created_at: Timestamp;
+  finished_at: Date | null;
+}
+
+export interface DeliveryTable {
+  id: Generated<string>;
+  organization_id: string;
+  message_id: string;
+  person_id: string;
+  member_id: string | null;
+  email: string;
+  invoice_id: string | null;
+  status: Generated<'queued' | 'sending' | 'sent' | 'failed' | 'bounced'>;
+  attempts: Generated<number>;
+  error: string | null;
+  provider_id: string | null;
+  sent_at: Date | null;
+  created_at: Timestamp;
+}
+
+export interface MailTemplateTable {
+  id: Generated<string>;
+  organization_id: string;
+  key: 'invoice' | 'dunning' | 'invitation' | null;
+  name: string;
+  subject: string;
+  body: string;
+  category: Generated<'notice' | 'newsletter'>;
+  updated_at: Generated<Date>;
+}
+
+export interface SuppressionTable {
+  id: Generated<string>;
+  organization_id: string;
+  email_hash: string;
+  reason: 'unsubscribe' | 'bounce' | 'manual';
+  created_at: Timestamp;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -547,6 +601,10 @@ export interface Database {
   calendar: CalendarTable;
   event: EventTable;
   participation: ParticipationTable;
+  message: MessageTable;
+  delivery: DeliveryTable;
+  suppression: SuppressionTable;
+  mail_template: MailTemplateTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

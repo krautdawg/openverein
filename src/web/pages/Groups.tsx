@@ -10,6 +10,7 @@ import { GroupBadge } from '../components/GroupBadge.tsx';
 import { InlineEdit } from '../components/InlineEdit.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
+import { useMe } from '../lib/session.tsx';
 import { StatusBadge } from '../components/StatusBadge.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { todayLocal, useGroups } from '../lib/hooks.ts';
@@ -118,6 +119,7 @@ function CreateGroup({ onClose }: { onClose: () => void }) {
 }
 
 function GroupSheet({ group, canWrite, onClose }: { group: Group | null; canWrite: boolean; onClose: () => void }) {
+  const canMail = useMe().data?.permissions.communication === 'write';
   const qc = useQueryClient();
   const [at, setAt] = useState(todayLocal());
   const members = useQuery({ queryKey: ['group-members', group?.id, at], queryFn: () => api<MemberListItem[]>(`/groups/${group!.id}/members?at=${at}`), enabled: !!group });
@@ -165,7 +167,10 @@ function GroupSheet({ group, canWrite, onClose }: { group: Group | null; canWrit
                 <label className="check"><input type="checkbox" disabled={!canWrite} checked={!group.visibleToMembers} onChange={(e) => void save({ visibleToMembers: !e.target.checked })} /> Nur für die Verwaltung</label>
               </dd>
             </dl>
-            {canWrite && <div className="actions-row"><button className="btn" onClick={() => void archive()}>{group.archived ? 'Wiederherstellen' : 'Archivieren'}</button></div>}
+            <div className="actions-row">
+              {canMail && !group.archived && <Link className="btn" to="/kommunikation" state={{ groupId: group.id }}>E-Mail an die Gruppe</Link>}
+              {canWrite && <button className="btn" onClick={() => void archive()}>{group.archived ? 'Wiederherstellen' : 'Archivieren'}</button>}
+            </div>
           </section>
           <section className="sheet-section" aria-labelledby="g-members">
             <h3 id="g-members">Mitglieder am</h3>
