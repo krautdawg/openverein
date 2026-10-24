@@ -1,0 +1,30 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env: { POSTGRES_USER: openverein, POSTGRES_PASSWORD: openverein, POSTGRES_DB: openverein }
+        ports: ['54329:5432']
+        options: >-
+          --health-cmd "pg_isready -U openverein" --health-interval 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env: { CI: 'true' }
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report, path: test-results, retention-days: 7 }
+      - run: npx -y @fission-ai/openspec@1.6.0 validate --all --strict --no-interactive

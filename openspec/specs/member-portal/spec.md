@@ -1,0 +1,122 @@
+# member-portal Specification
+
+## Purpose
+The member-portal capability covers the member portal as an installable PWA, data change requests with admin approval, and the public online membership application with SEPA mandate capture (B M29, M30, M31). Sign-in mechanics are specified in the auth capability. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
+
+## Requirements
+### Requirement: Portal pages
+The system SHALL give signed-in members: my profile (fields marked visible; editable ones through change requests), my memberships and groups (without admins-only groups), my SEPA mandate (masked IBAN, reference, signature date), my invoices with PDF download, open amount and EPC QR code, my donation receipts, my documents, and a resignation request.
+
+#### Scenario: Own invoices
+- **WHEN** a member opens "my invoices"
+- **THEN** their invoices are listed with open amount and PDF download, and an open invoice shows its EPC QR code
+
+### Requirement: Self-only data access
+The system SHALL return through portal endpoints only data about the signed-in person and, for a household payer, the household's invoices, enforced in the API and by row-level security.
+
+#### Scenario: Other member's invoice
+- **WHEN** a member requests another member's invoice id through the portal API
+- **THEN** the response is 404
+
+#### Scenario: Household payer
+- **WHEN** a household payer opens "my invoices"
+- **THEN** all household invoices are listed
+
+### Requirement: Resignation request
+The system SHALL let a member submit a resignation with a proposed exit date computed from the notice rule; submission SHALL create a task for admins and send a confirmation mail, and an admin's confirmation SHALL set the notice and exit dates on the member.
+
+#### Scenario: Resignation confirmed
+- **WHEN** an admin confirms a portal resignation request
+- **THEN** the member's notice and exit dates are set and the member's status becomes `resigned`
+
+### Requirement: Portal as PWA
+The system SHALL deliver the portal as an installable PWA that works on a 390 px wide phone and shows a clear offline state without offline writes.
+
+#### Scenario: Phone width
+- **WHEN** the portal is opened at 390 px width
+- **THEN** every page is usable without horizontal scrolling
+
+### Requirement: Portal function settings (should)
+The system SHALL let the organisation switch portal functions on or off (edit own data, request bank-data changes, show invoices, show the mandate, resignation request, show the admin contact), each overridable per group with allow, deny or default; a member SHALL get a function if any current group allows it and none denies it.
+
+#### Scenario: Deny wins
+- **WHEN** one of a member's groups allows "show invoices" and another denies it
+- **THEN** the member does not see invoices
+
+### Requirement: Change request rules
+The system SHALL treat each member-editable field as "apply immediately" or "needs approval", with IBAN and name always needing approval, store each request with old value, proposed value, requester and time, keep only one pending request per field with a newer one superseding the older, and notify the old e-mail address when e-mail or IBAN changes.
+
+#### Scenario: Immediate field
+- **WHEN** a member changes their phone number and the field applies immediately
+- **THEN** the new number is saved without approval
+
+#### Scenario: Superseded request
+- **WHEN** a member submits a second address change while the first is pending
+- **THEN** the first request is marked superseded
+
+### Requirement: Change request decisions
+The system SHALL show admins an inbox with a diff per request, let them accept or deny with a reason, apply accepted changes through the same validation and audit as an admin edit, and mail the member the decision.
+
+#### Scenario: Denied change
+- **WHEN** an admin denies a name change with a reason
+- **THEN** the member receives a mail with the reason and the name stays unchanged
+
+### Requirement: Bank change creates mandate amendment
+The system SHALL record an accepted IBAN change as a mandate amendment and ask the admin whether a new signed mandate is required.
+
+#### Scenario: IBAN change accepted
+- **WHEN** an admin accepts a new IBAN
+- **THEN** the mandate history shows an amendment with the date, and the admin is asked about a new signed mandate
+
+### Requirement: Application forms
+The system SHALL build application forms from blocks (personal data, address, contact, groups offered, fee plan choice, custom fields, SEPA mandate with mandate text, versioned consent checkboxes, privacy notice link, guardian section for minors), publish them at a public URL, as an iFrame snippet with configurable allowed origins and as a QR code.
+
+#### Scenario: Embedding restricted
+- **WHEN** a site not in the form's allowed origins embeds the form
+- **THEN** the browser refuses to render it
+
+### Requirement: Application spam protection
+The system SHALL protect public forms without third-party services by a honeypot field, a rate limit per IP and a minimum fill time, with optional e-mail double opt-in before the application is shown to admins.
+
+#### Scenario: Bot submission
+- **WHEN** a submission fills the honeypot field or arrives 2 seconds after the form loaded
+- **THEN** it is not shown in the admin inbox
+
+### Requirement: Immutable application record
+The system SHALL store each submission immutably with data, consent text versions, timestamp and hashed IP, and confirm it by mail with a PDF copy.
+
+#### Scenario: Payload unchanged
+- **WHEN** an admin edits data while accepting an application
+- **THEN** the stored submission payload stays unchanged
+
+### Requirement: Application decisions
+The system SHALL let admins accept (creating person, member in `active` or `future`, group memberships, fee assignment and mandate in one transaction, after a duplicate check), reject with a mail, or mark as spam, singly or in bulk.
+
+#### Scenario: Accept creates records
+- **WHEN** an admin accepts an application with a division and direct debit
+- **THEN** person, member, group membership, fee assignment and mandate are created together, or none of them on error
+
+### Requirement: Online mandate capture
+The system SHALL activate a mandate from the form (signature date = submission date, evidence = submission record) only if the organisation has recorded its bank's agreement to electronic mandates; otherwise it SHALL create the mandate as `pending_evidence`, send a pre-filled mandate PDF for signature and show the admin that a debit without valid mandate can be reclaimed for 13 months; for applicants under 18 the debtor SHALL be the account holder captured as a separate person, never the minor.
+
+#### Scenario: No bank agreement
+- **WHEN** an application with a mandate is accepted and no bank agreement is recorded
+- **THEN** the mandate is `pending_evidence` and a mandate PDF is sent for signature
+
+#### Scenario: Minor applicant
+- **WHEN** a 12-year-old applies with a parent's account
+- **THEN** the parent is created as a separate person and is the mandate's debtor
+
+### Requirement: Join date rule on acceptance (should)
+The system SHALL set the join date on acceptance by an organisation rule (application date, acceptance date, 1st of the application month, or 1st of the following month, overridable per application) and assign the member number from the pattern.
+
+#### Scenario: First of next month
+- **WHEN** an application from 14 March is accepted under the rule "1st of the following month"
+- **THEN** the join date is 1 April and the member is `future` until then
+
+### Requirement: Contact forms (could)
+The system SHALL let a form be a contact form that creates a non-member person in a chosen address group, with the same spam protection and consent records.
+
+#### Scenario: Sponsor contact
+- **WHEN** a contact form for address group "Sponsoren" is submitted
+- **THEN** a non-member person is created in that group with the consent record

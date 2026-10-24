@@ -1,0 +1,31 @@
+# Local development: Postgres + Mailpit (SMTP sink, web UI on :18025).
+# `docker compose --profile app up` also runs the app itself on :3300.
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: openverein
+      POSTGRES_PASSWORD: openverein
+      POSTGRES_DB: openverein
+    ports: ["54329:5432"]
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openverein"]
+      interval: 2s
+      retries: 20
+  mail:
+    image: axllent/mailpit:v1.27
+    ports: ["11025:1025", "18025:8025"]
+  app:
+    profiles: [app]
+    build: .
+    environment:
+      DATABASE_URL: postgres://openverein:openverein@db:5432/openverein
+      SMTP_URL: smtp://mail:1025
+      COOKIE_SECURE: "false"
+      DEMO_MODE: ${DEMO_MODE:-false}
+    ports: ["3300:3300"]
+    depends_on:
+      db: { condition: service_healthy }
+volumes:
+  pgdata:
