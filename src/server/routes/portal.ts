@@ -48,7 +48,7 @@ const changeBody = z.discriminatedUnion('field', [
 export async function issueLoginCode(db: Db, organizationId: string, email: string, issuedBy: string | null) {
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const id = randomUUID();
-  await db.insertInto('login_code').values({ id, organization_id: organizationId, email_hash: emailKey(email), code_hash: codeHash(id, code), expires_at: new Date(Date.now() + (issuedBy ? 24 * 60 : 10) * 60_000), issued_by: issuedBy }).execute();
+  await db.insertInto('login_code').values({ id, organization_id: organizationId, email_hash: emailKey(email), code_hash: codeHash(id, code), expires_at: new Date(Date.now() + (issuedBy ? 24 * 3_600_000 : CODE_TTL_MS)), issued_by: issuedBy }).execute();
   return code;
 }
 
