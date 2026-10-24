@@ -365,7 +365,11 @@ dialog::backdrop { background: rgb(20 32 46 / 0.35); }
 .table .name { font-weight: 600; color: var(--ink); }
 .table .groups { display: flex; gap: var(--s-1) var(--s-3); flex-wrap: wrap; }
 .table-foot { display: flex; justify-content: space-between; align-items: center; padding: var(--s-3) 0; color: var(--ink-3); font-size: var(--text-sm); }
-@media (max-width: 760px) { .hide-sm { display: none; } }
+@media (max-width: 760px) {
+  .hide-sm { display: none; }
+  /* Status chips shrink to their dot; the label stays for screen readers. */
+  .label-sm { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
 
 .empty-state { padding: var(--s-7) var(--s-5); text-align: left; max-width: 52ch; }
 .empty-state h3 { margin-bottom: var(--s-2); }

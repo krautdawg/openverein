@@ -44,6 +44,8 @@ export function ClubSettings({ me }: { me: Me }) {
           <dt>Bank</dt><dd>{edit('Bank', 'bankName')}</dd>
           <dt>IBAN</dt><dd>{edit('IBAN', 'iban')}</dd>
           <dt>BIC</dt><dd>{edit('BIC', 'bic')}</dd>
+          <dt>Gläubiger-ID</dt>
+          <dd>{edit('Gläubiger-Identifikationsnummer', 'creditorId')}<p className="meta">Für SEPA-Lastschriften, von der Bundesbank vergeben (z. B. DE98ZZZ09999999999).</p></dd>
         </dl>
       </section>
       <section className="section" aria-labelledby="invoicing">
