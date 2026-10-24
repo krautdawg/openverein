@@ -16,7 +16,7 @@
   --ink-2: #47525f;           /* 7.2:1 on ground */
   --ink-3: #5f6874;           /* 5.3:1 on surface; placeholders, meta */
   --line: #d8dbd4;            /* 1px hairlines */
-  --line-strong: #b4b9b0;     /* control borders (3:1 on surface) */
+  --line-strong: #858b83;     /* control borders, 3.5:1 on surface (WCAG 1.4.11) */
 
   /* Action: used only for primary actions, focus and current selection */
   --accent: #bf3a13;

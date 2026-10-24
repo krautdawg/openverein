@@ -60,11 +60,12 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
 
   const serveWeb = opts.serveWeb ?? existsSync(config.webDist);
   if (serveWeb) {
-    await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
+    await app.register(fastifyStatic, { root: config.webDist });
   }
   app.setNotFoundHandler((req, reply) => {
     // Client-side routes get the SPA shell; unknown API paths get a problem document.
-    if (serveWeb && req.method === 'GET' && !req.url.startsWith('/api/')) return reply.sendFile('index.html');
+    const path = req.url.split('?')[0]!;
+    if (serveWeb && req.method === 'GET' && !path.startsWith('/api/') && !/\.\w+$/.test(path)) return reply.sendFile('index.html');
     return sendProblem(reply, new Problem(404, 'not-found', 'Diese Adresse gibt es nicht.'), req.url);
   });
 

@@ -11,7 +11,7 @@ function CourtLines() {
         <path d="M100 540 A 90 90 0 0 1 280 540" stroke="#d9661a" strokeOpacity="0.55" />
         <path d="M100 120 A 90 90 0 0 0 280 120" stroke="#d9661a" strokeOpacity="0.55" />
         <rect x="-20" y="210" width="460" height="240" stroke="#2b7a4b" strokeOpacity="0.5" />
-        <line x1="-20" y1="300" x2="440" y2="300" stroke="#c99a06" strokeOpacity="0.5" />
+        <line x1="-20" y1="390" x2="440" y2="390" stroke="#c99a06" strokeOpacity="0.5" />
       </g>
     </svg>
   );

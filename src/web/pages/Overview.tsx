@@ -1,6 +1,7 @@
 import { Check } from 'lucide-react';
 import { Link } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
+import { PageHead } from '../components/PageHead.tsx';
 import { useTitle } from '../lib/useTitle.ts';
 
 function greeting() {
@@ -17,10 +18,7 @@ export function Overview({ me }: { me: Me }) {
   ];
   return (
     <div className="page">
-      <div className="page-head">
-        <h1>{greeting()}, {me.name.split(' ')[0]}.</h1>
-        <p>Hier siehst Du, was im {me.organization.name} gerade ansteht.</p>
-      </div>
+      <PageHead title={`${greeting()}, ${me.name.split(' ')[0]}.`} intro={`Hier siehst Du, was im ${me.organization.name} gerade ansteht.`} />
       <section className="section" aria-labelledby="first-steps">
         <h2 id="first-steps">Erste Schritte</h2>
         <ul className="checklist">

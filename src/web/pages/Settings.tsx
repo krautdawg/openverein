@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Organization } from '../../shared/organization.ts';
 import { InlineEdit } from '../components/InlineEdit.tsx';
 import { api } from '../lib/api.ts';
+import { PageHead } from '../components/PageHead.tsx';
 import { useTitle } from '../lib/useTitle.ts';
 
 export function Settings() {
@@ -17,10 +18,7 @@ export function Settings() {
 
   return (
     <div className="page">
-      <div className="page-head">
-        <h1>Einstellungen</h1>
-        <p>Stammdaten Deines Vereins. Klick auf einen Wert, um ihn zu ändern.</p>
-      </div>
+      <PageHead title="Einstellungen" intro="Stammdaten Deines Vereins. Klick auf einen Wert, um ihn zu ändern." />
       <section className="section" aria-labelledby="club">
         <h2 id="club">Verein</h2>
         {org ? (

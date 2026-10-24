@@ -53,7 +53,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
           <small>{me.name}</small>
         </div>
         <button className="rail-search" onClick={() => setPaletteOpen(true)}>
-          <Search size={16} aria-hidden /> Suchen und springen
+          <Search size={16} aria-hidden /> Suchen
           <kbd>{isMac ? '⌘' : 'Strg'} K</kbd>
         </button>
         <nav>
