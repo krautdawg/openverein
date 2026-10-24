@@ -8,6 +8,7 @@ import { todayLocal, useGroups } from '../lib/hooks.ts';
 import { CourtLines } from './CourtLines.tsx';
 import { InlineEdit } from './InlineEdit.tsx';
 import { MemberFees } from './MemberFees.tsx';
+import { MemberFiles } from './MemberFiles.tsx';
 import { MemberMails } from './MemberMails.tsx';
 import { MemberMandate } from './MemberMandate.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -110,6 +111,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
             <MemberFees memberId={m.id} joinDate={m.joinDate} canWrite={permissions.fees === 'write'} canSeeInvoices={!!permissions.invoices && permissions.invoices !== 'none'} />
           )}
           {permissions.communication && permissions.communication !== 'none' && <MemberMails memberId={m.id} />}
+          <MemberFiles memberId={m.id} canWrite={canWrite} />
 
           <section className="sheet-section" aria-labelledby="s-history">
             <h3 id="s-history">Verlauf</h3>

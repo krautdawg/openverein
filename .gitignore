@@ -10,3 +10,4 @@ playwright-report
 android/app/build
 ios/App/Pods
 design-qa/
+data/

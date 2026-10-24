@@ -10,6 +10,8 @@ export const config = {
   demoMode: env.DEMO_MODE === 'true',
   // Public address of this installation, used in links inside e-mails.
   publicUrl: (env.PUBLIC_URL ?? `http://localhost:${env.PORT ?? 3300}`).replace(/\/$/, ''),
+  // Uploaded files, stored by SHA-256 (content-addressed). Mount a volume here in production.
+  filesDir: env.FILES_DIR ?? 'data/files',
   smtpUrl: env.SMTP_URL ?? 'smtp://localhost:11025',
   mailFrom: env.MAIL_FROM ?? 'OpenVerein <verein@example.org>',
   // shortcut: a fixed development key when DATA_KEY is unset outside production; set a real one for any club data.

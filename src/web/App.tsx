@@ -14,6 +14,7 @@ import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
 import { Dunning, Invoices } from './pages/Invoices.tsx';
 import { Events } from './pages/Events.tsx';
 import { Communication } from './pages/Communication.tsx';
+import { Documents } from './pages/Documents.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
@@ -68,6 +69,8 @@ export function App() {
         <Route path="/termine" element={<Events me={me.data} />} />
         <Route path="/termine/:id/:date" element={<Events me={me.data} />} />
         <Route path="/kommunikation" element={<Communication me={me.data} />} />
+        <Route path="/dokumente" element={<Documents me={me.data} />} />
+        <Route path="/dokumente/:id" element={<Documents me={me.data} />} />
         <Route path="/kommunikation/:id" element={<Communication me={me.data} />} />
         <Route path="/beitraege" element={<FeePlans me={me.data} />} />
         <Route path="/beitraege/laeufe" element={<FeeRuns me={me.data} />} />

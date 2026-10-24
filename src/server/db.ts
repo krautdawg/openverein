@@ -562,6 +562,34 @@ export interface MailTemplateTable {
   updated_at: Generated<Date>;
 }
 
+export interface FolderTable {
+  id: Generated<string>;
+  organization_id: string;
+  parent_id: string | null;
+  name: string;
+  group_ids: string[] | null;
+  created_at: Generated<Date>;
+}
+
+export type RetentionClass = 'document' | 'voucher' | 'temporary';
+export interface FileTable {
+  id: Generated<string>;
+  organization_id: string;
+  folder_id: string | null;
+  member_id: string | null;
+  sha256: string;
+  size_bytes: number;
+  mime_type: string;
+  name: string;
+  retention_class: Generated<RetentionClass>;
+  retain_until: string | null;
+  legal_hold: Generated<boolean>;
+  previous_id: string | null;
+  superseded_at: Date | null;
+  uploaded_by: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface SuppressionTable {
   id: Generated<string>;
   organization_id: string;
@@ -608,6 +636,8 @@ export interface Database {
   delivery: DeliveryTable;
   suppression: SuppressionTable;
   mail_template: MailTemplateTable;
+  folder: FolderTable;
+  file: FileTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;
