@@ -9,6 +9,7 @@ import type { Db, DunningLevel, InvoiceKind, InvoiceStatus } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, DUNNABLE_KINDS, insertLines, issueInvoice, RECEIVABLE_KINDS, refreshPayment, storedPdf, type IssueSnapshot } from '../invoices/service.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
+import { assertNotLive } from '../sepa/live.ts';
 import { requirePermission, scopeOf, type Actor } from '../policy.ts';
 
 const idParam = z.object({ id: z.uuid() });
@@ -240,6 +241,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const inv = await loadForWrite(tx, actor, req.params.id);
       if (!['open', 'partially_paid'].includes(inv.status)) throw new Problem(409, 'not-open', 'Auf diese Rechnung kann nichts mehr gebucht werden.');
+      await assertNotLive(tx, inv.id);
       const open = inv.total_cents - inv.paid_cents;
       if (req.body.amountCents > open) {
         throw new Problem(400, 'overpayment', 'Der Betrag ist höher als der offene Betrag.', `Offen sind ${(open / 100).toFixed(2).replace('.', ',')} €.`, { errors: [{ field: 'amountCents', message: 'Höher als der offene Betrag.' }] });
@@ -276,6 +278,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const inv = await loadForWrite(tx, actor, req.params.id);
       if (!['open', 'partially_paid'].includes(inv.status) || !RECEIVABLE_KINDS.includes(inv.kind)) throw new Problem(409, 'not-open', 'Nur offene Forderungen lassen sich ausbuchen.');
+      await assertNotLive(tx, inv.id);
       const open = inv.total_cents - inv.paid_cents;
       await tx.insertInto('allocation').values({ organization_id: actor.organizationId, invoice_id: inv.id, amount_cents: open, booked_on: today, method: 'write_off', note: req.body.reason, created_by: actor.userId }).execute();
       await tx.updateTable('invoice').set({ written_off_reason: req.body.reason }).where('id', '=', inv.id).execute();

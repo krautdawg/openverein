@@ -108,7 +108,14 @@ export function previewFor(m: MemberInputs, versions: Map<string, PlanVersion[]>
   };
 }
 
-/** Members with an active SEPA mandate. Mandates arrive with the SEPA slice; until then nobody has one. */
-export async function membersWithMandate(_db: Db, _organizationId: string): Promise<Set<string>> {
-  return new Set();
+/** Members whose own person has an active SEPA mandate. */
+export async function membersWithMandate(db: Db, organizationId: string): Promise<Set<string>> {
+  const rows = await db
+    .selectFrom('member')
+    .innerJoin('sepa_mandate', 'sepa_mandate.person_id', 'member.person_id')
+    .select('member.id')
+    .where('member.organization_id', '=', organizationId)
+    .where('sepa_mandate.status', '=', 'active')
+    .execute();
+  return new Set(rows.map((r) => r.id));
 }

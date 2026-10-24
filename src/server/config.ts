@@ -10,5 +10,7 @@ export const config = {
   demoMode: env.DEMO_MODE === 'true',
   smtpUrl: env.SMTP_URL ?? 'smtp://localhost:11025',
   mailFrom: env.MAIL_FROM ?? 'OpenVerein <verein@example.org>',
+  // shortcut: a fixed development key when DATA_KEY is unset outside production; set a real one for any club data.
+  dataKey: env.DATA_KEY || (env.NODE_ENV === 'production' ? '' : 'b3BlbnZlcmVpbi1kZXZlbG9wbWVudC1rZXktbm90LXNlY3JldA=='),
   webDist: env.WEB_DIST ?? new URL('../../dist/web', import.meta.url).pathname,
 };

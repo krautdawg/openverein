@@ -8,6 +8,7 @@ import { todayLocal, useGroups } from '../lib/hooks.ts';
 import { CourtLines } from './CourtLines.tsx';
 import { InlineEdit } from './InlineEdit.tsx';
 import { MemberFees } from './MemberFees.tsx';
+import { MemberMandate } from './MemberMandate.tsx';
 import { Sheet } from './Sheet.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 
@@ -101,6 +102,9 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
 
           <MembershipSection m={m} canWrite={canWrite} patch={patch} onChanged={refresh} />
           <GroupsSection m={m} canWrite={canWrite} onChanged={reload} />
+          {permissions.sepa && permissions.sepa !== 'none' && (
+            <MemberMandate memberId={m.id} holder={displayName(m).split(', ').reverse().join(' ')} canWrite={permissions.sepa === 'write'} />
+          )}
           {permissions.fees && permissions.fees !== 'none' && (
             <MemberFees memberId={m.id} joinDate={m.joinDate} canWrite={permissions.fees === 'write'} canSeeInvoices={!!permissions.invoices && permissions.invoices !== 'none'} />
           )}

@@ -19,3 +19,12 @@ Small decisions made while building, especially where the spec was ambiguous or 
 | 2026-10-24 | Recurring invoice templates and scheduled fee-run previews are deferred. | Need the job runner; manual runs cover the cycle. |
 | 2026-10-24 | Payments and write-offs do not post journal entries yet. | The bookkeeping slice adds the journal and posts from allocations. |
 | 2026-10-24 | Dunning levels are edited over the API only for now. | Defaults cover most clubs; a settings editor follows with the letter templates. |
+| 2026-10-25 | IBAN change = new mandate with a new reference (no amendment info in pain.008). | Legally clean and simpler; amendment fields can follow if a pilot bank requires them. |
+| 2026-10-25 | All recurrent collections use RCUR (one-off mandates OOFF). | Allowed since the November 2016 SEPA rulebook; avoids FRST tracking. |
+| 2026-10-25 | Releasing a downloaded collection run needs an explicit "never submitted" confirmation, not yet TOTP. | TOTP arrives with the auth hardening slice; the confirmation is audited. |
+| 2026-10-25 | Field encryption key from env `DATA_KEY` (HKDF-derived keys), not a Docker secret file with key escrow. | Same protection at rest with less ops; `ovctl`-style key handling is post-MVP. A fixed dev key is used only outside production. |
+| 2026-10-25 | Bank fees and return-debit fees are recorded but not posted to a ledger. | The bookkeeping slice posts them. |
+| 2026-10-25 | Rule 3 (batch credit = file control sum) only books for multi-item files on the same account with exactly one candidate. | A single member's transfer of the same amount must not settle a one-item file. |
+| 2026-10-25 | Only the latest statement import of an account can be rolled back. | An older import may hold bookings that a later, overlapping import skipped as duplicates. |
+| 2026-10-25 | Stored ciphertexts have no associated data (row binding). | Swapping ciphertexts needs database write access, which already allows worse; revisit with key rotation. |
+| 2026-10-25 | PR #4 reviewed by the third counsel rung again (Codex quota out until 02:35, Gemini needs interactive login). | Lead's rule: never skip the review. |

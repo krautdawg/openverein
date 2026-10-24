@@ -24,7 +24,7 @@ test('groups and members: create a division, add a member, find and resign them'
 
   const detail = page.getByRole('dialog', { name: 'Musterfrau, Johanna' });
   await expect(detail).toBeVisible();
-  await expect(detail.getByText('Aktiv')).toBeVisible();
+  await expect(detail.getByText('Aktiv', { exact: true })).toBeVisible();
   await detail.getByRole('button', { name: 'Schließen' }).click();
 
   const table = page.getByRole('table', { name: 'Mitglieder' });
@@ -43,6 +43,6 @@ test('groups and members: create a division, add a member, find and resign them'
   await expect(detail.getByLabel('Austritt zum')).toHaveValue('2026-06-30');
   await detail.getByLabel('Austritt zum').fill('2030-12-31');
   await detail.getByRole('button', { name: 'Kündigung speichern' }).click();
-  await expect(detail.getByText('Gekündigt')).toBeVisible();
+  await expect(detail.getByText('Gekündigt', { exact: true })).toBeVisible();
   await expect(detail.getByText('Kündigung erfasst')).toBeVisible();
 });

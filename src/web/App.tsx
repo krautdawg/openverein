@@ -11,6 +11,7 @@ import { Groups } from './pages/Groups.tsx';
 import { FeePlans } from './pages/Fees.tsx';
 import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
 import { Dunning, Invoices } from './pages/Invoices.tsx';
+import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
 import { AuditLog } from './pages/settings/AuditLog.tsx';
@@ -67,6 +68,10 @@ export function App() {
         <Route path="/rechnungen/mahnwesen" element={<Dunning me={me.data} />} />
         <Route path="/rechnungen/mahnwesen/:id" element={<Dunning me={me.data} />} />
         <Route path="/rechnungen/:id" element={<Invoices me={me.data} />} />
+        <Route path="/bank" element={<BankAccounts me={me.data} />} />
+        <Route path="/bank/abgleich" element={<Reconciliation me={me.data} />} />
+        <Route path="/bank/lastschriften" element={<Collections me={me.data} />} />
+        <Route path="/bank/lastschriften/:id" element={<CollectionRunDetail me={me.data} />} />
         <Route path="/einstellungen" element={<SettingsLayout me={me.data} />}>
           <Route index element={<ClubSettings me={me.data} />} />
           <Route path="zugaenge" element={<Users me={me.data} />} />

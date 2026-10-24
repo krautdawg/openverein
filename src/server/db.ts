@@ -27,6 +27,8 @@ export interface OrganizationTable {
   cancellation_number_pattern: Generated<string>;
   payment_terms_days: Generated<number>;
   dunning_levels: Generated<DunningLevel[]>;
+  creditor_id: string | null;
+  prenotification_days: Generated<number>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -305,6 +307,8 @@ export interface AllocationTable {
   created_by: string | null;
   created_at: Timestamp;
   reversed_at: Date | null;
+  bank_transaction_id: Generated<string | null>;
+  collection_item_id: Generated<string | null>;
 }
 
 export interface DunningEventTable {
@@ -315,6 +319,145 @@ export interface DunningEventTable {
   label: string;
   fee_cents: Generated<number>;
   fee_invoice_id: string | null;
+  created_by: string | null;
+  created_at: Timestamp;
+}
+
+export interface BankAccountTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  iban: string;
+  bic: string | null;
+  opening_balance_cents: Generated<number>;
+  opening_date: string;
+  min_lead_days: Generated<number>;
+  order_limit_cents: number | null;
+  archived_at: Date | null;
+  created_at: Timestamp;
+}
+
+export interface SepaMandateTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  reference: string;
+  signed_on: string;
+  account_holder: string;
+  iban_encrypted: string;
+  iban_hash: string;
+  iban_last4: string;
+  bic: string | null;
+  type: Generated<'recurrent' | 'one_off'>;
+  status: Generated<'pending_evidence' | 'active' | 'revoked' | 'expired'>;
+  first_collected: Generated<boolean>;
+  last_collected_on: string | null;
+  revoked_on: string | null;
+  revoke_reason: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface CollectionRunTable {
+  id: Generated<string>;
+  organization_id: string;
+  kind: 'debit' | 'transfer';
+  bank_account_id: string;
+  collection_date: string;
+  status: Generated<'draft' | 'generated' | 'downloaded' | 'submitted' | 'settled' | 'released'>;
+  created_by: string | null;
+  created_at: Timestamp;
+  generated_at: Date | null;
+  submitted_at: Date | null;
+  released_at: Date | null;
+  release_reason: string | null;
+}
+
+export interface CollectionFileTable {
+  id: Generated<string>;
+  organization_id: string;
+  run_id: string;
+  position: number;
+  message_id: string;
+  schema: string;
+  sequence_type: string | null;
+  xml_encrypted: string;
+  sha256: string;
+  item_count: number;
+  control_sum_cents: number;
+  first_downloaded_at: Date | null;
+  created_at: Timestamp;
+}
+
+export interface CollectionItemTable {
+  id: Generated<string>;
+  organization_id: string;
+  run_id: string;
+  file_id: string | null;
+  mandate_id: string | null;
+  person_id: string;
+  end_to_end_id: string;
+  amount_cents: number;
+  sequence_type: string | null;
+  status: Generated<'included' | 'settled' | 'returned' | 'withdrawn'>;
+  created_at: Timestamp;
+}
+
+export interface CollectionItemInvoiceTable {
+  id: Generated<string>;
+  organization_id: string;
+  item_id: string;
+  invoice_id: string;
+  amount_cents: number;
+  live: Generated<boolean>;
+}
+
+export interface BankStatementImportTable {
+  id: Generated<string>;
+  organization_id: string;
+  bank_account_id: string;
+  format: 'camt053' | 'csv';
+  file_name: string | null;
+  file_sha256: string;
+  period_from: string | null;
+  period_to: string | null;
+  opening_cents: number | null;
+  closing_cents: number | null;
+  transaction_count: Generated<number>;
+  raw_encrypted: string | null;
+  created_by: string | null;
+  created_at: Timestamp;
+}
+
+export interface BankTransactionTable {
+  id: Generated<string>;
+  organization_id: string;
+  bank_account_id: string;
+  import_id: string | null;
+  booking_date: string;
+  value_date: string | null;
+  amount_cents: number;
+  counterparty_name: string | null;
+  counterparty_iban_encrypted: string | null;
+  counterparty_iban_hash: string | null;
+  remittance: Generated<string>;
+  end_to_end_id: string | null;
+  mandate_reference: string | null;
+  return_reason: string | null;
+  bank_reference: string | null;
+  dedupe_key: string;
+  status: Generated<'unmatched' | 'matched' | 'ignored'>;
+  note: string | null;
+  created_at: Timestamp;
+}
+
+export interface ReturnDebitTable {
+  id: Generated<string>;
+  organization_id: string;
+  bank_transaction_id: string;
+  collection_item_id: string;
+  reason_code: string | null;
+  fee_cents: Generated<number>;
   created_by: string | null;
   created_at: Timestamp;
 }
@@ -341,6 +484,15 @@ export interface Database {
   assessment: AssessmentTable;
   allocation: AllocationTable;
   dunning_event: DunningEventTable;
+  bank_account: BankAccountTable;
+  sepa_mandate: SepaMandateTable;
+  collection_run: CollectionRunTable;
+  collection_file: CollectionFileTable;
+  collection_item: CollectionItemTable;
+  collection_item_invoice: CollectionItemInvoiceTable;
+  bank_statement_import: BankStatementImportTable;
+  bank_transaction: BankTransactionTable;
+  return_debit: ReturnDebitTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

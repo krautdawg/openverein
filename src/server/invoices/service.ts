@@ -4,6 +4,7 @@ import { addDays, formatDate } from '../../shared/dates.ts';
 import type { Db, InvoiceKind } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import { nextNumber } from '../members/numbers.ts';
+import { assertNotLive } from '../sepa/live.ts';
 import { epcPayload, formatIban, renderInvoicePdf } from './pdf.ts';
 
 /** Everything the PDF needs, frozen at issue time so the document never changes afterwards. */
@@ -13,6 +14,9 @@ export interface IssueSnapshot {
   org: { name: string; street: string | null; postalCode: string | null; city: string | null; email: string | null; iban: string | null; bic: string | null; bankName: string | null; isDemo: boolean };
   paymentMethod: string | null;
   cancelsNumber: string | null;
+  /** SEPA pre-notification data, frozen at issue (direct debit only) */
+  mandateReference?: string | null;
+  creditorId?: string | null;
 }
 
 export const RECEIVABLE_KINDS: InvoiceKind[] = ['membership', 'other', 'dunning_fee'];
@@ -38,6 +42,7 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
   const org = await tx.selectFrom('organization').selectAll().where('id', '=', organizationId).executeTakeFirstOrThrow();
   const person = await tx.selectFrom('person').selectAll().where('id', '=', inv.recipient_person_id).executeTakeFirstOrThrow();
   const member = inv.member_id ? await tx.selectFrom('member').select(['membership_number', 'payment_method']).where('id', '=', inv.member_id).executeTakeFirst() : undefined;
+  const mandate = await tx.selectFrom('sepa_mandate').select('reference').where('person_id', '=', inv.recipient_person_id).where('status', '=', 'active').executeTakeFirst();
   const cancels = inv.cancels_invoice_id ? await tx.selectFrom('invoice').select('number').where('id', '=', inv.cancels_invoice_id).executeTakeFirst() : undefined;
 
   const isCancellation = inv.kind === 'cancellation';
@@ -50,6 +55,8 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     org: { name: org.name, street: org.street, postalCode: org.postal_code, city: org.city, email: org.email, iban: org.iban, bic: org.bic, bankName: org.bank_name, isDemo: org.is_demo },
     paymentMethod: member?.payment_method ?? null,
     cancelsNumber: cancels?.number ?? null,
+    mandateReference: mandate?.reference ?? null,
+    creditorId: org.creditor_id,
   };
   const status = isCancellation ? 'issued' : total === 0 ? 'paid' : 'open';
   await tx
@@ -101,7 +108,10 @@ export async function storedPdf(db: Db, organizationId: string, invoiceId: strin
   let paymentText: string;
   if (inv.kind === 'cancellation') paymentText = `Diese Stornorechnung hebt die Rechnung ${snap.cancelsNumber ?? ''} vollständig auf. Ein bereits gezahlter Betrag wird erstattet oder verrechnet.`;
   else if (inv.kind === 'credit_note') paymentText = `Wir erstatten Dir ${amount}.`;
-  else if (snap.paymentMethod === 'direct_debit') paymentText = `Den Betrag von ${amount} ziehen wir per SEPA-Lastschrift ein. Du musst nichts weiter tun.`;
+  else if (snap.paymentMethod === 'direct_debit' && snap.mandateReference) {
+    // SEPA pre-notification on the invoice: amount, earliest collection date, mandate reference, creditor ID.
+    paymentText = `Den Betrag von ${amount} ziehen wir frühestens am ${formatDate(inv.due_date)} per SEPA-Lastschrift von Deinem Konto ein. Mandatsreferenz ${snap.mandateReference}, Gläubiger-ID ${snap.creditorId ?? ''}. Bitte sorge für Deckung.`;
+  } else if (snap.paymentMethod === 'direct_debit') paymentText = `Den Betrag von ${amount} ziehen wir per SEPA-Lastschrift ein, sobald Dein Mandat vorliegt.`;
   else if (snap.org.iban) paymentText = `Bitte überweise ${amount} bis zum ${formatDate(inv.due_date)} auf unser Konto ${formatIban(snap.org.iban)}${snap.org.bic ? ` (BIC ${snap.org.bic})` : ''}. Verwendungszweck: ${inv.number}.`;
   else paymentText = `Bitte zahle ${amount} bis zum ${formatDate(inv.due_date)}. Verwendungszweck: ${inv.number}.`;
   const epc = receivable && snap.paymentMethod !== 'direct_debit' && snap.org.iban && inv.total_cents > 0
@@ -188,6 +198,7 @@ export async function cancelInvoice(tx: Db, organizationId: string, invoiceId: s
   if (!['open', 'partially_paid', 'paid', 'written_off'].includes(inv.status) || inv.kind === 'cancellation') {
     throw new Problem(409, 'not-cancellable', 'Nur ausgestellte Rechnungen lassen sich stornieren.');
   }
+  await assertNotLive(tx, inv.id);
   const paid = await tx.selectFrom('allocation').select('method').where('invoice_id', '=', inv.id).where('status', '=', 'confirmed').executeTakeFirst();
   if (paid) {
     throw new Problem(409, 'has-payments', paid.method === 'write_off' ? 'Die Rechnung ist ausgebucht. Nimm die Ausbuchung zuerst zurück, dann kannst Du stornieren.' : 'Auf die Rechnung sind Zahlungen gebucht. Buche sie zuerst zurück, dann kannst Du stornieren.');

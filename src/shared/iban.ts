@@ -15,3 +15,16 @@ export function isValidIban(input: string) {
 }
 
 export const isValidBic = (bic: string) => /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bic.replace(/\s+/g, '').toUpperCase());
+
+/** Creditor identifier check (Gläubiger-ID): country, check digits over the national part, business code ignored. */
+export function isValidCreditorId(id: string) {
+  const s = id.replace(/\s+/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{3}[A-Z0-9]{1,28}$/.test(s)) return false;
+  if (s.startsWith('DE') && !/^DE\d{2}[A-Z0-9]{3}\d{11}$/.test(s)) return false;
+  const national = s.slice(7) + s.slice(0, 4);
+  const digits = national.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
+  let rest = 0;
+  for (const ch of digits) rest = (rest * 10 + Number(ch)) % 97;
+  return rest === 1;
+}
+

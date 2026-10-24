@@ -1,4 +1,4 @@
-import { Coins, FileText, LayoutGrid, Settings, Shapes, Users, type LucideIcon } from 'lucide-react';
+import { Coins, FileText, Landmark, LayoutGrid, Settings, Shapes, Users, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   label: string;
@@ -16,5 +16,6 @@ export const nav: NavItem[] = [
   { label: 'Gruppen', path: '/gruppen', icon: Shapes, keywords: 'abteilungen mannschaften sparten groups', module: 'groups' },
   { label: 'Beiträge', path: '/beitraege', icon: Coins, keywords: 'beitragsarten beitragslauf gebühren fees', module: 'fees' },
   { label: 'Rechnungen', path: '/rechnungen', icon: FileText, keywords: 'offene posten mahnung zahlung invoices', module: 'invoices' },
+  { label: 'Bank', path: '/bank', icon: Landmark, keywords: 'konto kontoauszug camt abgleich lastschrift sepa einzug', module: 'banking' },
   { label: 'Einstellungen', path: '/einstellungen', icon: Settings, keywords: 'verein stammdaten zugänge rollen api protokoll settings' },
 ];
