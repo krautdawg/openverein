@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { LogOut, Menu, Search } from 'lucide-react';
+import { LogOut, Menu, Search, UserPlus } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api.ts';
 import { nav } from '../lib/nav.ts';
@@ -36,12 +36,14 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
     navigate('/anmelden');
   }, [qc, navigate]);
 
+  const items = useMemo(() => nav.filter((n) => !n.module || me.permissions[n.module] !== 'none'), [me.permissions]);
   const commands = useMemo<Command[]>(
     () => [
-      ...nav.map((n) => ({ id: `nav-${n.path}`, label: n.label, hint: 'Gehe zu', icon: n.icon, keywords: n.keywords, run: () => navigate(n.path) })),
+      ...items.map((n) => ({ id: `nav-${n.path}`, label: n.label, hint: 'Gehe zu', icon: n.icon, keywords: n.keywords, run: () => navigate(n.path) })),
+      ...(me.permissions.members === 'write' ? [{ id: 'new-member', label: 'Mitglied anlegen', icon: UserPlus, keywords: 'neu hinzufügen', run: () => navigate('/mitglieder?neu=1') }] : []),
       { id: 'logout', label: 'Abmelden', icon: LogOut, keywords: 'logout ausloggen', run: () => void logout() },
     ],
-    [navigate, logout],
+    [items, navigate, logout, me.permissions.members],
   );
 
   return (
@@ -57,7 +59,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
           <kbd>{isMac ? '⌘' : 'Strg'} K</kbd>
         </button>
         <nav>
-          {nav.map((n) => (
+          {items.map((n) => (
             <NavLink key={n.path} to={n.path} end={n.path === '/'} className="rail-link">
               <n.icon size={18} aria-hidden />
               {n.label}

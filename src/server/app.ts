@@ -6,11 +6,15 @@ import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
-import { userFromRequest } from './auth/session.ts';
+import { actorFromRequest } from './auth/session.ts';
 import { config } from './config.ts';
-import type { AppUser, Db } from './db.ts';
+import type { Db } from './db.ts';
+import type { Actor } from './policy.ts';
 import { errorHandler, Problem, sendProblem } from './http/problem.ts';
 import { authRoutes } from './routes/auth.ts';
+import { accessRoutes } from './routes/access.ts';
+import { groupRoutes } from './routes/groups.ts';
+import { memberRoutes } from './routes/members.ts';
 import { organizationRoutes } from './routes/organization.ts';
 import { systemRoutes } from './routes/system.ts';
 
@@ -21,7 +25,7 @@ declare module 'fastify' {
     authRateLimit: number;
   }
   interface FastifyRequest {
-    user: AppUser | null;
+    actor: Actor | null;
   }
 }
 
@@ -32,7 +36,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   app.setErrorHandler(errorHandler);
   app.decorate('db', db);
   app.decorate('authRateLimit', opts.authRateLimit ?? 10);
-  app.decorateRequest('user', null);
+  app.decorateRequest('actor', null);
 
   await app.register(cookie);
   await app.register(rateLimit, {
@@ -45,8 +49,8 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     openapi: {
       openapi: '3.1.0',
       info: { title: 'OpenVerein API', version: '1', description: 'Jede Aktion der Oberfläche ist auch über diese API möglich. Fehler im Format RFC 9457.' },
-      components: { securitySchemes: { session: { type: 'apiKey', in: 'cookie', name: 'ov_session' } } },
-      security: [{ session: [] }],
+      components: { securitySchemes: { session: { type: 'apiKey', in: 'cookie', name: 'ov_session' }, token: { type: 'http', scheme: 'bearer', description: 'API-Schlüssel aus den Einstellungen (ov_…)' } } },
+      security: [{ session: [] }, { token: [] }],
     },
     transform: jsonSchemaTransform,
   });
@@ -65,9 +69,10 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
       if (type !== 'application/json') throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
       const origin = req.headers.origin;
+      // Bearer-token clients carry no ambient credentials, so the origin check only guards cookies.
       if (origin && new URL(origin).host !== req.headers.host) throw new Problem(403, 'cross-origin', 'Anfragen von fremden Seiten werden abgelehnt.');
     }
-    req.user = await userFromRequest(db, req, reply);
+    req.actor = await actorFromRequest(db, req, reply);
   });
 
   await app.register(
@@ -76,6 +81,9 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(systemRoutes);
       await api.register(authRoutes);
       await api.register(organizationRoutes);
+      await api.register(memberRoutes);
+      await api.register(groupRoutes);
+      await api.register(accessRoutes);
     },
     { prefix: '/api/v1' },
   );

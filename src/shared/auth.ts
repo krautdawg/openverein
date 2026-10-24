@@ -14,10 +14,20 @@ export const setupBody = z.object({
   password: z.string().min(12, 'Mindestens 12 Zeichen.').max(128, 'Höchstens 128 Zeichen.'),
 });
 
+export const levelSchema = z.enum(['none', 'read', 'write']);
+
 export const me = z.object({
   id: z.uuid(),
   name: z.string(),
   email: z.string(),
   organization: z.object({ id: z.uuid(), name: z.string(), isDemo: z.boolean() }),
+  /** Effective level per module, so the UI can hide what the user may not use. The API enforces it regardless. */
+  permissions: z.record(z.string(), levelSchema),
+  roles: z.array(z.string()),
+});
+
+export const acceptInviteBody = z.object({
+  token: z.string().min(20).max(200),
+  password: z.string().min(12, 'Mindestens 12 Zeichen.').max(128, 'Höchstens 128 Zeichen.'),
 });
 export type Me = z.infer<typeof me>;

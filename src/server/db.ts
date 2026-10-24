@@ -13,6 +13,9 @@ export interface OrganizationTable {
   name: string;
   time_zone: Generated<string>;
   is_demo: Generated<boolean>;
+  member_number_pattern: Generated<string>;
+  notice_weeks: Generated<number>;
+  exit_at: Generated<ExitAt>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -27,6 +30,8 @@ export interface AppUserTable {
   failed_logins: Generated<number>;
   locked_until: Date | null;
   last_login_at: Date | null;
+  invite_token_hash: string | null;
+  invite_expires_at: Date | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -52,11 +57,125 @@ export interface AuditEventTable {
   at: Timestamp;
 }
 
+export type ExitAt = 'any_day' | 'month_end' | 'quarter_end' | 'half_year_end' | 'year_end';
+export type MemberStatus = 'applicant' | 'future' | 'active' | 'resigned' | 'former' | 'rejected';
+export type Level = 'none' | 'read' | 'write';
+
+export interface NumberSequenceTable {
+  organization_id: string;
+  kind: string;
+  year: number;
+  next_value: number;
+}
+
+export interface PersonTable {
+  id: Generated<string>;
+  organization_id: string;
+  kind: Generated<'natural' | 'organisation'>;
+  first_name: string | null;
+  last_name: string | null;
+  company_name: string | null;
+  birth_date: string | null;
+  email: string | null;
+  phone: string | null;
+  street: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country: Generated<string>;
+  preferred_channel: Generated<'email' | 'letter' | 'none'>;
+  note: string | null;
+  status: Generated<'active' | 'archived'>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface MemberTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  membership_number: string;
+  status: MemberStatus;
+  application_date: string | null;
+  join_date: string | null;
+  notice_date: string | null;
+  exit_date: string | null;
+  exit_reason: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface ClubGroupTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  short_code: string;
+  kind: Generated<'division' | 'segment' | 'board' | 'team'>;
+  color: Generated<string>;
+  parent_id: string | null;
+  visible_to_members: Generated<boolean>;
+  in_application_form: Generated<boolean>;
+  archived_at: Date | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface GroupMembershipTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  group_id: string;
+  valid_from: string;
+  valid_to: string | null;
+  created_at: Timestamp;
+}
+
+export interface RoleTable {
+  id: Generated<string>;
+  organization_id: string;
+  builtin_key: string | null;
+  name: string;
+  permissions: Record<string, Level>;
+  restricted_fields: Generated<string[]>;
+  created_at: Timestamp;
+}
+
+export interface RoleGrantTable {
+  id: Generated<string>;
+  organization_id: string;
+  user_id: string;
+  role_id: string;
+  scope_group_ids: string[] | null;
+  created_at: Timestamp;
+}
+
+export interface ApiTokenTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  prefix: string;
+  token_hash: string;
+  role_id: string;
+  scope_group_ids: string[] | null;
+  created_by: string | null;
+  expires_at: Date;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+  created_at: Timestamp;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
   session: SessionTable;
   audit_event: AuditEventTable;
+  number_sequence: NumberSequenceTable;
+  person: PersonTable;
+  member: MemberTable;
+  club_group: ClubGroupTable;
+  group_membership: GroupMembershipTable;
+  role: RoleTable;
+  role_grant: RoleGrantTable;
+  api_token: ApiTokenTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

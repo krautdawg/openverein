@@ -21,7 +21,8 @@ export function Sheet({ title, open, onClose, children, footer }: Props) {
   return (
     <dialog ref={ref} className="sheet" aria-label={title} onClose={onClose} onClick={(e) => e.target === ref.current && onClose()}>
       <div className="sheet-head">
-        <h2>{title}</h2>
+        {/* Focus lands on the title, not the close button, so opening a sheet does not flash a focus ring. */}
+        <h2 tabIndex={-1} autoFocus style={{ outline: 'none' }}>{title}</h2>
         <button className="icon-btn" onClick={onClose} aria-label="Schließen"><X size={18} /></button>
       </div>
       <div className="sheet-body">{children}</div>

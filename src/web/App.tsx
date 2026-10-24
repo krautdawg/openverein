@@ -5,8 +5,17 @@ import { api } from './lib/api.ts';
 import { useInstanceConfig, useMe } from './lib/session.tsx';
 import { Login } from './pages/Login.tsx';
 import { Overview } from './pages/Overview.tsx';
-import { Settings } from './pages/Settings.tsx';
 import { Setup } from './pages/Setup.tsx';
+import { AcceptInvite } from './pages/AcceptInvite.tsx';
+import { Groups } from './pages/Groups.tsx';
+import { Members } from './pages/Members.tsx';
+import { ApiTokens } from './pages/settings/ApiTokens.tsx';
+import { AuditLog } from './pages/settings/AuditLog.tsx';
+import { ClubSettings } from './pages/settings/ClubSettings.tsx';
+import { Roles } from './pages/settings/Roles.tsx';
+import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
+import { Users } from './pages/settings/Users.tsx';
+import './lib/search.ts';
 
 export function App() {
   const setup = useQuery({ queryKey: ['setup'], queryFn: () => api<{ needsSetup: boolean }>('/setup') });
@@ -34,6 +43,7 @@ export function App() {
     return (
       <Routes>
         <Route path="/anmelden" element={<Login />} />
+        <Route path="/einladung" element={<AcceptInvite />} />
         <Route path="*" element={<Navigate to="/anmelden" replace />} />
       </Routes>
     );
@@ -42,7 +52,17 @@ export function App() {
     <Routes>
       <Route element={<Shell me={me.data} demo={!!cfg.data?.demo || me.data.organization.isDemo} />}>
         <Route index element={<Overview me={me.data} />} />
-        <Route path="/einstellungen" element={<Settings />} />
+        <Route path="/mitglieder" element={<Members me={me.data} />} />
+        <Route path="/mitglieder/:id" element={<Members me={me.data} />} />
+        <Route path="/gruppen" element={<Groups me={me.data} />} />
+        <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
+        <Route path="/einstellungen" element={<SettingsLayout me={me.data} />}>
+          <Route index element={<ClubSettings me={me.data} />} />
+          <Route path="zugaenge" element={<Users me={me.data} />} />
+          <Route path="rollen" element={<Roles me={me.data} />} />
+          <Route path="api" element={<ApiTokens me={me.data} />} />
+          <Route path="protokoll" element={<AuditLog />} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
