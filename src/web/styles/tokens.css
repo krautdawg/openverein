@@ -1,0 +1,82 @@
+/* OpenVerein design tokens. Everything else references these.
+   World: the club's sports hall floor. Pale ground, a deep hall-blue rail,
+   group colours as court lines, one action colour from the handball line. */
+:root {
+  /* Surfaces */
+  --ground: #f3f4f1;          /* pale birch floor, cool off-white */
+  --surface: #ffffff;         /* tables, sheets, inputs */
+  --surface-sunk: #eceee9;    /* hover rows, inline wells */
+  --rail: #12355b;            /* Hallenblau */
+  --rail-raised: #1b4471;
+  --rail-ink: #e9eff6;
+  --rail-ink-muted: #a9bdd2;
+
+  /* Ink */
+  --ink: #14202e;
+  --ink-2: #47525f;           /* 7.2:1 on ground */
+  --ink-3: #5f6874;           /* 5.3:1 on surface; placeholders, meta */
+  --line: #d8dbd4;            /* 1px hairlines */
+  --line-strong: #858b83;     /* control borders, 3.5:1 on surface (WCAG 1.4.11) */
+
+  /* Action: used only for primary actions, focus and current selection */
+  --accent: #bf3a13;
+  --accent-hover: #a5310f;
+  --accent-ink: #ffffff;
+  --accent-soft: #fbe9e3;
+  --focus: #bf3a13;
+
+  /* State */
+  --ok: #2b7a4b;
+  --ok-soft: #e3f1e8;
+  --warn: #8f5a00;
+  --warn-soft: #fbf0d9;
+  --danger: #b42318;
+  --danger-soft: #fbe7e5;
+  --demo: #f2c230;            /* the hall's yellow line, demo banner only */
+
+  /* Court lines: group colours */
+  --court-blau: #1f5fa8;
+  --court-gruen: #2b7a4b;
+  --court-rot: #c43b3b;
+  --court-gelb: #c99a06;
+  --court-orange: #d9661a;
+  --court-tuerkis: #13867f;
+  --court-grau: #6b7480;
+  --court-schwarz: #1d232b;
+
+  /* Type */
+  --font-text: 'Source Sans 3 Variable', 'Source Sans 3', system-ui, sans-serif;
+  --font-display: 'Barlow Semi Condensed', 'Source Sans 3 Variable', sans-serif;
+  --text-xs: 0.8125rem;   /* 13px meta, table headers */
+  --text-sm: 0.875rem;    /* 14px dense tables */
+  --text-md: 0.9375rem;   /* 15px body */
+  --text-lg: 1.125rem;    /* 18px */
+  --text-xl: 1.375rem;    /* 22px section heads */
+  --text-2xl: 2rem;       /* 32px page titles */
+  --leading: 1.55;
+
+  /* Space: 8px grid, 4px half step */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  --radius: 4px;
+  --control-h: 36px;
+  --rail-w: 232px;
+  --sheet-w: min(520px, 100vw);
+  --shadow-sheet: -12px 0 32px rgb(20 32 46 / 0.12);
+  --shadow-pop: 0 12px 32px rgb(20 32 46 / 0.18);
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 150ms;
+  --t-med: 220ms;
+}
+
+@media (pointer: coarse) {
+  :root { --control-h: 44px; }
+}
