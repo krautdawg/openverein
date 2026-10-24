@@ -2,7 +2,6 @@
 
 ## Purpose
 The communication capability covers bulk e-mail through the club's SMTP relay with templates, placeholders, attachments, a delivery log and suppression, and the letterhead with printable PDF letter batches split by preferred channel (B M27, M28). Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour. Free serial letters and a layout editor are post-MVP (B P27) and not specified here.
-
 ## Requirements
 ### Requirement: Recipient selection with exclusions
 The system SHALL take recipients from a saved view, groups or a hand-picked list and preview the count and the excluded persons with their reason (no e-mail, opted out, suppressed, former member).
@@ -88,3 +87,18 @@ The system SHALL merge letters into one PDF in postal-code order with blank page
 #### Scenario: Duplex padding
 - **WHEN** a batch contains a 3-page letter followed by another letter
 - **THEN** a blank page is inserted so that the next letter starts on a new sheet
+
+### Requirement: Fixed placeholder list
+The system SHALL offer placeholders only from a fixed list (first name, last name, full name, membership number, club name, and for invoice mails invoice number, amount, open amount, due date, dunning label) and leave unknown placeholders visible in the preview.
+
+#### Scenario: Unknown placeholder
+- **WHEN** the text contains `{{iban}}`
+- **THEN** the preview and the mail show `{{iban}}` unchanged
+
+### Requirement: Invoice mail by preferred channel
+The system SHALL send issued invoices of a list or a fee run by e-mail with each recipient's own PDF and return the invoices whose recipients prefer letters or have no deliverable address for printing.
+
+#### Scenario: Letter preferred
+- **WHEN** invoices are sent and one recipient prefers letters
+- **THEN** that invoice is listed for printing and not mailed
+
