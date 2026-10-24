@@ -29,10 +29,12 @@ test('portal: member signs in with a mailed code, changes the phone number and a
   await page.getByLabel('Telefon').fill('0171 2223334');
   await page.getByRole('button', { name: 'Speichern' }).click();
   await expect(page.getByRole('button', { name: /Telefon\s*0171 2223334/ })).toBeVisible();
-  await page.getByRole('button', { name: /^Ort/ }).click();
+  await page.getByRole('button', { name: /^Anschrift/ }).click();
+  await page.getByLabel('Straße und Hausnummer').fill('Am Markt 1');
+  await page.getByLabel('Postleitzahl').fill('12345');
   await page.getByLabel('Ort', { exact: true }).fill('Neustadt');
   await page.getByRole('button', { name: 'Zur Prüfung senden' }).click();
-  await expect(page.getByText('wartet: Neustadt')).toBeVisible();
+  await expect(page.getByText('wartet: Am Markt 1, 12345 Neustadt')).toBeVisible();
 
   await page.getByRole('link', { name: 'Rechnungen' }).click();
   await expect(page.getByRole('heading', { name: 'Rechnungen' })).toBeVisible();

@@ -17,13 +17,14 @@ export interface DebitItem {
   originalIban?: string | null;
 }
 
-// Bank part of an IBAN: the German Bankleitzahl, otherwise the first four characters after the check digits.
-const bankOf = (iban: string) => (iban.startsWith('DE') ? iban.slice(4, 12) : iban.slice(4, 8));
+// Where the bank code sits in an IBAN, per country; unknown countries compare the first four characters.
+const BANK_CODE: Record<string, [number, number]> = { DE: [4, 12], AT: [4, 9], CH: [4, 9], LI: [4, 9], FR: [4, 9], MC: [4, 9], IT: [5, 10], ES: [4, 8], NL: [4, 8], BE: [4, 7], LU: [4, 7], PL: [4, 12] };
+const bankOf = (iban: string) => iban.slice(0, 2) + iban.slice(...(BANK_CODE[iban.slice(0, 2)] ?? [4, 8]));
 
 /** Mandate amendment (EPC rulebook): new account at the same bank → original account; new bank → SMNDA. */
 function amendment(i: DebitItem) {
   if (!i.originalIban || i.originalIban === i.debtorIban) return '';
-  const details = bankOf(i.originalIban) === bankOf(i.debtorIban) && i.originalIban.slice(0, 2) === i.debtorIban.slice(0, 2)
+  const details = bankOf(i.originalIban) === bankOf(i.debtorIban)
     ? `<OrgnlDbtrAcct><Id><IBAN>${i.originalIban}</IBAN></Id></OrgnlDbtrAcct>`
     : '<OrgnlDbtrAgt><FinInstnId><Othr><Id>SMNDA</Id></Othr></FinInstnId></OrgnlDbtrAgt>';
   return `<AmdmntInd>true</AmdmntInd><AmdmntInfDtls>${details}</AmdmntInfDtls>`;

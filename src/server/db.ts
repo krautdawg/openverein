@@ -412,7 +412,7 @@ export interface CollectionItemTable {
   sequence_type: string | null;
   status: Generated<'included' | 'settled' | 'returned' | 'withdrawn'>;
   created_at: Timestamp;
-  carries_amendment: Generated<boolean>;
+  amended_from_iban_encrypted: string | null;
 }
 
 export interface CollectionItemInvoiceTable {
@@ -615,7 +615,7 @@ export interface PortalSessionTable {
   expires_at: Date;
 }
 
-export type ChangeField = 'first_name' | 'last_name' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'iban' | 'resignation';
+export type ChangeField = 'first_name' | 'last_name' | 'email' | 'phone' | 'address' | 'iban' | 'resignation';
 export interface ChangeRequestTable {
   id: Generated<string>;
   organization_id: string;

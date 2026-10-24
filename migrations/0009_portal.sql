@@ -30,9 +30,9 @@ create table change_request (
   organization_id uuid not null references organization(id),
   member_id uuid not null references member(id),
   person_id uuid not null references person(id),
-  field text not null check (field in ('first_name', 'last_name', 'email', 'phone', 'street', 'postal_code', 'city', 'iban', 'resignation')),
+  -- address = street, postal code and city together (JSON), iban = IBAN and account holder (encrypted JSON)
+  field text not null check (field in ('first_name', 'last_name', 'email', 'phone', 'address', 'iban', 'resignation')),
   old_value text,
-  -- IBANs are stored encrypted; everything else as entered.
   new_value text not null,
   status text not null default 'pending' check (status in ('pending', 'accepted', 'denied', 'superseded', 'applied')),
   reason text,
@@ -53,4 +53,7 @@ alter table mail_template drop constraint mail_template_key_check;
 alter table mail_template add constraint mail_template_key_check check (key in ('invoice', 'dunning', 'invitation', 'login_code', 'change_decided', 'resignation_received'));
 
 -- The first debit after an IBAN change tells the bank about it; a released run hands that duty back.
-alter table collection_item add column carries_amendment boolean not null default false;
+alter table collection_item add column amended_from_iban_encrypted text;
+
+-- Portal sign-in and request-code look persons up by address.
+create index person_email_lower_idx on person (lower(email));

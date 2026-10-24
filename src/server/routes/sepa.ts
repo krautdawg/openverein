@@ -335,11 +335,10 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         if (kind === 'debit') {
           await tx.updateTable('sepa_mandate').set({ last_collected_on: collectionDate, first_collected: true }).where('id', 'in', [...new Set(items.map((i) => i.mandate.id))]).execute();
-          // The amendment travels with this run; if the run is released, it goes back to the mandate.
-          const amended = items.filter((i) => i.mandate.amendment_pending);
-          if (amended.length) {
-            await tx.updateTable('collection_item').set({ carries_amendment: true }).where('id', 'in', amended.map((i) => i.itemId)).execute();
-            await tx.updateTable('sepa_mandate').set({ amendment_pending: false }).where('id', 'in', amended.map((i) => i.mandate.id)).execute();
+          // The amendment travels with this run (with the IBAN the bank knew); a released run hands it back.
+          for (const i of items.filter((x) => x.mandate.amendment_pending)) {
+            await tx.updateTable('collection_item').set({ amended_from_iban_encrypted: i.mandate.amended_from_iban_encrypted }).where('id', '=', i.itemId).execute();
+            await tx.updateTable('sepa_mandate').set({ amendment_pending: false }).where('id', '=', i.mandate.id).execute();
           }
         }
         await tx.updateTable('collection_run').set({ status: 'generated', generated_at: new Date() }).where('id', '=', r.id).execute();
@@ -417,8 +416,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
             last_collected_on = (select max(cr.collection_date) from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released'),
             first_collected = exists (select 1 from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released')
           where m.id in (select mandate_id from collection_item where run_id = ${r.id} and mandate_id is not null)`.execute(tx);
-        await sql`update sepa_mandate set amendment_pending = true
-          where id in (select mandate_id from collection_item where run_id = ${r.id} and carries_amendment)`.execute(tx);
+        await sql`update sepa_mandate m set amendment_pending = true, amended_from_iban_encrypted = ci.amended_from_iban_encrypted
+          from collection_item ci where ci.run_id = ${r.id} and ci.mandate_id = m.id and ci.amended_from_iban_encrypted is not null`.execute(tx);
         await audit(tx, actor.organizationId, actor, { action: 'collection_run.released', entityType: 'collection_run', entityId: r.id, diff: { status: [r.status, 'released'], reason: [null, req.body.reason], confirmedNotSubmitted: [null, req.body.confirmNotSubmitted] } });
       });
       return runDto(actor, req.params.id);

@@ -94,7 +94,7 @@ function PortalShell({ me, children }: { me: PortalMe; children: ReactNode }) {
         <span className="portal-club">{me.club.name}</span>
         <button className="portal-logout" onClick={() => void logout()}><LogOut size={16} aria-hidden /> <span>Abmelden</span></button>
       </header>
-      {!online && <div className="portal-offline" role="status">Keine Verbindung. Du siehst den zuletzt geladenen Stand; Änderungen gehen erst wieder online.</div>}
+      {!online && <div className="portal-offline" role="status">Keine Verbindung. Änderungen und neue Daten gibt es erst wieder, wenn Du online bist.</div>}
       <main className="portal-main" id="main">{children}</main>
       <nav className="portal-tabs" aria-label="Mitgliederportal">
         <NavLink to="/portal" end><Home size={20} aria-hidden /><span>Übersicht</span></NavLink>
@@ -150,6 +150,7 @@ function PortalLogin() {
         <>
           <p>Gib die E-Mail-Adresse ein, die der Verein von Dir hat. Wir schicken Dir einen Code.</p>
           <form className="form" onSubmit={requestCode} noValidate>
+            {error && !error.problem.errors && <div className="alert alert-error" role="alert">{error.problem.title} {error.problem.detail}</div>}
             <Field label="E-Mail" name="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} error={error?.fieldError('email')} required />
             <button className="btn btn-primary btn-block" aria-busy={busy} disabled={busy}>Code schicken</button>
           </form>
@@ -241,46 +242,63 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
   );
 }
 
-const FIELD_LABEL: Record<string, string> = { first_name: 'Vorname', last_name: 'Nachname', email: 'E-Mail-Adresse', phone: 'Telefon', street: 'Straße und Hausnummer', postal_code: 'Postleitzahl', city: 'Ort', iban: 'IBAN' };
+const FIELD_LABEL: Record<string, string> = { first_name: 'Vorname', last_name: 'Nachname', email: 'E-Mail-Adresse', phone: 'Telefon', address: 'Anschrift', iban: 'Bankverbindung' };
 
 function PortalData({ me }: { me: PortalMe }) {
   useTitle('Daten ändern');
   const { id } = useParams();
   const m = me.members.find((x) => x.memberId === id);
   if (!m) return <Navigate to="/portal" replace />;
-  const fields: [string, string | null][] = [['first_name', m.firstName], ['last_name', m.lastName], ['email', m.email], ['phone', m.phone], ['street', m.street], ['postal_code', m.postalCode], ['city', m.city], ['iban', m.mandate ? `•••• ${m.mandate.ibanLast4}` : null]];
+  const fields: [string, string | null][] = [['first_name', m.firstName], ['last_name', m.lastName], ['email', m.email], ['phone', m.phone], ['address', m.street ? `${m.street}, ${m.postalCode ?? ''} ${m.city ?? ''}` : null], ['iban', m.mandate ? `•••• ${m.mandate.ibanLast4}` : null]];
   return (
     <>
       <h1 className="portal-h1">Daten ändern</h1>
       <p className="muted" style={{ marginBottom: 'var(--s-5)' }}>Die Telefonnummer gilt sofort. Alles andere prüft der Verein und meldet sich per E-Mail.</p>
       <ul className="portal-fields">
-        {fields.filter(([f]) => f !== 'iban' || m.mandate).map(([field, value]) => <FieldRow key={field} memberId={m.memberId} field={field} value={value} pending={m.pending.find((p) => p.field === field)?.value} />)}
+        {fields.filter(([f]) => f !== 'iban' || m.mandate).map(([field, value]) => <FieldRow key={field} member={m} field={field} value={value} pending={m.pending.find((p) => p.field === field)?.value} />)}
       </ul>
     </>
   );
 }
 
-function FieldRow({ memberId, field, value, pending }: { memberId: string; field: string; value: string | null; pending?: string }) {
+function FieldRow({ member, field, value, pending }: { member: PortalMember; field: string; value: string | null; pending?: string }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(field === 'iban' ? '' : (value ?? ''));
-  const [error, setError] = useState<string>();
-  async function submit(e: FormEvent) {
+  const [error, setError] = useState<ApiError>();
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     setError(undefined);
     try {
-      await api('/portal/change-requests', { method: 'POST', body: { memberId, field, value: draft } });
+      await api('/portal/change-requests', { method: 'POST', body: { memberId: member.memberId, field, ...(field === 'address' || field === 'iban' ? f : { value: f.value }) } });
       setEditing(false);
       await qc.invalidateQueries({ queryKey: ['portal-me'] });
     } catch (err) {
-      setError(err instanceof ApiError ? (err.problem.errors?.[0]?.message ?? err.problem.title) : 'Das hat nicht geklappt.');
+      setError(err instanceof ApiError ? err : undefined);
     }
   }
+  const general = error && !error.problem.errors ? error.problem.title : undefined;
   return (
     <li>
       {editing ? (
         <form onSubmit={submit} noValidate className="portal-edit">
-          <Field label={FIELD_LABEL[field]!} name={field} value={draft} autoFocus onChange={(e) => setDraft(e.target.value)} error={error} inputMode={field === 'postal_code' || field === 'phone' ? 'tel' : field === 'email' ? 'email' : undefined} placeholder={field === 'iban' ? 'DE..' : undefined} />
+          {general && <div className="alert alert-error" role="alert">{general}</div>}
+          {field === 'address' ? (
+            <>
+              <Field label="Straße und Hausnummer" name="street" defaultValue={member.street ?? ''} autoComplete="street-address" error={error?.fieldError('street')} autoFocus />
+              <div className="form-row">
+                <Field label="Postleitzahl" name="postalCode" defaultValue={member.postalCode ?? ''} autoComplete="postal-code" inputMode="numeric" error={error?.fieldError('postalCode')} />
+                <Field label="Ort" name="city" defaultValue={member.city ?? ''} autoComplete="address-level2" error={error?.fieldError('city')} />
+              </div>
+            </>
+          ) : field === 'iban' ? (
+            <>
+              <Field label="Neue IBAN" name="iban" placeholder="DE.." autoComplete="off" error={error?.fieldError('iban')} autoFocus />
+              <Field label="Kontoinhaber:in" name="accountHolder" defaultValue={member.name} hint="Gehört das Konto jemand anderem, braucht der Verein ein neues unterschriebenes Mandat." error={error?.fieldError('accountHolder')} />
+            </>
+          ) : (
+            <Field label={FIELD_LABEL[field]!} name="value" defaultValue={value ?? ''} autoFocus error={error?.fieldError('value')} inputMode={field === 'phone' ? 'tel' : field === 'email' ? 'email' : undefined} />
+          )}
           <div className="actions-row" style={{ marginTop: 0 }}>
             <button className="btn btn-primary">{field === 'phone' ? 'Speichern' : 'Zur Prüfung senden'}</button>
             <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Abbrechen</button>
@@ -334,13 +352,14 @@ function PortalDocuments() {
   useTitle('Dokumente');
   const { data } = useQuery({ queryKey: ['portal-docs'], queryFn: () => api<{ id: string; name: string; folder: string; sizeBytes: number }[]>('/portal/documents') });
   const folders = [...new Set(data?.map((d) => d.folder))];
+  // Ids from the position, not the name: names may contain spaces.
   return (
     <>
       <h1 className="portal-h1">Dokumente</h1>
       {data?.length === 0 && <p className="muted">Der Verein hat noch keine Dokumente für Mitglieder freigegeben.</p>}
-      {folders.map((f) => (
-        <section key={f} className="portal-docs" aria-labelledby={`f-${f}`}>
-          <h2 id={`f-${f}`}>{f}</h2>
+      {folders.map((f, i) => (
+        <section key={f} className="portal-docs" aria-labelledby={`docs-${i}`}>
+          <h2 id={`docs-${i}`}>{f}</h2>
           <ul className="portal-list">
             {data!.filter((d) => d.folder === f).map((d) => (
               <li key={d.id} className="portal-row">

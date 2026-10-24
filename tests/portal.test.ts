@@ -25,7 +25,12 @@ const get = (url: string, cookie: string) => ctx.app.inject({ method: 'GET', url
 /** Signs in through the mailed code and returns the portal cookie. */
 async function signIn(email: string) {
   await post('/portal/auth/request-code', { email });
-  const mail = (await inbox(email))[0]!;
+  // The code goes out after the answer (same timing for members and strangers), so wait for it.
+  let mail: { ID: string } | undefined;
+  for (let i = 0; i < 40 && !mail; i++) {
+    mail = (await inbox(email))[0];
+    if (!mail) await new Promise((r) => setTimeout(r, 50));
+  }
   const code = (await text(mail.ID)).match(/\b(\d{6})\b/)![1]!;
   const r = await post('/portal/auth/verify', { email, code });
   expect(r.statusCode, r.body).toBe(200);
@@ -65,42 +70,59 @@ describe('member portal', () => {
     await admin.post('/members', { lastName: 'Code', email: 'code@example.org', joinDate: '2024-01-01' });
     await post('/portal/auth/request-code', { email: 'code@example.org' });
     for (let i = 0; i < 5; i++) expect((await post('/portal/auth/verify', { email: 'code@example.org', code: '000000' })).statusCode).toBe(400);
+    await new Promise((r) => setTimeout(r, 300));
     const code = (await text((await inbox('code@example.org'))[0]!.ID)).match(/\b(\d{6})\b/)![1]!;
     expect((await post('/portal/auth/verify', { email: 'code@example.org', code })).statusCode).toBe(400); // used up by wrong attempts
-    await post('/portal/auth/request-code', { email: 'code@example.org' });
-    await ctx.db.updateTable('login_code').set({ expires_at: new Date(Date.now() - 1000) }).execute();
-    const fresh = (await text((await inbox('code@example.org'))[0]!.ID)).match(/\b(\d{6})\b/)![1]!;
-    expect((await post('/portal/auth/verify', { email: 'code@example.org', code: fresh })).statusCode).toBe(400);
-    // An admin can hand out a code when mail does not arrive.
+    // An admin can hand out a code when mail does not arrive; a newer mailed code does not hide it.
     const m = (await admin.get('/members?q=code')).body.items[0].id;
     const issued = (await admin.post(`/members/${m}/portal-code`, {})).body;
+    await post('/portal/auth/request-code', { email: 'code@example.org' });
+    await new Promise((r) => setTimeout(r, 300));
     expect((await post('/portal/auth/verify', { email: 'code@example.org', code: issued.code })).statusCode).toBe(200);
+    // Signing in consumes every live code for the address.
+    expect(await ctx.db.selectFrom('login_code').select('id').where('consumed_at', 'is', null).execute()).toHaveLength(0);
+    // Ten wrong codes a day per address, across all codes.
+    await admin.post(`/members/${m}/portal-code`, {});
+    await admin.post(`/members/${m}/portal-code`, {});
+    for (let i = 0; i < 5; i++) await post('/portal/auth/verify', { email: 'code@example.org', code: '111111' });
+    const last = await admin.post(`/members/${m}/portal-code`, {});
+    expect((await post('/portal/auth/verify', { email: 'code@example.org', code: last.body.code })).statusCode).toBe(429);
   });
 
   it('applies phone at once, queues the rest for approval, supersedes, and amends the mandate on an IBAN change', async () => {
     const m = (await admin.post('/members', { firstName: 'Paula', lastName: 'Portal', email: 'paula@example.org', joinDate: '2024-01-01' })).body.id;
     await admin.post(`/members/${m}/mandates`, { signedOn: '2024-01-01', accountHolder: 'Paula Portal', iban: 'DE02120300000000202051' });
     const cookie = await signIn('paula@example.org');
-    const change = (field: string, value: string) => post('/portal/change-requests', { memberId: m, field, value }, cookie);
-    expect((await change('phone', '0171 1234567')).json().status).toBe('applied');
+    const change = (body: Record<string, unknown>) => post('/portal/change-requests', { memberId: m, ...body }, cookie);
+    expect((await change({ field: 'phone', value: '0171 1234567' })).json().status).toBe('applied');
     expect((await admin.get(`/members/${m}`)).body.phone).toBe('0171 1234567');
-    await change('street', 'Alte Straße 1');
-    await change('street', 'Neue Straße 2');
-    expect((await change('iban', 'DE89 3704 0044 0532 0130 00')).json().status).toBe('pending');
-    expect((await change('iban', 'DE00 1234')).statusCode).toBe(400);
+    await change({ field: 'address', street: 'Alte Straße 1', postalCode: '12345', city: 'Altstadt' });
+    await change({ field: 'address', street: 'Neue Straße 2', postalCode: '12345', city: 'Neustadt' });
+    expect((await change({ field: 'address', street: 'X', postalCode: '1234', city: 'Y' })).statusCode).toBe(400);
+    expect((await change({ field: 'iban', iban: 'DE89 3704 0044 0532 0130 00', accountHolder: 'Paula Portal' })).json().status).toBe('pending');
+    expect((await change({ field: 'iban', iban: 'DE00 1234', accountHolder: 'Paula Portal' })).statusCode).toBe(400);
     const pending = (await admin.get('/change-requests')).body as { id: string; field: string; newValue: string }[];
-    expect(pending.map((p) => p.field).sort()).toEqual(['iban', 'street']);
-    expect(pending.find((p) => p.field === 'street')!.newValue).toBe('Neue Straße 2');
-    expect(pending.find((p) => p.field === 'iban')!.newValue).toBe('•••• 3000');
+    expect(pending.map((p) => p.field).sort()).toEqual(['address', 'iban']);
+    expect(pending.find((p) => p.field === 'address')!.newValue).toBe('Neue Straße 2, 12345 Neustadt');
+    expect(pending.find((p) => p.field === 'iban')!.newValue).toBe('•••• 3000, Inhaber:in Paula Portal');
 
-    await admin.post(`/change-requests/${pending.find((p) => p.field === 'street')!.id}/deny`, { reason: 'Bitte mit Hausnummer und Ort.' });
+    await admin.post(`/change-requests/${pending.find((p) => p.field === 'address')!.id}/deny`, { reason: 'Bitte mit Hausnummer und Ort.' });
     expect((await inbox('paula@example.org')).some((x) => x.Subject.includes('Deine Änderung'))).toBe(true);
+    // The bank knows this mandate once it has been collected; only then does a change need an amendment.
+    await ctx.db.updateTable('sepa_mandate').set({ first_collected: true }).execute();
     const acc = await admin.post(`/change-requests/${pending.find((p) => p.field === 'iban')!.id}/accept`, {});
     expect(acc.status, JSON.stringify(acc.body)).toBe(200);
+    expect(acc.body.needsNewMandate).toBe(false);
     const mandate = await ctx.db.selectFrom('sepa_mandate').selectAll().executeTakeFirstOrThrow();
     expect(decrypt(mandate.iban_encrypted)).toBe('DE89370400440532013000');
     expect(mandate.amendment_pending).toBe(true);
     expect(decrypt(mandate.amended_from_iban_encrypted!)).toBe('DE02120300000000202051');
+
+    // Someone else's account needs a new mandate; nothing changes.
+    await change({ field: 'iban', iban: 'DE02120300000000202051', accountHolder: 'Peter Partner' });
+    const other = (await admin.get('/change-requests')).body.find((p: { field: string }) => p.field === 'iban');
+    expect((await admin.post(`/change-requests/${other.id}/accept`, {})).body.needsNewMandate).toBe(true);
+    expect(decrypt((await ctx.db.selectFrom('sepa_mandate').select('iban_encrypted').executeTakeFirstOrThrow()).iban_encrypted)).toBe('DE89370400440532013000');
   });
 
   it('turns a portal resignation into dates once the board confirms it, and shares documents', async () => {

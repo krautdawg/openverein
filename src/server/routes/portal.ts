@@ -1,4 +1,4 @@
-import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { correction, generate } from 'lean-qr';
@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { email as emailSchema } from '../../shared/auth.ts';
 import { formatDate, proposeExitDate } from '../../shared/dates.ts';
 import { isValidIban, normalizeIban } from '../../shared/iban.ts';
+import { postalCodeProblem } from '../../shared/members.ts';
 import { audit } from '../audit.ts';
 import { sha256 } from '../auth/session.ts';
 import { config } from '../config.ts';
@@ -27,19 +28,44 @@ const MAX_ATTEMPTS = 5;
 const tags = ['portal'];
 
 const emailKey = (e: string) => blindIndex(`login:${e.trim().toLowerCase()}`);
-const codeHash = (codeId: string, code: string) => sha256(`${codeId}:${code}`);
+// Keyed with the data key, so a database dump alone cannot reverse the million possible codes.
+const codeHash = (codeId: string, code: string) => blindIndex(`code:${codeId}:${code}`);
+/** Wrong codes allowed per address and day, across all its codes. */
+const MAX_FAILURES_PER_DAY = 10;
 const CURRENT = ['active', 'future', 'resigned'] as const;
 
 /** Fields members may change themselves; phone applies at once, the rest waits for an admin. */
 export const IMMEDIATE: ChangeField[] = ['phone'];
-const changeField = z.enum(['first_name', 'last_name', 'email', 'phone', 'street', 'postal_code', 'city', 'iban']);
+const changeBody = z.discriminatedUnion('field', [
+  z.object({ memberId: z.uuid(), field: z.enum(['first_name', 'last_name', 'email', 'phone']), value: z.string().trim().max(200) }),
+  // Street, postal code and city travel together, so a half-accepted address cannot happen.
+  z.object({ memberId: z.uuid(), field: z.literal('address'), street: z.string().trim().min(1, 'Bitte ausfüllen.').max(200), postalCode: z.string().trim().min(3, 'Bitte ausfüllen.').max(20), city: z.string().trim().min(1, 'Bitte ausfüllen.').max(100) }),
+  // A new account needs its holder: someone else's account needs a new signed mandate.
+  z.object({ memberId: z.uuid(), field: z.literal('iban'), iban: z.string().max(50), accountHolder: z.string().trim().min(2, 'Bitte den Namen der Kontoinhaberin oder des Kontoinhabers angeben.').max(70) }),
+]);
 
-/** Issues a 6-digit code for an address. Returns the code; only its hash is stored. */
+/** Issues a 6-digit code for an address. Returns the code; only its keyed hash is stored. */
 export async function issueLoginCode(db: Db, organizationId: string, email: string, issuedBy: string | null) {
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  const row = await db.insertInto('login_code').values({ organization_id: organizationId, email_hash: emailKey(email), code_hash: 'pending', expires_at: new Date(Date.now() + (issuedBy ? 24 * 60 : 10) * 60_000), issued_by: issuedBy }).returning('id').executeTakeFirstOrThrow();
-  await db.updateTable('login_code').set({ code_hash: codeHash(row.id, code) }).where('id', '=', row.id).execute();
+  const id = randomUUID();
+  await db.insertInto('login_code').values({ id, organization_id: organizationId, email_hash: emailKey(email), code_hash: codeHash(id, code), expires_at: new Date(Date.now() + (issuedBy ? 24 * 60 : 10) * 60_000), issued_by: issuedBy }).execute();
   return code;
+}
+
+/** How a pending change reads for the member. */
+function pendingText(field: ChangeField, value: string) {
+  if (field === 'iban') return 'neue Bankverbindung';
+  if (field === 'address') {
+    const a = JSON.parse(value) as { street: string; postalCode: string; city: string };
+    return `${a.street}, ${a.postalCode} ${a.city}`;
+  }
+  return value;
+}
+
+/** Removes old sign-in codes and expired portal sessions (hourly). */
+export async function pruneSignIns(db: Db) {
+  await db.deleteFrom('login_code').where('created_at', '<', new Date(Date.now() - 7 * 86_400_000)).execute();
+  await db.deleteFrom('portal_session').where('expires_at', '<', new Date()).execute();
 }
 
 export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -57,7 +83,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const members = await db
       .selectFrom('member')
       .innerJoin('person', 'person.id', 'member.person_id')
-      .select(['member.id as memberId', 'member.person_id as personId', 'member.status', 'member.membership_number', 'member.join_date', 'member.exit_date', 'member.notice_date', 'person.first_name', 'person.last_name', 'person.company_name', 'person.kind', 'person.email', 'person.phone', 'person.street', 'person.postal_code', 'person.city'])
+      .select(['member.id as memberId', 'member.person_id as personId', 'member.status', 'member.membership_number', 'member.join_date', 'member.exit_date', 'member.notice_date', 'person.first_name', 'person.last_name', 'person.company_name', 'person.kind', 'person.email', 'person.phone', 'person.street', 'person.postal_code', 'person.city', 'person.country'])
       .where('member.organization_id', '=', s.organization_id)
       .where(sql<boolean>`lower(person.email) = lower(${s.email})`)
       .where('member.status', 'in', [...CURRENT])
@@ -85,8 +111,10 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       // At most three codes per address and hour, so the endpoint cannot be used to flood an inbox.
       const recent = await db.selectFrom('login_code').select(sql<number>`count(*)::int`.as('n')).where('email_hash', '=', emailKey(email)).where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
       if (member && recent.n < 3) {
-        const code = await issueLoginCode(db, org.id, email, null);
-        await sendSystemMail(db, org.id, 'login_code', email, { code, link: `${config.publicUrl}/portal/anmelden#${new URLSearchParams({ email, code })}` });
+        // Not awaited: the answer must take as long for members as for unknown addresses.
+        void issueLoginCode(db, org.id, email, null)
+          .then((code) => sendSystemMail(db, org.id, 'login_code', email, { code, link: `${config.publicUrl}/portal/anmelden#${new URLSearchParams({ email, code })}` }))
+          .catch((err: unknown) => req.log.error(err, 'login code mail failed'));
       }
       return { ok: true };
     },
@@ -98,15 +126,21 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const email = req.body.email.trim().toLowerCase();
       const wrong = () => new Problem(400, 'invalid-code', 'Der Code stimmt nicht oder ist abgelaufen.', 'Fordere bei Bedarf einen neuen an.');
+      const key = emailKey(email);
       const token = await db.transaction().execute(async (tx) => {
-        const c = await tx.selectFrom('login_code').selectAll().where('email_hash', '=', emailKey(email)).where('consumed_at', 'is', null).where('expires_at', '>', new Date()).where('attempts', '<', MAX_ATTEMPTS).orderBy('created_at', 'desc').limit(1).forUpdate().executeTakeFirst();
-        if (!c) throw wrong();
-        const ok = timingSafeEqual(Buffer.from(c.code_hash), Buffer.from(codeHash(c.id, req.body.code)));
-        if (!ok) {
-          await tx.updateTable('login_code').set({ attempts: c.attempts + 1 }).where('id', '=', c.id).execute();
+        // Serialise sign-ins per address so the failure budget cannot be raced.
+        await sql`select pg_advisory_xact_lock(hashtext(${`portal:${key}`}))`.execute(tx);
+        const failures = await tx.selectFrom('login_code').select(sql<number>`coalesce(sum(attempts), 0)::int`.as('n')).where('email_hash', '=', key).where('created_at', '>', new Date(Date.now() - 86_400_000)).executeTakeFirstOrThrow();
+        if (failures.n >= MAX_FAILURES_PER_DAY) throw new Problem(429, 'too-many-attempts', 'Zu viele falsche Codes für diese Adresse.', 'Versuch es morgen wieder oder bitte den Verein um einen Code.');
+        const live = await tx.selectFrom('login_code').selectAll().where('email_hash', '=', key).where('consumed_at', 'is', null).where('expires_at', '>', new Date()).where('attempts', '<', MAX_ATTEMPTS).orderBy('created_at', 'desc').execute();
+        if (!live.length) throw wrong();
+        // Any live code counts (a mailed one and one the club handed out can both be valid).
+        const c = live.find((x) => timingSafeEqual(Buffer.from(x.code_hash), Buffer.from(codeHash(x.id, req.body.code))));
+        if (!c) {
+          await tx.updateTable('login_code').set({ attempts: live[0]!.attempts + 1 }).where('id', '=', live[0]!.id).execute();
           return null;
         }
-        await tx.updateTable('login_code').set({ consumed_at: new Date() }).where('id', '=', c.id).execute();
+        await tx.updateTable('login_code').set({ consumed_at: new Date() }).where('email_hash', '=', key).where('consumed_at', 'is', null).execute();
         const t = randomBytes(32).toString('base64url');
         await tx.insertInto('portal_session').values({ token_hash: sha256(t), organization_id: c.organization_id, email, expires_at: new Date(Date.now() + PORTAL_IDLE_MS) }).execute();
         await audit(tx, c.organization_id, null, { action: 'portal.signed_in', entityType: 'login_code', entityId: c.id });
@@ -156,7 +190,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
         city: m.city,
         groups: groups.filter((g) => g.member_id === m.memberId).map((g) => ({ name: g.name, color: g.color })),
         mandate: mandates.filter((x) => x.person_id === m.personId).map((x) => ({ reference: x.reference, ibanLast4: x.iban_last4, signedOn: x.signed_on, status: x.status }))[0] ?? null,
-        pending: pending.filter((p) => p.member_id === m.memberId).map((p) => ({ field: p.field, value: p.field === 'iban' ? `•••• ${'xxxx'}` : p.new_value, requestedAt: p.requested_at.toISOString() })),
+        pending: pending.filter((p) => p.member_id === m.memberId).map((p) => ({ field: p.field, value: pendingText(p.field, p.new_value), requestedAt: p.requested_at.toISOString() })),
         resignationProposal: m.status === 'resigned' ? null : proposeExitDate(today, org.notice_weeks, org.exit_at),
       })),
     };
@@ -191,7 +225,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const { inv } = await ownInvoice(req, reply);
     const snap = inv.recipient as IssueSnapshot | null;
     const open = inv.total_cents - inv.paid_cents;
-    if (!['open', 'partially_paid'].includes(inv.status) || !snap?.org.iban || open <= 0) throw notFound('Zahlcode');
+    // Direct debit invoices are collected; a transfer code would make members pay twice.
+    if (!['open', 'partially_paid'].includes(inv.status) || !snap?.org.iban || open <= 0 || snap.paymentMethod === 'direct_debit') throw notFound('Zahlcode');
     const code = generate(epcPayload({ name: snap.org.name, iban: snap.org.iban, bic: snap.org.bic, amountCents: open, remittance: inv.number ?? '' }), { minCorrectionLevel: correction.M });
     return reply.header('content-type', 'image/svg+xml').header('cache-control', 'private, no-store').send(toSvgSource(code, { on: '#14202e', off: '#ffffff', padX: 4, padY: 4 }));
   });
@@ -205,14 +240,15 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/portal/documents/:id', { schema: { tags, summary: 'Geteiltes Dokument herunterladen', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
     const u = await portalUser(req, reply);
-    const f = u.members.length ? await db.selectFrom('file').innerJoin('folder', 'folder.id', 'file.folder_id').select(['file.sha256', 'file.name', 'file.mime_type']).where('file.id', '=', req.params.id).where('file.organization_id', '=', u.organizationId).where('folder.share_with_members', '=', true).executeTakeFirst() : undefined;
+    const f = u.members.length ? await db.selectFrom('file').innerJoin('folder', 'folder.id', 'file.folder_id').select(['file.sha256', 'file.name', 'file.mime_type']).where('file.id', '=', req.params.id).where('file.organization_id', '=', u.organizationId).where('folder.share_with_members', '=', true).where('file.superseded_at', 'is', null).executeTakeFirst() : undefined;
     if (!f) throw notFound('Dokument');
     const inline = /^(application\/pdf|image\/(png|jpeg|gif|webp))$/.test(f.mime_type);
     return reply
       .header('content-type', inline ? f.mime_type : 'application/octet-stream')
       .header('content-disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`)
       .header('x-content-type-options', 'nosniff')
-      .header('content-security-policy', "default-src 'none'; sandbox")
+      // Chrome's PDF viewer refuses sandboxed documents.
+      .header('content-security-policy', f.mime_type === 'application/pdf' ? "default-src 'none'" : "default-src 'none'; sandbox")
       .send(await getBlob(f.sha256));
   });
 
@@ -220,31 +256,41 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/portal/change-requests',
-    { config: { rateLimit: { max: 30, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Eigene Daten ändern: Telefon sofort, alles andere nach Prüfung durch den Verein', security: [], body: z.object({ memberId: z.uuid(), field: changeField, value: z.string().trim().max(200) }) } },
+    { config: { rateLimit: { max: 30, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Eigene Daten ändern: Telefon sofort, alles andere nach Prüfung durch den Verein', security: [], body: changeBody } },
     async (req, reply) => {
       const u = await portalUser(req, reply);
-      const m = ownMember(u, req.body.memberId);
-      const { field } = req.body;
-      let value = req.body.value;
-      const invalid = (message: string) => new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'value', message }] });
-      if (field === 'email' && !emailSchema.safeParse(value).success) throw invalid('Bitte eine gültige E-Mail-Adresse angeben.');
-      if (field === 'postal_code' && !/^\d{5}$/.test(value)) throw invalid('Die Postleitzahl hat fünf Ziffern.');
-      if (['first_name', 'last_name', 'street', 'city'].includes(field) && !value) throw invalid('Bitte ausfüllen.');
-      if (field === 'iban') {
-        value = normalizeIban(value);
-        if (!isValidIban(value)) throw invalid('Diese IBAN ist nicht gültig.');
+      const b = req.body;
+      const m = ownMember(u, b.memberId);
+      const invalid = (field: string, message: string) => new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message }] });
+      let old: string | null;
+      let value: string;
+      if (b.field === 'address') {
+        const problem = postalCodeProblem(b.postalCode, m.country);
+        if (problem) throw invalid('postalCode', problem);
+        old = m.street || m.postal_code || m.city ? JSON.stringify({ street: m.street, postalCode: m.postal_code, city: m.city }) : null;
+        value = JSON.stringify({ street: b.street, postalCode: b.postalCode, city: b.city });
+      } else if (b.field === 'iban') {
+        const iban = normalizeIban(b.iban);
+        if (!isValidIban(iban)) throw invalid('iban', 'Diese IBAN ist nicht gültig.');
+        old = null;
+        value = encrypt(JSON.stringify({ iban, accountHolder: b.accountHolder }));
+      } else {
+        if (b.field === 'email' && !emailSchema.safeParse(b.value).success) throw invalid('value', 'Bitte eine gültige E-Mail-Adresse angeben.');
+        if (b.field !== 'phone' && !b.value) throw invalid('value', 'Bitte ausfüllen.');
+        old = (m as Record<string, unknown>)[b.field] as string | null;
+        value = b.value;
       }
-      const old = field === 'iban' ? null : ((m as Record<string, unknown>)[field] as string | null);
+      const field = b.field;
       const result = await db.transaction().execute(async (tx) => {
         if (IMMEDIATE.includes(field)) {
-          await tx.updateTable('person').set({ [field]: value || null }).where('id', '=', m.personId).execute();
+          await tx.updateTable('person').set({ [field]: value || null, updated_at: new Date() }).where('id', '=', m.personId).execute();
           await tx.insertInto('change_request').values({ organization_id: u.organizationId, member_id: m.memberId, person_id: m.personId, field, old_value: old, new_value: value, status: 'applied', requested_by_email: u.email, decided_at: new Date() }).execute();
           await audit(tx, u.organizationId, null, { action: 'portal.changed', entityType: 'member', entityId: m.memberId, diff: { [field]: [old, value] } });
           return 'applied' as const;
         }
         // A newer wish for the same field replaces the pending one.
         await tx.updateTable('change_request').set({ status: 'superseded', decided_at: new Date() }).where('member_id', '=', m.memberId).where('field', '=', field).where('status', '=', 'pending').execute();
-        await tx.insertInto('change_request').values({ organization_id: u.organizationId, member_id: m.memberId, person_id: m.personId, field, old_value: old, new_value: field === 'iban' ? encrypt(value) : value, requested_by_email: u.email }).execute();
+        await tx.insertInto('change_request').values({ organization_id: u.organizationId, member_id: m.memberId, person_id: m.personId, field, old_value: old, new_value: value, requested_by_email: u.email }).execute();
         await audit(tx, u.organizationId, null, { action: 'portal.change_requested', entityType: 'member', entityId: m.memberId, diff: { field: [null, field] } });
         return 'pending' as const;
       });
@@ -265,7 +311,9 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       if (m.status === 'resigned') throw new Problem(409, 'already-resigned', 'Diese Mitgliedschaft ist schon gekündigt.');
       const org = await db.selectFrom('organization').select(['notice_weeks', 'exit_at']).where('id', '=', u.organizationId).executeTakeFirstOrThrow();
       const today = await orgToday(db, u.organizationId);
-      const exit = proposeExitDate(today, org.notice_weeks, org.exit_at);
+      const proposal = proposeExitDate(today, org.notice_weeks, org.exit_at);
+      // A future member cannot leave before joining.
+      const exit = m.join_date && m.join_date > proposal ? m.join_date : proposal;
       await db.transaction().execute(async (tx) => {
         await tx.updateTable('change_request').set({ status: 'superseded', decided_at: new Date() }).where('member_id', '=', m.memberId).where('field', '=', 'resignation').where('status', '=', 'pending').execute();
         await tx.insertInto('change_request').values({ organization_id: u.organizationId, member_id: m.memberId, person_id: m.personId, field: 'resignation', old_value: today, new_value: exit, requested_by_email: u.email }).execute();

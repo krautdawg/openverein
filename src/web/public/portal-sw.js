@@ -1,17 +1,12 @@
-// Mitgliederportal: network first; when offline, navigations get the last loaded app shell.
-// No API responses are cached and nothing is written offline.
-const SHELL = 'portal-shell-v1';
+// Mitgliederportal: always the network. Only when it is unreachable, navigations get a small offline page.
+// Nothing else is cached: no API answers, no app files, so nothing goes stale between deploys.
+const CACHE = 'portal-offline-v1';
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.add('/portal')).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.add('/portal-offline.html')).then(() => self.skipWaiting()));
 });
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+});
 self.addEventListener('fetch', (e) => {
-  const req = e.request;
-  if (req.method !== 'GET') return;
-  const url = new URL(req.url);
-  if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).then((res) => { const copy = res.clone(); caches.open(SHELL).then((c) => c.put('/portal', copy)); return res; }).catch(() => caches.match('/portal')));
-  } else if (url.origin === location.origin && url.pathname.startsWith('/assets/')) {
-    e.respondWith(caches.open(SHELL).then(async (c) => (await c.match(req)) ?? fetch(req).then((res) => { c.put(req, res.clone()); return res; })));
-  }
+  if (e.request.mode === 'navigate') e.respondWith(fetch(e.request).catch(() => caches.match('/portal-offline.html')));
 });

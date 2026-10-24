@@ -5,7 +5,7 @@ import { formatDate } from '../../shared/dates.ts';
 import { api, ApiError } from '../lib/api.ts';
 
 interface ChangeRequest { id: string; memberId: string; memberName: string; field: string; oldValue: string | null; newValue: string; requestedAt: string }
-const LABEL: Record<string, string> = { first_name: 'Vorname', last_name: 'Nachname', email: 'E-Mail-Adresse', phone: 'Telefon', street: 'Straße', postal_code: 'Postleitzahl', city: 'Ort', iban: 'IBAN', resignation: 'Kündigung zum' };
+const LABEL: Record<string, string> = { first_name: 'Vorname', last_name: 'Nachname', email: 'E-Mail-Adresse', phone: 'Telefon', address: 'Anschrift', iban: 'Bankverbindung', resignation: 'Kündigung zum' };
 
 /** Wishes from the member portal: one line per change, old → new, decided in place. */
 export function ChangeInbox({ canWrite }: { canWrite: boolean }) {
@@ -20,10 +20,10 @@ export function ChangeInbox({ canWrite }: { canWrite: boolean }) {
   async function decide(c: ChangeRequest, action: 'accept' | 'deny') {
     setError(undefined);
     try {
-      await api(`/change-requests/${c.id}/${action}`, { method: 'POST', body: action === 'deny' ? { reason } : {} });
+      const r = await api<{ needsNewMandate?: boolean }>(`/change-requests/${c.id}/${action}`, { method: 'POST', body: action === 'deny' ? { reason } : {} });
       setDenying(null);
       setReason('');
-      if (action === 'accept' && c.field === 'iban') setNote(`Neue IBAN für ${c.memberName} übernommen; die nächste Lastschrift meldet die Kontoänderung der Bank. Wechselt die Kontoinhaberin oder der Kontoinhaber, brauchst Du ein neues Mandat.`);
+      if (action === 'accept' && c.field === 'iban') setNote(r.needsNewMandate ? `Das neue Konto von ${c.memberName} gehört jemand anderem: Bitte lass ein neues SEPA-Mandat unterschreiben und erfasse es am Mitglied. Bis dahin bleibt das alte Konto.` : `Neue IBAN für ${c.memberName} übernommen.`);
       await Promise.all([qc.invalidateQueries({ queryKey: ['change-requests'] }), qc.invalidateQueries({ queryKey: ['members'] })]);
     } catch (err) {
       setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');

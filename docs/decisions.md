@@ -42,3 +42,4 @@ Small decisions made while building, especially where the spec was ambiguous or 
 | 2026-10-25 | Portal identity is the e-mail address; self-only access is enforced in the API, without row-level security for now. | Matches how clubs register families; RLS adds operational weight before multi-tenant hosting needs it. |
 | 2026-10-25 | Portal field rules are fixed (phone immediate; name, e-mail, address, IBAN need approval); per-group portal switches deferred (should). | Safe default; configuration when clubs ask. |
 | 2026-10-25 | Online application forms ship as a separate PR (slice 7b). | Keeps reviews small; the portal works without them. |
+| 2026-10-25 | Portal shares folders by their own flag only (no inheritance to subfolders); a returned debit does not re-arm a mandate amendment. | Review P3s of PR #8, deferred; the folder dialog states that the flag covers that folder. |

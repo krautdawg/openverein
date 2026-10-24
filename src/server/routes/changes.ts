@@ -9,21 +9,27 @@ import type { ChangeField } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
-import { requirePermission, restrictedFields, type Actor } from '../policy.ts';
+import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 import { issueLoginCode } from './portal.ts';
 
 const tags = ['members'];
 const idParam = z.object({ id: z.uuid() });
 
-export const FIELD_LABEL: Record<ChangeField, string> = { first_name: 'Vorname', last_name: 'Nachname', email: 'E-Mail-Adresse', phone: 'Telefon', street: 'Straße', postal_code: 'Postleitzahl', city: 'Ort', iban: 'IBAN', resignation: 'Kündigung' };
+export const FIELD_LABEL: Record<ChangeField, string> = { first_name: 'Vorname', last_name: 'Nachname', email: 'E-Mail-Adresse', phone: 'Telefon', address: 'Anschrift', iban: 'Bankverbindung', resignation: 'Kündigung' };
 // IBAN changes need the right to see bank data; everything else is ordinary member data.
-const FIELD_RIGHT: Partial<Record<ChangeField, string>> = { iban: 'iban', email: 'email', phone: 'phone' };
+const FIELD_RIGHT: Partial<Record<ChangeField, string>> = { iban: 'iban', email: 'email', phone: 'phone', address: 'street' };
+type Address = { street: string; postalCode: string; city: string };
+type BankChange = { iban: string; accountHolder: string };
+const addressText = (v: string) => {
+  const a = JSON.parse(v) as Address;
+  return `${a.street}, ${a.postalCode} ${a.city}`;
+};
 
 const changeDto = z.object({
   id: z.uuid(),
   memberId: z.uuid(),
   memberName: z.string(),
-  field: z.enum(['first_name', 'last_name', 'email', 'phone', 'street', 'postal_code', 'city', 'iban', 'resignation']),
+  field: z.enum(['first_name', 'last_name', 'email', 'phone', 'address', 'iban', 'resignation']),
   oldValue: z.string().nullable(),
   newValue: z.string(),
   status: z.enum(['pending', 'accepted', 'denied', 'superseded', 'applied']),
@@ -36,7 +42,11 @@ export const changeRoutes: FastifyPluginAsyncZod = async (app) => {
 
   const show = (actor: Actor, field: ChangeField, value: string | null) => {
     if (value === null) return null;
-    if (field === 'iban') return restrictedFields(actor).has('iban') ? '••••' : `•••• ${decrypt(value).slice(-4)}`;
+    if (field === 'iban') {
+      const b = JSON.parse(decrypt(value)) as BankChange;
+      return restrictedFields(actor).has('iban') ? '••••' : `•••• ${b.iban.slice(-4)}, Inhaber:in ${b.accountHolder}`;
+    }
+    if (field === 'address') return restrictedFields(actor).has('street') ? '•••' : addressText(value);
     const right = FIELD_RIGHT[field];
     return right && restrictedFields(actor).has(right) ? '•••' : value;
   };
@@ -91,15 +101,26 @@ export const changeRoutes: FastifyPluginAsyncZod = async (app) => {
           await audit(tx, actor.organizationId, actor, { action: 'member.resigned', entityType: 'member', entityId: c.member_id, diff: { exitDate: [null, exit], source: [null, 'portal'] } });
           message = `der Vorstand hat Deine Kündigung bestätigt. Deine Mitgliedschaft endet am ${formatDate(exit)}.`;
         } else if (c.field === 'iban') {
-          const iban = decrypt(c.new_value);
-          const mandate = await tx.selectFrom('sepa_mandate').selectAll().where('person_id', '=', c.person_id).where('status', '=', 'active').forUpdate().executeTakeFirst();
-          if (!mandate) throw new Problem(409, 'no-mandate', 'Für dieses Mitglied gibt es kein aktives Mandat.', 'Lehne den Wunsch ab und bitte um ein neues SEPA-Mandat.');
-          // The mandate stays; the next debit tells the bank about the new account (amendment).
-          await tx.updateTable('sepa_mandate').set({ iban_encrypted: encrypt(iban), iban_hash: blindIndex(iban), iban_last4: iban.slice(-4), bic: null, amended_from_iban_encrypted: mandate.amendment_pending ? mandate.amended_from_iban_encrypted : mandate.iban_encrypted, amendment_pending: true, updated_at: new Date() }).where('id', '=', mandate.id).execute();
-          await audit(tx, actor.organizationId, actor, { action: 'mandate.amended', entityType: 'sepa_mandate', entityId: mandate.id, diff: { ibanLast4: [mandate.iban_last4, iban.slice(-4)] } });
-          // A different account holder is a different debtor and needs a new signed mandate.
-          needsNewMandate = false;
-          message = `wir haben Deine neue Bankverbindung (endet auf ${iban.slice(-4)}) übernommen. Die nächste Lastschrift kommt von diesem Konto.`;
+          const change = JSON.parse(decrypt(c.new_value)) as BankChange;
+          const mandate = await tx.selectFrom('sepa_mandate').selectAll().where('person_id', '=', c.person_id).where('status', 'in', ['active', 'pending_evidence']).forUpdate().executeTakeFirst();
+          if (!mandate) throw new Problem(409, 'no-mandate', 'Für dieses Mitglied gibt es kein Mandat.', 'Lehne den Wunsch ab und bitte um ein neues SEPA-Mandat.');
+          if (change.accountHolder.trim().toLowerCase() !== mandate.account_holder.trim().toLowerCase()) {
+            // Someone else's account: the old mandate does not cover it. Nothing changes until a new mandate is signed.
+            needsNewMandate = true;
+            message = `für das Konto von ${change.accountHolder} brauchen wir ein neues SEPA-Mandat mit dessen Unterschrift. Bis es vorliegt, bleibt es bei der bisherigen Bankverbindung.`;
+          } else {
+            // Same holder, same mandate: the bank learns about the new account with the next debit (amendment),
+            // unless the bank has never seen this mandate (never collected, or still waiting for its signature).
+            const amend = mandate.status === 'active' && mandate.first_collected && mandate.type === 'recurrent';
+            await tx.updateTable('sepa_mandate').set({ iban_encrypted: encrypt(change.iban), iban_hash: blindIndex(change.iban), iban_last4: change.iban.slice(-4), bic: null, ...(amend ? { amended_from_iban_encrypted: mandate.amendment_pending ? mandate.amended_from_iban_encrypted : mandate.iban_encrypted, amendment_pending: true } : {}), updated_at: new Date() }).where('id', '=', mandate.id).execute();
+            await audit(tx, actor.organizationId, actor, { action: 'mandate.amended', entityType: 'sepa_mandate', entityId: mandate.id, diff: { ibanLast4: [mandate.iban_last4, change.iban.slice(-4)], amendment: [null, amend] } });
+            message = `wir haben Deine neue Bankverbindung (endet auf ${change.iban.slice(-4)}) übernommen. Die nächste Lastschrift kommt von diesem Konto.`;
+          }
+        } else if (c.field === 'address') {
+          const a = JSON.parse(c.new_value) as Address;
+          await tx.updateTable('person').set({ street: a.street, postal_code: a.postalCode, city: a.city, updated_at: new Date() }).where('id', '=', c.person_id).execute();
+          await audit(tx, actor.organizationId, actor, { action: 'member.updated', entityType: 'member', entityId: c.member_id, diff: { address: [c.old_value ? addressText(c.old_value) : null, addressText(c.new_value)], source: [null, 'portal'] } });
+          message = `wir haben Deine neue Anschrift übernommen: ${addressText(c.new_value)}.`;
         } else {
           await tx.updateTable('person').set({ [c.field]: c.new_value, updated_at: new Date() }).where('id', '=', c.person_id).execute();
           await audit(tx, actor.organizationId, actor, { action: 'member.updated', entityType: 'member', entityId: c.member_id, diff: { [c.field]: [c.old_value, c.new_value], source: [null, 'portal'] } });
@@ -136,6 +157,8 @@ export const changeRoutes: FastifyPluginAsyncZod = async (app) => {
       const actor = requireActor(req);
       requirePermission(actor, 'members', 'write');
       if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+      // The code opens every membership under the address, so only club-wide admins may hand one out.
+      if (scopeOf(actor, 'members', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Portal-Codes geben Zugänge für den ganzen Verein aus.', { permission: 'members:write (ganzer Verein)' });
       const { row } = await loadMemberRow(db, actor, req.params.id, 'write');
       if (!row.email) throw new Problem(409, 'no-email', 'Das Mitglied hat keine E-Mail-Adresse; das Portal meldet über die Adresse an.');
       if (!['active', 'future', 'resigned'].includes(row.status)) throw new Problem(409, 'not-current', 'Nur aktuelle Mitglieder können sich im Portal anmelden.');
@@ -144,7 +167,7 @@ export const changeRoutes: FastifyPluginAsyncZod = async (app) => {
         await audit(tx, actor.organizationId, actor, { action: 'portal.code_issued', entityType: 'member', entityId: row.id });
         return code;
       });
-      return { code, email: row.email, expiresInHours: 24 };
+      return { code, email: restrictedFields(actor).has('email') ? '•••' : row.email, expiresInHours: 24 };
     },
   );
 };
