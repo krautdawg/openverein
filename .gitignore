@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+coverage
+test-results
+playwright-report
+.impeccable/review
+.impeccable/live
+*.log
+android/app/build
+ios/App/Pods
