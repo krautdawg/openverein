@@ -2,7 +2,6 @@
 
 ## Purpose
 The sepa capability covers SEPA mandates, direct-debit collection runs (pain.008.001.08) with pre-notification and the double-debit guard, credit-transfer files (pain.001.001.09), bank statement import from CAMT.053 and CSV, payment matching with the reconciliation inbox, and return-debit handling (B M14, M15, M16, M17, M18, M19). All amounts are integer cents. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Mandate records
 The system SHALL store each SEPA mandate as its own record with reference (at most 35 characters from the SEPA character set, unique per creditor ID, generated from a pattern such as `{member_no}-{seq}` or entered, imported references kept unchanged), signature date, debtor person, account holder name, IBAN checked by mod-97, optional BIC derived from the Bundesbank BLZ file for German IBANs, scheme (CORE or B2B), type (recurrent or one-off) and evidence file, and SHALL render a pre-filled mandate form as PDF.
@@ -156,3 +155,18 @@ The system SHALL detect returns from CAMT reason codes (for example AC04, AM04, 
 #### Scenario: Refund requested
 - **WHEN** a return carries MD06
 - **THEN** the system proposes reviewing or revoking the mandate
+
+### Requirement: Pre-notification on the invoice
+The system SHALL print the SEPA pre-notification on every invoice of a member paying by direct debit with an active mandate (amount, earliest collection date equal to the due date, mandate reference, creditor ID), freeze these values at issue, and SHALL refuse to put an invoice into a collection run whose collection date is before the invoice's due date.
+
+#### Scenario: Collection before due date
+- **WHEN** a treasurer creates a run on 2 November for an invoice due on 15 November
+- **THEN** the run is refused with a message about the pre-notification
+
+### Requirement: Automatic matching order
+The system SHALL match imported transactions automatically only in these cases, in this order: end-to-end ID of an open collection item with the same amount (settle), end-to-end ID of a collected item on a debit (return debit), a credit equal to the control sum of a downloaded or submitted file within ten days of its collection date while all its items are open (settle the file), and exactly one invoice number in the remittance text with the exact open amount (allocate); everything else SHALL only be suggested.
+
+#### Scenario: Partial payment is only suggested
+- **WHEN** a transfer of 2000 cents mentions an invoice with 5000 cents open
+- **THEN** the transaction stays in the inbox with that invoice as a suggestion and nothing is booked
+
