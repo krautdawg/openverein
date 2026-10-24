@@ -2,7 +2,6 @@
 
 ## Purpose
 The members capability covers member records and their lifecycle, the shared address book for members and non-members, custom fields, households with payer and family discount, faceted member lists with saved views, CSV / XLSX export, bulk actions and duplicate detection (B M01, M02, M03, M05, M06, M07, M08, M09). Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Member records and numbers
 The system SHALL link each member 1:1 to a person, never delete the person when a membership ends, and generate a member number unique per organisation from a configurable pattern (for example `M-{YYYY}-{seq:4}`) that only users with the `members.number.edit` permission may change, and only before first save.
@@ -138,3 +137,22 @@ The system SHALL find likely duplicate persons on import and on demand with a sc
 #### Scenario: Threshold
 - **WHEN** the threshold is set to 90 %
 - **THEN** only pairs scoring 90 % or more are listed
+
+### Requirement: Member search tolerates typos and umlauts
+The system SHALL find members by any part of first or last name, company, member number, town or (when visible to the user) e-mail, ignoring case and accents (`muller` finds `Müller`, `yilmaz` finds `Yılmaz`), tolerate small typos in names (`schmitt` finds `Schmidt`), and treat `%` and `_` in the query as literal characters.
+
+#### Scenario: Umlaut-free search
+- **WHEN** an admin searches for `muller`
+- **THEN** the member `Müller, Jörg` is listed
+
+#### Scenario: Wildcards are literal
+- **WHEN** an admin searches for `%`
+- **THEN** no member is listed unless a name contains a percent sign
+
+### Requirement: Keyboard-first member list
+The system SHALL let users work the member list without a mouse: `/` focuses search, `n` opens the create form, arrow keys (or `j`/`k`) move between rows, Enter opens the record in a side sheet, Space selects a row for bulk actions, and the command palette finds members by name.
+
+#### Scenario: Open a member by keyboard
+- **WHEN** a user presses `/`, types a name, tabs into the list and presses Enter on a row
+- **THEN** the member opens in a side sheet over the list
+

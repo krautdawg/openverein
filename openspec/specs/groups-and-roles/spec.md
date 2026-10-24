@@ -2,7 +2,6 @@
 
 ## Purpose
 The groups-and-roles capability covers groups and divisions with dated membership, roles and permissions by module, division scope and field level including the built-in tax-adviser and cash-auditor roles, and the append-only audit log (B M04, M32, M35). Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Groups and divisions
 The system SHALL support groups of kind `division`, `segment`, `board` and `team`, each with name, unique short code, colour shown as a badge in lists, an optional parent group (one level) and a flag for offering the group in the public application form.
@@ -122,3 +121,18 @@ The system SHALL let authorised users filter the audit log by module, user, enti
 #### Scenario: Filter by entity
 - **WHEN** an admin filters the audit log by one member and a date range
 - **THEN** only events about that member in that range are shown and can be exported
+
+### Requirement: Invitations by single-use link
+The system SHALL create new users without a password and return a single-use invitation token valid for 7 days, stored only as a hash; accepting it sets the password and signs the user in; a used or expired token SHALL be rejected; an admin can issue a new link, which invalidates the old one.
+
+#### Scenario: Link used twice
+- **WHEN** an invitation link is used a second time
+- **THEN** the system rejects it and the password stays unchanged
+
+### Requirement: At least one admin remains
+The system SHALL refuse any change that would leave the organisation without an active user holding the unscoped built-in Admin role, and SHALL refuse users disabling their own account.
+
+#### Scenario: Last admin demoted
+- **WHEN** the only admin changes their own role to Treasurer
+- **THEN** the request is refused with a problem document and nothing changes
+

@@ -2,7 +2,6 @@
 
 ## Purpose
 The api capability covers the documented REST API with OpenAPI 3.1 and scoped API tokens (B M34), plus the cross-cutting rule that every action a human can take in the UI is also possible over the same public REST API, with RFC 9457 errors, cursor pagination and idempotency keys on money writes. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: API parity with the UI
 The system SHALL expose every action available to a human user as a documented endpoint under `/api/v1`, and the web UI and portal SHALL use only these public endpoints, so that the API is complete by construction.
@@ -96,3 +95,11 @@ The system SHALL audit-log every API write with the token name.
 #### Scenario: Token write logged
 - **WHEN** the website integration token creates a person
 - **THEN** the audit log shows the creation with that token's name
+
+### Requirement: Tokens cannot mint tokens
+The system SHALL only let signed-in users (not API tokens) create API tokens, so a leaked key cannot create further keys.
+
+#### Scenario: Token tries to create a token
+- **WHEN** a request authenticated with an API token calls `POST /api/v1/api-tokens`
+- **THEN** the API answers 403 naming the missing permission
+
