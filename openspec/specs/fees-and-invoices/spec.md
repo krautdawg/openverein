@@ -2,7 +2,6 @@
 
 ## Purpose
 The fees-and-invoices capability covers effective-dated fee plans and assignments, the fee run with mandatory preview and the double-billing guard, invoices with immutable issued documents, gapless numbering, cancellation documents and EPC QR codes, and open items with dunning and write-off (B M10, M11, M12, M13). All amounts are integer cents. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Effective-dated fee plans
 The system SHALL keep fee plans with name, invoice line text, ledger account, tax sphere, cost centre and tax rate, and versions with `valid_from`, amount in cents, interval (one-off or 1 to 60 whole months, optionally restricted by the organisation), due-day rule, proration policy (`none`, `month`, `day`, with an "exit month counts" flag), admission fee, period anchor (`calendar` or `entry`) and first-period rule (join date, 1st of join month, 1st of next month, start of quarter, start of half-year, or set by hand); changing an amount SHALL create a new version and never alter posted assessments, and a plan with assessments SHALL only be retired, not deleted.
@@ -143,3 +142,25 @@ The system SHALL write off the open amount of an invoice with a reason by bookin
 #### Scenario: Uncollectible amount
 - **WHEN** a treasurer writes off an open amount of 4500 cents with reason "Mitglied verzogen, unbekannt"
 - **THEN** 4500 cents are booked to the write-off account and the invoice is `written_off`
+
+### Requirement: Zero-amount lines are recorded without an invoice
+The system SHALL record assessments for preview lines of 0 cents (for example honorary members) so the period counts as billed, but SHALL NOT issue an invoice whose total is 0 cents; the preview SHALL warn about such members.
+
+#### Scenario: Honorary member
+- **WHEN** a fee run posts a member whose only line is 0 cents
+- **THEN** an assessment exists for the period and no invoice is issued
+
+### Requirement: PDF frozen at issue
+The system SHALL freeze the recipient address and the letterhead into the invoice when it is issued, render the PDF from that snapshot (at issue or on first download), store it once with its SHA-256, and refuse any later change of the stored bytes.
+
+#### Scenario: Letterhead changed after issue
+- **WHEN** the club name changes after an invoice was issued and its PDF is downloaded again
+- **THEN** the bytes are identical to the first download and show the old name
+
+### Requirement: Payments cannot exceed the open amount
+The system SHALL refuse a manual payment larger than the open amount of the invoice, SHALL recompute the paid amount and status (`open`, `partially_paid`, `paid`, `written_off`) from confirmed allocations after every payment, write-off or reversal, and SHALL refuse to cancel an invoice while confirmed payments are allocated to it.
+
+#### Scenario: Overpayment
+- **WHEN** a treasurer records 6000 cents on an invoice with 5000 cents open
+- **THEN** the request is refused with a field error and nothing is booked
+
