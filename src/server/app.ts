@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { demoResetting } from './demo/reset.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -64,7 +65,7 @@ declare module 'fastify' {
   }
 }
 
-export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: boolean; authRateLimit?: number } = {}) {
+export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: boolean; authRateLimit?: number; demoSeed?: boolean } = {}) {
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy.length ? config.trustProxy : false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -91,7 +92,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
 
-  const DEMO_LOCKED = /^\/api\/v1\/(users|roles|api-tokens|webhooks|files|mail\/test|mail\/resume|imports\/members|bank-accounts\/:id\/imports)(\/|$)/;
+  const DEMO_LOCKED = /^\/api\/v1\/(users|roles|api-tokens|webhooks|files|mail\/test|mail\/resume|imports\/members|bank-accounts\/:id\/imports|receipts\/files|portal\/expenses\/files|calendars\/:id\/import)(\/|$)/;
   const isApi = (url: string) => {
     const path = url.split('?')[0]!;
     return path === '/api' || path.startsWith('/api/');
@@ -114,7 +115,11 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     }
     // The public demo stays usable for everyone: nobody may lock others out, mint keys, or host files there.
     // Matched against the route pattern, not the raw URL, so percent-encoded paths cannot slip past.
-    if (config.demoMode && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && DEMO_LOCKED.test(req.routeOptions.url ?? req.url)) {
+    // While the demo is rebuilt, visitors wait (they would collide with the seed); health checks stay up.
+    if (config.demoMode && !opts.demoSeed && demoResetting() && !req.url.startsWith('/api/v1/health')) throw new Problem(503, 'demo-resetting', 'Die Demo wird gerade zurückgesetzt.', 'Versuch es in einer Minute noch einmal.');
+    // Any raw byte upload is locked too, whatever its route (default deny for new upload routes: Codex review of #11).
+    const upload = String(req.headers['content-type'] ?? '').startsWith('application/octet-stream');
+    if (config.demoMode && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (upload || DEMO_LOCKED.test(req.routeOptions.url ?? req.url))) {
       throw new Problem(403, 'demo', 'In der Demo ist das gesperrt.', 'Zugänge, Rollen, API-Schlüssel, Uploads, Importe und Mailserver-Einstellungen lassen sich in der öffentlichen Demo nicht ändern.');
     }
     req.actor = await actorFromRequest(db, req, reply);

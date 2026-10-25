@@ -16,6 +16,8 @@ On iOS, bundle id and display name live in the Xcode project: set `PRODUCT_BUNDL
 
 Without `OPENVEREIN_URL` the app shows the bundled web build, which only works for local testing.
 
+The address must start with `https://`; the build stops otherwise, so passwords never travel unencrypted. For local development only, `OPENVEREIN_DEV_HTTP=true` allows `http://localhost`, `http://127.0.0.1` or the Android emulator host `http://10.0.2.2`.
+
 ## Local builds
 
 ```sh

@@ -6,7 +6,7 @@ export interface ListRow { number: string | null; name: string; groups: string; 
 const mm = (v: number) => (v * 72) / 25.4;
 
 /** Printable member list: A4 landscape, repeated header row, page numbers. Hidden fields are simply absent. */
-export function memberListPdf(rows: ListRow[], o: { club: string; title: string; date: string; showPhone: boolean; showEmail: boolean }): Promise<Buffer> {
+export function memberListPdf(rows: ListRow[], o: { club: string; title: string; date: string; showPhone: boolean; showEmail: boolean; demo?: boolean }): Promise<Buffer> {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margins: { top: mm(15), left: mm(15), right: mm(15), bottom: mm(15) }, bufferPages: true, info: { Title: o.title, Author: o.club } });
   doc.registerFont('text', FONT);
   doc.registerFont('bold', FONT_BOLD);
@@ -50,6 +50,7 @@ export function memberListPdf(rows: ListRow[], o: { club: string; title: string;
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i++) {
     doc.switchToPage(i);
+    if (o.demo) doc.save().rotate(-30, { origin: [doc.page.width / 2, doc.page.height / 2] }).font('bold').fontSize(90).fillColor('#f2c230').opacity(0.22).text('DEMO', 0, doc.page.height / 2 - 60, { width: doc.page.width, align: 'center', lineBreak: false }).restore().opacity(1);
     doc.font('text').fontSize(7).fillColor('#5f6874').text(`Seite ${i + 1} von ${range.count}`, left, doc.page.height - doc.page.margins.bottom, { width: full, align: 'right', lineBreak: false });
   }
   doc.end();

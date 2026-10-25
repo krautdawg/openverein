@@ -36,7 +36,7 @@ interface PortalMember {
   pending: { field: string; value: string; requestedAt: string }[];
   resignationProposal: string | null;
 }
-interface PortalMe { email: string; club: { name: string; email: string | null }; members: PortalMember[] }
+interface PortalMe { email: string; club: { name: string; email: string | null; isDemo: boolean }; members: PortalMember[] }
 interface PortalInvoice { id: string; number: string; kind: string; status: string; issueDate: string; dueDate: string | null; totalCents: number; openCents: number; directDebit: boolean }
 
 const euro = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
@@ -102,6 +102,7 @@ function PortalShell({ me, children }: { me: PortalMe; children: ReactNode }) {
         <span className="portal-club">{me.club.name}</span>
         <button className="portal-logout" onClick={() => void logout()}><LogOut size={16} aria-hidden /> <span>Abmelden</span></button>
       </header>
+      {me.club.isDemo && <div className="demo-banner" role="note"><strong>Demo</strong> Alle Personen und Zahlen hier sind erfunden. Gib keine echten Daten ein.</div>}
       {!online && <div className="portal-offline" role="status">Keine Verbindung. Änderungen und neue Daten gibt es erst wieder, wenn Du online bist.</div>}
       <main className="portal-main" id="main">{children}</main>
       <nav className="portal-tabs" aria-label="Mitgliederportal">

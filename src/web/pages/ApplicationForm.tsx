@@ -12,6 +12,7 @@ interface PublicForm {
   title: string;
   intro: string | null;
   clubName: string;
+  isDemo: boolean;
   groups: { id: string; name: string }[];
   feePlans: { id: string; name: string; amountCents: number; interval: string }[];
   askMandate: boolean;
@@ -83,6 +84,8 @@ export function ApplicationForm() {
   const consentError = error?.fieldError('consent');
   return (
     <main className="apply" id="main">
+      {/* Not editable by the club: the public demo must never look like a real form collecting real data. */}
+      {f.isDemo && <div className="demo-banner" role="note" style={{ marginBottom: 'var(--s-4)' }}><strong>Demo</strong> Dieses Formular gehört zur öffentlichen Demo. Gib keine echten Daten ein, vor allem keine echte IBAN.</div>}
       <p className="apply-club">{f.clubName}</p>
       <h1>{f.title}</h1>
       {f.intro && <p className="apply-intro">{f.intro}</p>}

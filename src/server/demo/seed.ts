@@ -55,7 +55,7 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
   if (org && !opts.reset) throw new Error('Die Demo ist schon geladen. Zum Zurücksetzen: --reset');
   if (org) await wipe(db);
 
-  const app = await buildApp(db, { serveWeb: false, authRateLimit: 1_000_000 });
+  const app = await buildApp(db, { serveWeb: false, authRateLimit: 1_000_000, demoSeed: true });
   await app.ready();
   try {
     // The key marks the club as demo inside the setup transaction; in demo mode nobody else may run setup.
