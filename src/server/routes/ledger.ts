@@ -1,18 +1,20 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { account, accountInput, accountPatch, bookingInput, costCenter, euerReport, journalEntry, ledgerSettings, SPHERES, taxRate, WIRTSCHAFT_LIMIT_CENTS } from '../../shared/ledger.ts';
+import { account, accountInput, accountPatch, bookingInput, costCenter, euerReport, journalEntry, ledgerSettings, SPHERES, taxRate, wirtschaftLimitCents } from '../../shared/ledger.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
-import { assertCashNotNegative, postEntry, reverseEntry, splitGross, syncAllocations, type Line } from '../ledger/service.ts';
+import { assertCashNotNegative, lockJournal, postEntry, reverseEntry, splitGross, syncAllocations, unpostedPayments, type Line } from '../ledger/service.ts';
 import { orgToday } from '../members/query.ts';
-import { requirePermission, requireStepUp, type Actor } from '../policy.ts';
+import { requireClubWide, requireStepUp, type Actor } from '../policy.ts';
 
 const tags = ['ledger'];
 const idParam = z.object({ id: z.uuid() });
-const range = z.object({ from: z.iso.date(), to: z.iso.date() });
+const rangeBase = z.object({ from: z.iso.date(), to: z.iso.date() });
+const sane = (r: { from: string; to: string }) => r.from <= r.to && Number(r.to.slice(0, 4)) - Number(r.from.slice(0, 4)) <= 10;
+const range = rangeBase.refine(sane, { message: 'Zeitraum: Anfang vor Ende, höchstens zehn Jahre.' });
 
 export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -29,7 +31,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/ledger/accounts', { schema: { tags, summary: 'Kontenplan', response: { 200: z.array(account) } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     await settingsOf(actor.organizationId);
     const used = new Set((await db.selectFrom('journal_line').select('account_id').distinct().where('organization_id', '=', actor.organizationId).execute()).map((r) => r.account_id));
     return (await accountsOf(db, actor.organizationId)).map((a) => ({ id: a.id, number: a.number, name: a.name, kind: a.kind, defaultSphere: a.default_sphere, datevNumber: a.datev_number, hidden: a.hidden, retired: !!a.retired_at, used: used.has(a.id) }));
@@ -37,7 +39,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/ledger/accounts', { schema: { tags, summary: 'Konto anlegen', body: accountInput, response: { 201: account } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'write');
+    requireClubWide(actor, 'ledger', 'write');
     const b = req.body;
     const a = await db.transaction().execute(async (tx) => {
       const a = await tx.insertInto('ledger_account').values({ organization_id: actor.organizationId, number: b.number, name: b.name, kind: b.kind, default_sphere: b.defaultSphere, datev_number: b.datevNumber ?? null }).returningAll().executeTakeFirstOrThrow();
@@ -50,7 +52,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.patch('/ledger/accounts/:id', { schema: { tags, summary: 'Konto ändern, ausblenden oder stilllegen (benutzte Konten werden nie gelöscht)', params: idParam, body: accountPatch, response: { 200: account } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'write');
+    requireClubWide(actor, 'ledger', 'write');
     const b = req.body;
     const a = await db.transaction().execute(async (tx) => {
       const before = await tx.selectFrom('ledger_account').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
@@ -70,20 +72,20 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/ledger/tax-rates', { schema: { tags, summary: 'Steuersätze (mit Gültigkeit)', response: { 200: z.array(taxRate) } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     await settingsOf(actor.organizationId);
     return (await db.selectFrom('tax_rate').selectAll().where('organization_id', '=', actor.organizationId).orderBy('valid_from', 'desc').execute()).map((t) => ({ id: t.id, label: t.label, rateBp: t.rate_bp, validFrom: t.valid_from, validTo: t.valid_to }));
   });
 
   app.get('/ledger/cost-centers', { schema: { tags, summary: 'Kostenstellen', response: { 200: z.array(costCenter) } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     return db.selectFrom('cost_center').select(['id', 'code', 'name']).where('organization_id', '=', actor.organizationId).orderBy('code').execute();
   });
 
   app.post('/ledger/cost-centers', { schema: { tags, summary: 'Kostenstelle anlegen', body: z.object({ code: z.string().trim().regex(/^[0-9A-Za-z-]{1,12}$/, 'Bis 12 Zeichen: Buchstaben, Ziffern, Bindestrich.'), name: z.string().trim().min(1).max(120) }), response: { 201: costCenter } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'write');
+    requireClubWide(actor, 'ledger', 'write');
     const c = await db.insertInto('cost_center').values({ organization_id: actor.organizationId, ...req.body }).returning(['id', 'code', 'name']).executeTakeFirstOrThrow();
     await audit(db, actor.organizationId, actor, { action: 'ledger.cost_center_created', entityType: 'cost_center', entityId: c.id });
     reply.status(201);
@@ -100,7 +102,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/ledger/settings', { schema: { tags, summary: 'Buchhaltungs-Einstellungen: Zuordnung der Zahlungen, Sperrdatum', response: { 200: ledgerSettings } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     return settingsDto(actor.organizationId);
   });
 
@@ -110,7 +112,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { tags, summary: 'Zuordnung ändern: auf welche Konten Zahlungen gebucht werden', body: z.object({ bankAccountId: accountRef, cashAccountId: accountRef, feeAccountId: accountRef, otherIncomeAccountId: accountRef, dunningAccountId: accountRef, bankAccounts: z.array(z.object({ id: z.uuid(), ledgerAccountId: z.uuid().nullable() })).optional() }), response: { 200: ledgerSettings } } },
     async (req) => {
       const actor = requireActor(req);
-      requirePermission(actor, 'ledger', 'write');
+      requireClubWide(actor, 'ledger', 'write');
       await settingsOf(actor.organizationId);
       const accounts = await accountsOf(db, actor.organizationId);
       const b = req.body;
@@ -139,7 +141,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { tags, summary: 'Sperrdatum setzen (GoBD): danach keine Buchung und keine Zahlung mit früherem Datum. Zurücksetzen nur mit Bestätigung und Begründung.', body: z.object({ lockDate: z.iso.date().nullable(), reason: z.string().trim().max(300).optional() }), response: { 200: ledgerSettings } } },
     async (req) => {
       const actor = requireActor(req);
-      requirePermission(actor, 'ledger', 'write');
+      requireClubWide(actor, 'ledger', 'write');
       const before = await settingsOf(actor.organizationId);
       const today = await orgToday(db, actor.organizationId);
       const next = req.body.lockDate;
@@ -152,6 +154,13 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
       // Post everything that belongs before the lock while it is still open.
       await syncAllocations(db, actor.organizationId);
       await db.transaction().execute(async (tx) => {
+        await lockJournal(tx, actor.organizationId);
+        // Row lock: payments being inserted right now (their trigger reads this row) finish first, later ones see the new date.
+        const current = await tx.selectFrom('ledger_setting').select('lock_date').where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirstOrThrow();
+        if (next && (!current.lock_date || next > current.lock_date)) {
+          const n = await unpostedPayments(tx, actor.organizationId, current.lock_date, next);
+          if (n) throw new Problem(409, 'unposted-payments', `${n} Zahlung${n === 1 ? '' : 'en'} bis zu diesem Tag ${n === 1 ? 'ist' : 'sind'} noch nicht gebucht.`, 'Ordne unter Buchhaltung → Einstellungen allen Zahlungsarten ein Konto zu und versuche es noch einmal.');
+        }
         await tx.updateTable('ledger_setting').set({ lock_date: next }).where('organization_id', '=', actor.organizationId).execute();
         await audit(tx, actor.organizationId, actor, { action: backwards ? 'ledger.lock_moved_back' : 'ledger.locked', entityType: 'organization', entityId: actor.organizationId, diff: { lockDate: [before.lock_date, next], reason: [null, req.body.reason ?? null] } });
       });
@@ -189,9 +198,9 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     }));
   }
 
-  app.get('/ledger/entries', { schema: { tags, summary: 'Journal (Zahlungen werden vorher automatisch gebucht)', querystring: range.extend({ accountId: z.uuid().optional() }), response: { 200: z.array(journalEntry) } } }, async (req) => {
+  app.get('/ledger/entries', { schema: { tags, summary: 'Journal (Zahlungen werden vorher automatisch gebucht)', querystring: rangeBase.extend({ accountId: z.uuid().optional() }).refine(sane, { message: 'Zeitraum: Anfang vor Ende, höchstens zehn Jahre.' }), response: { 200: z.array(journalEntry) } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     await syncAllocations(db, actor.organizationId);
     let q = db.selectFrom('journal_entry').select('journal_entry.id').where('journal_entry.organization_id', '=', actor.organizationId).where('journal_entry.entry_date', '>=', req.query.from).where('journal_entry.entry_date', '<=', req.query.to);
     if (req.query.accountId) q = q.where((eb) => eb.exists(eb.selectFrom('journal_line').select('journal_line.id').whereRef('journal_line.entry_id', '=', 'journal_entry.id').where('journal_line.account_id', '=', req.query.accountId!)));
@@ -214,7 +223,8 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
       if (l.taxRateId && (!rate || rate.valid_from > b.date || (rate.valid_to && rate.valid_to < b.date))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.taxRateId`, message: 'Dieser Steuersatz galt an dem Tag nicht.' }] });
       const sph = l.sphere ?? acc.default_sphere;
       const { net, tax } = splitGross(l.grossCents, rate?.rate_bp ?? 0);
-      const taxAccount = b.kind === 'income' ? rate?.output_account_id : rate?.input_account_id;
+      // Input tax is only refundable in the taxable spheres; elsewhere the gross amount is the expense.
+      const taxAccount = b.kind === 'income' ? rate?.output_account_id : sph === 'zweck' || sph === 'wirtschaft' ? rate?.input_account_id : null;
       const side = (c: number) => (b.kind === 'income' ? { creditCents: c } : { debitCents: c });
       lines.push({ accountId: acc.id, ...side(tax && taxAccount ? net : l.grossCents), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate?.id ?? null, text: l.text ?? null });
       if (tax && taxAccount) lines.push({ accountId: taxAccount, ...side(tax), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate!.id, text: l.text ?? null });
@@ -226,12 +236,14 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/ledger/bookings', { schema: { tags, summary: 'Einnahme, Ausgabe oder Umbuchung zwischen eigenen Konten buchen (auch mit mehreren Steuersätzen)', body: bookingInput, response: { 201: journalEntry } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'write');
+    requireClubWide(actor, 'ledger', 'write');
     const b = req.body;
     const settings = await settingsOf(actor.organizationId);
     const today = await orgToday(db, actor.organizationId);
     if (b.date > today) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'date', message: 'Das Datum liegt in der Zukunft.' }] });
     const id = await db.transaction().execute(async (tx) => {
+      // Cash checks and numbering under one lock, so two cash expenses cannot both pass.
+      await lockJournal(tx, actor.organizationId);
       if (b.kind === 'transfer') {
         const accounts = await accountsOf(tx, actor.organizationId);
         const from = accounts.find((a) => a.id === b.fromAccountId && a.kind === 'money');
@@ -263,7 +275,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/ledger/entries/:id/reverse', { schema: { tags, summary: 'Buchung stornieren (Gegenbuchung; das Original bleibt unverändert)', params: idParam, body: z.object({ date: z.iso.date().optional() }).optional(), response: { 201: journalEntry } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'write');
+    requireClubWide(actor, 'ledger', 'write');
     const today = await orgToday(db, actor.organizationId);
     const original = await db.selectFrom('journal_entry').select(['source', 'entry_date']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!original) throw notFound('Buchung');
@@ -271,6 +283,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     if (original.source === 'allocation' || original.source === 'allocation_reversal') throw new Problem(409, 'payment-entry', 'Diese Buchung kommt aus einer Zahlung.', 'Nimm die Zahlung bei der Rechnung oder im Kontoabgleich zurück; die Buchung folgt automatisch.');
     const date = req.body?.date ?? today;
     if (date < original.entry_date) throw new Problem(400, 'validation', 'Das Storno kann nicht vor der Buchung liegen.');
+    if (date > today) throw new Problem(400, 'validation', 'Das Storno kann nicht in der Zukunft liegen.');
     const e = await db.transaction().execute(async (tx) => {
       const e = await reverseEntry(tx, actor.organizationId, req.params.id, date, actor.userId);
       await audit(tx, actor.organizationId, actor, { action: 'ledger.reversed', entityType: 'journal_entry', entityId: req.params.id, diff: { reversal: [null, e.number] } });
@@ -288,21 +301,26 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     if (open.n) out.push({ kind: 'unmatched', message: `${open.n} Kontobewegung${open.n === 1 ? '' : 'en'} im Zeitraum noch nicht zugeordnet: Die EÜR ist unvollständig.`, href: '/bank/abgleich' });
     const unmapped = await db.selectFrom('ledger_account').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', organizationId).where('datev_number', 'is', null).where((eb) => eb.exists(eb.selectFrom('journal_line').select('journal_line.id').whereRef('journal_line.account_id', '=', 'ledger_account.id'))).executeTakeFirstOrThrow();
     if (unmapped.n) out.push({ kind: 'datev', message: `${unmapped.n} benutzte${unmapped.n === 1 ? 's Konto hat' : ' Konten haben'} noch keine DATEV-Nummer.`, href: '/buchhaltung/konten' });
-    // Economic sphere: gross income per calendar year against the § 64 AO limit.
-    for (let y = Number(from.slice(0, 4)); y <= Number(to.slice(0, 4)); y++) {
-      const w = await sql<{ gross: number }>`
-        select coalesce(sum(l.credit_cents - l.debit_cents), 0)::bigint as gross from journal_line l join journal_entry e on e.id = l.entry_id join ledger_account a on a.id = l.account_id
-        where l.organization_id = ${organizationId} and l.sphere = 'wirtschaft' and a.kind in ('income', 'tax') and e.entry_date between ${`${y}-01-01`}::date and ${`${y}-12-31`}::date`.execute(db);
-      const gross = Number(w.rows[0]?.gross ?? 0);
-      if (gross > WIRTSCHAFT_LIMIT_CENTS) out.push({ kind: 'limit', message: `Wirtschaftlicher Geschäftsbetrieb ${y}: Einnahmen über 50.000 € (Besteuerungsgrenze nach § 64 AO). Sprich mit Deiner Steuerberatung.`, href: null });
-      else if (gross >= WIRTSCHAFT_LIMIT_CENTS * 0.8) out.push({ kind: 'limit-near', message: `Wirtschaftlicher Geschäftsbetrieb ${y}: Einnahmen bei ${Math.round((gross / WIRTSCHAFT_LIMIT_CENTS) * 100)} % der Besteuerungsgrenze von 50.000 €.`, href: null });
+    // Economic sphere: gross income (net plus output VAT) per calendar year against the § 64 AO limit.
+    const w = await sql<{ y: number; gross: number }>`
+      select extract(year from e.entry_date)::int as y, coalesce(sum(l.credit_cents - l.debit_cents), 0)::bigint as gross
+      from journal_line l join journal_entry e on e.id = l.entry_id join ledger_account a on a.id = l.account_id
+      where l.organization_id = ${organizationId} and l.sphere = 'wirtschaft' and e.entry_date between ${from}::date and ${to}::date
+        and (a.kind = 'income' or a.id in (select output_account_id from tax_rate where organization_id = ${organizationId}))
+      group by 1 order by 1`.execute(db);
+    for (const { y, gross: g } of w.rows) {
+      const gross = Number(g);
+      const limit = wirtschaftLimitCents(y);
+      const label = (limit / 100).toLocaleString('de-DE') + ' €';
+      if (gross > limit) out.push({ kind: 'limit', message: `Wirtschaftlicher Geschäftsbetrieb ${y}: Einnahmen über ${label} (Besteuerungsgrenze nach § 64 AO). Sprich mit Deiner Steuerberatung.`, href: null });
+      else if (gross >= limit * 0.8) out.push({ kind: 'limit-near', message: `Wirtschaftlicher Geschäftsbetrieb ${y}: Einnahmen bei ${Math.round((gross / limit) * 100)} % der Besteuerungsgrenze von ${label}.`, href: null });
     }
     return out;
   }
 
   app.get('/ledger/reports/euer', { schema: { tags, summary: 'Einnahmen-Überschuss-Rechnung nach Sphären (netto, mit Umsatzsteuer und Vorsteuer)', querystring: range, response: { 200: euerReport } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     await syncAllocations(db, actor.organizationId);
     const { from, to } = req.query;
     const rows = await sql<{ account_id: string; number: string; name: string; kind: 'income' | 'expense' | 'tax'; sphere: (typeof SPHERES)[number]; credit: number; debit: number }>`
@@ -316,7 +334,11 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
       const expense = out.filter((r) => r.sphere === s && r.kind === 'expense').reduce((a, r) => a + r.netCents, 0);
       return { sphere: s, incomeCents: income, expenseCents: expense, resultCents: income - expense };
     });
+    const rates = await db.selectFrom('tax_rate').select(['output_account_id', 'input_account_id']).where('organization_id', '=', actor.organizationId).execute();
+    const outputAccounts = new Set(rates.map((r) => r.output_account_id));
+    const inputAccounts = new Set(rates.map((r) => r.input_account_id));
     const tax = rows.rows.filter((r) => r.kind === 'tax');
+    const net = (accounts: Set<string | null>, sign: 1 | -1) => tax.filter((r) => accounts.has(r.account_id)).reduce((a, r) => a + sign * (Number(r.credit) - Number(r.debit)), 0);
     const incomeCents = spheres.reduce((a, s) => a + s.incomeCents, 0);
     const expenseCents = spheres.reduce((a, s) => a + s.expenseCents, 0);
     return {
@@ -324,7 +346,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
       to,
       rows: out,
       spheres,
-      vat: { outputCents: tax.reduce((a, r) => a + Number(r.credit), 0), inputCents: tax.reduce((a, r) => a + Number(r.debit), 0) },
+      vat: { outputCents: net(outputAccounts, 1), inputCents: net(inputAccounts, -1) },
       totals: { incomeCents, expenseCents, resultCents: incomeCents - expenseCents },
       warnings: await warnings(actor.organizationId, from, to),
     };
@@ -332,7 +354,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/ledger/reports/balances', { schema: { tags, summary: 'Summen und Salden je Konto (Anfangsbestand, Soll, Haben, Endbestand)', querystring: range, response: { 200: z.array(z.object({ accountId: z.uuid(), number: z.string(), name: z.string(), kind: z.string(), openingCents: z.number(), debitCents: z.number(), creditCents: z.number(), closingCents: z.number() })) } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'ledger', 'read');
+    requireClubWide(actor, 'ledger', 'read');
     await syncAllocations(db, actor.organizationId);
     const { from, to } = req.query;
     const rows = await sql<{ id: string; number: string; name: string; kind: string; opening: number; debit: number; credit: number }>`

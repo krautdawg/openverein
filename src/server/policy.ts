@@ -69,6 +69,12 @@ export function requirePermission(actor: Actor, module: Module, need: Exclude<Le
   }
 }
 
+/** Modules whose data belongs to the whole club (books, bank): a grant limited to groups is not enough. */
+export function requireClubWide(actor: Actor, module: Module, need: Exclude<Level, 'none'>) {
+  requirePermission(actor, module, need);
+  if (scopeOf(actor, module, need) !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', undefined, { permission: `${module}:${need} (ganzer Verein)` });
+}
+
 /** Group scope for a module at a level: null means unrestricted. An unscoped grant wins over scoped ones. */
 export function scopeOf(actor: Actor, module: Module, need: Exclude<Level, 'none'>): string[] | null {
   const groups = new Set<string>();

@@ -108,7 +108,8 @@ create constraint trigger journal_entry_balanced after insert on journal_entry d
 create function ledger_assert_open(org uuid, d date) returns void language plpgsql as $$
 declare lock date;
 begin
-  select lock_date into lock from ledger_setting where organization_id = org;
+  -- for share: a lock change in flight (for update) and this insert wait for each other.
+  select lock_date into lock from ledger_setting where organization_id = org for share;
   if lock is not null and d <= lock then
     raise exception 'period locked until %', lock using errcode = 'check_violation', constraint = 'ledger_period_locked';
   end if;

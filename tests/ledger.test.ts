@@ -1,17 +1,19 @@
 import { sql } from 'kysely';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { splitGross } from '../src/server/ledger/service.ts';
-import { client, reset, setupClub, testApp } from './helpers.ts';
+import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
 
 let admin: ReturnType<typeof client>;
+let adminCookie: string;
 let accounts: { id: string; number: string }[];
 const acc = (n: string) => accounts.find((a) => a.number === n)!.id;
 beforeEach(async () => {
   await reset(ctx.db);
-  admin = client(ctx.app, { cookie: (await setupClub(ctx.app)).cookie });
+  adminCookie = (await setupClub(ctx.app)).cookie;
+  admin = client(ctx.app, { cookie: adminCookie });
   accounts = (await admin.get('/ledger/accounts')).body;
 });
 
@@ -96,5 +98,40 @@ describe('ledger', () => {
     expect(balances.find((b) => b.number === '1000')!.closingCents).toBe(0);
     expect(balances.find((b) => b.number === '1100')!.closingCents).toBe(20000);
     expect(balances.find((b) => b.number === '1360')!.closingCents).toBe(0);
+  });
+
+  it('splits payments by the invoice VAT rates, survives concurrent syncs, and books non-refundable input tax gross', async () => {
+    await admin.patch('/organization', { street: 'Weg 1', postalCode: '12345', city: 'Musterstadt' });
+    const m = (await admin.post('/members', { lastName: 'Käufer', joinDate: '2024-01-01' })).body.id;
+    const inv = await admin.post('/invoices', { memberId: m, lines: [{ text: 'Trikot', unitCents: 11900, taxRate: 19 }, { text: 'Spende', unitCents: 5000 }] });
+    await admin.post(`/invoices/${inv.body.id}/issue`, {});
+    await admin.post(`/invoices/${inv.body.id}/payments`, { amountCents: 16900, bookedOn: '2026-02-01', method: 'transfer' });
+    const [a, b] = await Promise.all([admin.get('/ledger/entries?from=2026-01-01&to=2026-12-31'), admin.get('/ledger/entries?from=2026-01-01&to=2026-12-31')]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(a.body).toHaveLength(1);
+    const lines = a.body[0].lines.map((l: { accountNumber: string; debitCents: number; creditCents: number }) => [l.accountNumber, l.debitCents || -l.creditCents]);
+    expect(lines).toEqual(expect.arrayContaining([['1100', 16900], ['4400', -10000], ['1770', -1900], ['4400', -5000]]));
+    const euer = (await admin.get('/ledger/reports/euer?from=2026-01-01&to=2026-12-31')).body;
+    expect(euer.vat.outputCents).toBe(1900);
+
+    const r19 = ((await admin.get('/ledger/tax-rates')).body as { id: string; rateBp: number; validTo: string | null }[]).find((r) => r.rateBp === 1900 && !r.validTo)!.id;
+    const e = await admin.post('/ledger/bookings', { kind: 'expense', date: '2026-02-02', text: 'Bälle', moneyAccountId: acc('1100'), lines: [{ grossCents: 11900, accountId: acc('6100'), taxRateId: r19 }] });
+    expect(e.body.lines).toHaveLength(2); // ideell: no input tax, the expense is gross
+  });
+
+  it('refuses to lock over unposted payments and keeps group-scoped users out', async () => {
+    await admin.patch('/organization', { street: 'Weg 1', postalCode: '12345', city: 'Musterstadt' });
+    await admin.patch('/ledger/settings', { otherIncomeAccountId: null });
+    const m = (await admin.post('/members', { lastName: 'Zahler', joinDate: '2024-01-01' })).body.id;
+    const inv = await admin.post('/invoices', { memberId: m, lines: [{ text: 'Beitrag', unitCents: 6000 }] });
+    await admin.post(`/invoices/${inv.body.id}/issue`, {});
+    await admin.post(`/invoices/${inv.body.id}/payments`, { amountCents: 6000, bookedOn: '2026-02-01', method: 'cash' });
+    const locked = await admin.post('/ledger/lock', { lockDate: '2026-03-31' });
+    expect(locked.status).toBe(409);
+    expect(locked.body.type).toContain('unposted-payments');
+
+    const group = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN' })).body.id;
+    const scoped = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Kassenwart', [group]) });
+    expect((await scoped.get('/ledger/accounts')).status).toBe(403);
   });
 });

@@ -4,7 +4,8 @@ export const SPHERES = ['ideell', 'vermoegen', 'zweck', 'wirtschaft'] as const;
 export const SPHERE_LABEL = { ideell: 'Ideeller Bereich', vermoegen: 'Vermögensverwaltung', zweck: 'Zweckbetrieb', wirtschaft: 'Wirtschaftlicher Geschäftsbetrieb' } as const;
 export const ACCOUNT_KIND_LABEL = { money: 'Geldkonto', income: 'Einnahmen', expense: 'Ausgaben', tax: 'Steuer', transit: 'Geldtransit', other: 'Sonstiges' } as const;
 /** § 64 Abs. 3 AO: economic-sphere gross income above this per year ends the tax exemption for that sphere. */
-export const WIRTSCHAFT_LIMIT_CENTS = 5_000_000;
+/** § 64 Abs. 3 AO: 45,000 € until 2024, 50,000 € from 2025 (JStG 2024). */
+export const wirtschaftLimitCents = (year: number) => (year >= 2025 ? 5_000_000 : 4_500_000);
 
 const cents = z.number().int('Ganze Cent.').positive('Betrag muss größer als 0 sein.').max(100_000_000_00);
 export const sphere = z.enum(SPHERES);
