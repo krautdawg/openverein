@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import { migrate } from '../src/server/migrate.ts';
-import { reset, setupClub, testApp, totpNow } from './helpers.ts';
+import { client, reset, setupClub, testApp, totpNow } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
@@ -145,5 +145,15 @@ describe('rate limit', () => {
     expect(third.statusCode).toBe(429);
     expect(third.json().title).toBe('Zu viele Anfragen. Bitte warte einen Moment.');
     await strict.close();
+  });
+
+  it('stores each access its own overview layout', async () => {
+    const { cookie } = await setupClub(ctx.app);
+    const me = client(ctx.app, { cookie });
+    expect((await me.put('/auth/me/overview', { order: ['tasks', 'figures'], hidden: ['steps', 'unbekannt'] })).status).toBe(400);
+    const r = await me.put('/auth/me/overview', { order: ['tasks', 'figures', 'tasks'], hidden: ['steps'] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.overviewLayout).toEqual({ order: ['tasks', 'figures'], hidden: ['steps'] });
+    expect((await me.get('/auth/me')).body.overviewLayout.hidden).toEqual(['steps']);
   });
 });
