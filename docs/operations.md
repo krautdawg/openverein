@@ -71,4 +71,22 @@ What a club sees and does stays inside its club: members, mails, files, the port
 
 As operator you process the clubs' data on their behalf: conclude a data-processing agreement (Art. 28 GDPR) with each club. `docs/avv-vorlage.md` is a German template with the technical and organisational measures OpenVerein brings and a part for your own operations.
 
-Not yet included: deleting or moving out a single club (until then: full export, then delete the club's data by hand) and per-club backups (`ovctl backup` backs up the whole installation).
+### When a club leaves
+
+1. Hand over its data. The club's admins can download it themselves (Einstellungen → Gesamtexport), or you fetch it:
+
+   ```sh
+   curl -o tsv-musterstadt.zip https://<any-host>/api/v1/operator/tenants/<id>/export.zip -H "X-Operator-Token: $OPERATOR_TOKEN"
+   ```
+
+   The archive is the full export described in `export-schema.md`, with all files. It contains members' bank details: store and send it like any other personal data.
+2. Delete the club with everything it owns. To confirm, give the club's host name:
+
+   ```sh
+   curl -X DELETE https://<any-host>/api/v1/operator/tenants/<id> -H "X-Operator-Token: $OPERATOR_TOKEN" \
+     -H 'content-type: application/json' -d '{"confirmHostname":"tsv-musterstadt.example-hosting.de"}'
+   ```
+
+   The answer counts the deleted rows per table. Issued invoices, the journal and receipts are protected by database triggers. The deletion therefore runs with triggers switched off, which needs a superuser database connection, as in the supplied Docker setup. Before committing, it checks every foreign key: if any row of another club still pointed into the deleted one, nothing is deleted. The club's files go with the next file sweep (within a day). Its rows stay in your backups until they expire (AVV section 6.2). The club's own log is deleted with it; your server log records the deletion.
+
+Per-club backups are not included yet: `ovctl backup` backs up the whole installation.

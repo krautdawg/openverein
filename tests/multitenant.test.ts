@@ -1,6 +1,7 @@
+import { sql } from 'kysely';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
-import { client, reset, testApp } from './helpers.ts';
+import { client, enrollTotp, reset, testApp } from './helpers.ts';
 
 const ctx = await testApp();
 const TOKEN = 'o'.repeat(40);
@@ -15,7 +16,7 @@ beforeEach(async () => {
   config.operatorToken = TOKEN;
 });
 
-const operator = (method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown, token = TOKEN) =>
+const operator = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, payload?: unknown, token = TOKEN) =>
   ctx.app.inject({ method, url: `/api/v1/operator${url}`, headers: { 'x-operator-token': token }, ...(payload ? { payload: payload as object } : {}) });
 
 /** Creates a club through the operator API and signs its admin in via the invitation. */
@@ -26,7 +27,8 @@ async function club(name: string, host: string, email: string) {
   const token = t.json().inviteLink.split('#')[1];
   const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token, password: 'ein-sehr-langes-passwort' } });
   expect(res.statusCode, res.body).toBe(200);
-  return { id: t.json().id as string, admin: client(ctx.app, { cookie: String(res.headers['set-cookie']).split(';')[0]! }) };
+  const cookie = String(res.headers['set-cookie']).split(';')[0]!;
+  return { id: t.json().id as string, cookie, admin: client(ctx.app, { cookie }) };
 }
 
 describe('managed hosting (several clubs)', () => {
@@ -57,5 +59,40 @@ describe('managed hosting (several clubs)', () => {
     const codes = await ctx.db.selectFrom('login_code').select('organization_id').execute();
     expect(codes.map((c) => c.organization_id)).toEqual([b.id]);
     expect((await ask('unbekannt.example.org', 'bert@example.org')).statusCode).toBe(200);
+  });
+
+  it('hands a leaving club its export and then deletes it completely, leaving the other club untouched', async () => {
+    const a = await club('TSV A', 'verein-a.example.org', 'admin-a@example.org');
+    const b = await club('SV B', 'verein-b.example.org', 'admin-b@example.org');
+    for (const c of [a, b]) {
+      await enrollTotp(ctx.app, c.cookie);
+      await c.admin.patch('/organization', { street: 'Platz 1', postalCode: '12345', city: 'Musterstadt' });
+      const m = (await c.admin.post('/members', { firstName: 'Anna', lastName: 'Alpha', email: 'anna@example.org', street: 'Weg 1', postalCode: '12345', city: 'Musterstadt', joinDate: '2024-01-01' })).body;
+      const created = await c.admin.post('/invoices', { memberId: m.id, lines: [{ text: 'Beitrag', unitCents: 6000 }] });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      const inv = created.body;
+      const issued = await c.admin.post(`/invoices/${inv.id}/issue`, {});
+      expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+      await c.admin.post(`/invoices/${inv.id}/payments`, { amountCents: 6000, bookedOn: '2026-01-05', method: 'cash' });
+    }
+    const count = async (table: string, org: string) => Number((await sql<{ n: number }>`select count(*)::int as n from ${sql.table(table)} where organization_id = ${org}`.execute(ctx.db)).rows[0]!.n);
+    const bBefore = { invoice: await count('invoice', b.id), journal: await count('journal_entry', b.id), audit: await count('audit_event', b.id) };
+
+    const zip = await operator('GET', `/tenants/${a.id}/export.zip`);
+    expect(zip.statusCode).toBe(200);
+    expect(zip.headers['content-disposition']).toContain('openverein-verein-a.example.org.zip');
+    expect(zip.rawPayload.subarray(0, 2).toString()).toBe('PK');
+
+    expect((await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-b.example.org' })).statusCode).toBe(400);
+    const gone = await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'Verein-A.example.org' });
+    expect(gone.statusCode, gone.body).toBe(200);
+    expect(gone.json().deleted).toMatchObject({ organization: 1, invoice: 1, member: 1 });
+    for (const t of ['invoice', 'journal_entry', 'member', 'person', 'app_user', 'audit_event']) expect(await count(t, a.id)).toBe(0);
+    expect((await operator('GET', '/tenants')).json().map((t: { hostname: string }) => t.hostname)).toEqual(['verein-b.example.org']);
+    expect({ invoice: await count('invoice', b.id), journal: await count('journal_entry', b.id), audit: await count('audit_event', b.id) }).toEqual(bBefore);
+    // The remaining club works as before, and the deleted host name signs nobody in.
+    expect((await b.admin.get('/members')).body.items).toHaveLength(1);
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { host: 'verein-a.example.org' }, payload: { email: 'admin-a@example.org', password: 'ein-sehr-langes-passwort' } })).statusCode).toBe(401);
+    expect((await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' })).statusCode).toBe(404);
   });
 });
