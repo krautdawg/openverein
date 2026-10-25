@@ -39,6 +39,7 @@ import { workHourRoutes } from './routes/workHours.ts';
 import { assemblyRoutes } from './routes/assemblies.ts';
 import { articleRoutes } from './routes/articles.ts';
 import { allowanceRoutes } from './routes/allowances.ts';
+import { webhookRoutes } from './routes/webhooks.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -84,7 +85,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
 
-  const DEMO_LOCKED = /^\/api\/v1\/(users|roles|api-tokens|files|mail\/test|mail\/resume|imports\/members|bank-accounts\/:id\/imports)(\/|$)/;
+  const DEMO_LOCKED = /^\/api\/v1\/(users|roles|api-tokens|webhooks|files|mail\/test|mail\/resume|imports\/members|bank-accounts\/:id\/imports)(\/|$)/;
   const isApi = (url: string) => {
     const path = url.split('?')[0]!;
     return path === '/api' || path.startsWith('/api/');
@@ -150,6 +151,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(assemblyRoutes);
       await api.register(articleRoutes);
       await api.register(allowanceRoutes);
+      await api.register(webhookRoutes);
     },
     { prefix: '/api/v1' },
   );

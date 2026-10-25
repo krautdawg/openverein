@@ -20,5 +20,7 @@ export const config = {
   mailFrom: env.MAIL_FROM ?? 'OpenVerein <verein@example.org>',
   // shortcut: a fixed development key when DATA_KEY is unset outside production; set a real one for any club data.
   dataKey: env.DATA_KEY || (env.NODE_ENV === 'production' ? '' : 'b3BlbnZlcmVpbi1kZXZlbG9wbWVudC1rZXktbm90LXNlY3JldA=='),
+  // Webhooks to private addresses or plain http: only for development and tests (SSRF guard).
+  webhooksAllowPrivate: env.WEBHOOKS_ALLOW_PRIVATE === 'true',
   webDist: env.WEB_DIST ?? new URL('../../dist/web', import.meta.url).pathname,
 };

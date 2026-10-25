@@ -681,3 +681,5 @@ input[type='range'] { accent-color: var(--accent); }
 .attendance li { break-inside: avoid; padding: 2px 0; }
 .agenda-result .textarea { min-height: 56px; }
 td[data-over] { color: var(--danger); font-weight: 600; }
+.checks { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); }
+.checks legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--s-2); width: 100%; }

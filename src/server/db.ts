@@ -913,6 +913,34 @@ export interface Database {
   instance_setting: InstanceSettingTable;
   allowance_payment: AllowancePaymentTable;
   allowance_declaration: AllowanceDeclarationTable;
+  webhook: WebhookTable;
+  webhook_delivery: WebhookDeliveryTable;
+}
+
+export interface WebhookTable {
+  id: Generated<string>;
+  organization_id: string;
+  url: string;
+  secret_encrypted: string;
+  topics: string[];
+  active: Generated<boolean>;
+  created_at: Generated<Date>;
+}
+export interface WebhookDeliveryTable {
+  id: Generated<string>;
+  organization_id: string;
+  webhook_id: string;
+  event: string;
+  entity_type: string;
+  entity_id: string | null;
+  occurred_at: Date;
+  status: Generated<'queued' | 'sending' | 'sent' | 'failed'>;
+  attempts: Generated<number>;
+  next_attempt_at: Generated<Date>;
+  claimed_at: Date | null;
+  response_status: number | null;
+  error: string | null;
+  sent_at: Date | null;
 }
 
 export interface AllowancePaymentTable {
