@@ -62,6 +62,7 @@ export interface OrganizationTable {
   work_hours_age_from: number | null;
   work_hours_age_to: number | null;
   remittance_template: Generated<string>;
+  portal_features: Generated<unknown>;
 }
 
 export interface AppUserTable {
@@ -182,6 +183,7 @@ export interface ClubGroupTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   import_run_id: Generated<string | null>;
+  portal_overrides: Generated<unknown>;
 }
 
 export interface GroupMembershipTable {

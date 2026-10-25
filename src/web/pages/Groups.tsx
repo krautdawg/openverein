@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { Fragment, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import { Plus } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { COLOR_LABEL, COURT_COLORS, GROUP_KINDS, KIND_LABEL, type Group } from '../../shared/groups.ts';
+import { PORTAL_FEATURE_KEYS, PORTAL_FEATURES } from '../../shared/organization.ts';
 import { displayName, type MemberListItem } from '../../shared/members.ts';
 import { Field } from '../components/Field.tsx';
 import { GroupBadge } from '../components/GroupBadge.tsx';
@@ -173,6 +174,29 @@ function GroupSheet({ group, canWrite, onClose }: { group: Group | null; canWrit
             </div>
           </section>
           <AgeRule group={group} canWrite={canWrite} save={save} />
+          <section className="sheet-section" aria-labelledby="g-portal">
+            <h3 id="g-portal">Im Portal</h3>
+            <p className="meta" style={{ marginBottom: 'var(--s-3)' }}>Abweichend von den Einstellungen des Vereins, für die Mitglieder dieser Gruppe. Ein Verbot geht vor.</p>
+            <dl className="facts">
+              {PORTAL_FEATURE_KEYS.map((k) => (
+                <Fragment key={k}>
+                  <dt>{PORTAL_FEATURES[k]}</dt>
+                  <dd>
+                    <select className="select" aria-label={`${PORTAL_FEATURES[k]}: im Portal`} disabled={!canWrite} value={group.portalOverrides[k] ?? ''} onChange={(e) => {
+                      const next = { ...group.portalOverrides };
+                      if (e.target.value) next[k] = e.target.value as 'allow' | 'deny';
+                      else delete next[k];
+                      void save({ portalOverrides: next });
+                    }}>
+                      <option value="">wie im Verein</option>
+                      <option value="allow">erlauben</option>
+                      <option value="deny">verbieten</option>
+                    </select>
+                  </dd>
+                </Fragment>
+              ))}
+            </dl>
+          </section>
           <section className="sheet-section" aria-labelledby="g-members">
             <h3 id="g-members">Mitglieder am</h3>
             <input type="date" className="input" style={{ width: 'auto', marginBottom: 'var(--s-3)' }} aria-label="Stichtag" value={at} onChange={(e) => e.target.value && setAt(e.target.value)} />

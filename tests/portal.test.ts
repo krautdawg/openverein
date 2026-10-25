@@ -150,6 +150,18 @@ describe('member portal', () => {
   it('turns a portal resignation into dates once the board confirms it, and shares documents', async () => {
     const m = (await admin.post('/members', { firstName: 'Rita', lastName: 'Raus', email: 'rita@example.org', joinDate: '2020-01-01' })).body.id;
     const cookie = await signIn('rita@example.org');
+    // Portal settings: the club switches resignation and the contact off; a group allows resignation again.
+    expect((await admin.patch('/organization', { portalFeatures: { resignation: false, contact: false, bogus: true } })).status).toBe(400);
+    await admin.patch('/organization', { portalFeatures: { resignation: false, contact: false } });
+    const off = (await get('/portal/me', cookie)).json();
+    expect(off.club.email).toBeNull();
+    expect(off.members[0].features).toMatchObject({ resignation: false, invoices: true });
+    expect((await post('/portal/resignation', { memberId: m }, cookie)).statusCode).toBe(403);
+    const seniors = (await admin.post('/groups', { name: 'Senioren', shortCode: 'SEN' })).body.id;
+    expect((await admin.patch(`/groups/${seniors}`, { portalOverrides: { resignation: 'allow', bank: 'deny' } })).body.portalOverrides).toEqual({ resignation: 'allow', bank: 'deny' });
+    await admin.post('/group-memberships', { memberId: m, groupId: seniors, validFrom: '2020-01-01' });
+    expect((await get('/portal/me', cookie)).json().members[0].features).toMatchObject({ resignation: true, bank: false });
+    expect((await post('/portal/change-requests', { memberId: m, field: 'iban', iban: 'DE02120300000000202051', accountHolder: 'Rita Raus' }, cookie)).statusCode).toBe(403);
     const r = await post('/portal/resignation', { memberId: m }, cookie);
     expect(r.statusCode, r.body).toBe(200);
     const exit = r.json().exitDate;

@@ -25,6 +25,7 @@ export const organization = z.object({
   creditorId: z.string().nullable(),
   prenotificationDays: z.number(),
   remittanceTemplate: z.string(),
+  portalFeatures: z.record(z.string(), z.boolean()),
   mailFromName: z.string().nullable(),
   mailFromAddress: z.string().nullable(),
   mailReplyTo: z.string().nullable(),
@@ -61,6 +62,7 @@ export const organizationPatch = z.object({
   cancellationNumberPattern: numberPattern.optional(),
   paymentTermsDays: z.number().int().min(0).max(120).optional(),
   prenotificationDays: z.number().int().min(1).max(60).optional(),
+  portalFeatures: z.record(z.string(), z.boolean()).refine((v) => Object.keys(v).every((k) => k in PORTAL_FEATURES), 'Unbekannte Portalfunktion.').optional(),
   remittanceTemplate: z.string().trim().min(1).max(140).refine((t) => [...t.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].every((m) => m[1]! in REMITTANCE_PLACEHOLDERS), 'Unbekannter Platzhalter. Erlaubt: {{rechnungsnummer}}, {{mitgliedsnummer}}, {{zeitraum}}, {{verein}}.').optional(),
   mailFromName: optText(100),
   mailFromAddress: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)).optional(),
@@ -87,4 +89,23 @@ export const REMITTANCE_PLACEHOLDERS = { rechnungsnummer: 'Rechnungsnummer', mit
 
 export function fillRemittance(template: string, values: Partial<Record<keyof typeof REMITTANCE_PLACEHOLDERS, string>>) {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => values[k as keyof typeof REMITTANCE_PLACEHOLDERS] ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** Member portal functions the club can switch off; each group can allow or deny one for its members. */
+export const PORTAL_FEATURES = {
+  profile: 'Eigene Daten ändern',
+  bank: 'Bankverbindung ändern',
+  invoices: 'Rechnungen ansehen',
+  mandate: 'Lastschriftmandat anzeigen',
+  resignation: 'Kündigen',
+  contact: 'Kontakt zum Verein anzeigen',
+} as const;
+export type PortalFeature = keyof typeof PORTAL_FEATURES;
+export const PORTAL_FEATURE_KEYS = Object.keys(PORTAL_FEATURES) as [PortalFeature, ...PortalFeature[]];
+export const portalFeatures = z.object(Object.fromEntries(PORTAL_FEATURE_KEYS.map((k) => [k, z.boolean()])) as Record<PortalFeature, z.ZodBoolean>);
+export const portalOverrides = z.partialRecord(z.enum(PORTAL_FEATURE_KEYS), z.enum(['allow', 'deny']));
+
+/** A member gets a function if one of their current groups allows it and none denies it; otherwise the club setting applies. */
+export function resolvePortalFeatures(club: Partial<Record<string, boolean>>, groups: Partial<Record<string, string>>[]): Record<PortalFeature, boolean> {
+  return Object.fromEntries(PORTAL_FEATURE_KEYS.map((k) => [k, groups.some((g) => g[k] === 'deny') ? false : groups.some((g) => g[k] === 'allow') || (club[k] ?? true)])) as Record<PortalFeature, boolean>;
 }

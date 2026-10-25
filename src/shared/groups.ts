@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { portalOverrides } from './organization.ts';
 
 export const COURT_COLORS = ['blau', 'gruen', 'rot', 'gelb', 'orange', 'tuerkis', 'grau', 'schwarz'] as const;
 export const COLOR_LABEL: Record<(typeof COURT_COLORS)[number], string> = {
@@ -21,7 +22,7 @@ export const groupFields = z.object({
   nextGroupOn: z.enum(['birthday', 'year_start']).nullish(),
 });
 
-export const groupPatch = groupFields.partial();
+export const groupPatch = groupFields.partial().extend({ portalOverrides: portalOverrides.optional() });
 
 export const group = z.object({
   id: z.uuid(),
@@ -35,6 +36,7 @@ export const group = z.object({
   nextGroupId: z.uuid().nullable(),
   nextGroupAge: z.number().nullable(),
   nextGroupOn: z.enum(['birthday', 'year_start']).nullable(),
+  portalOverrides: z.record(z.string(), z.enum(['allow', 'deny'])),
   archived: z.boolean(),
   memberCount: z.number(),
 });

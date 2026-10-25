@@ -1,0 +1,3 @@
+- [x] settings and resolver
+- [x] enforcement in portal routes
+- [x] admin UI, portal UI, tests

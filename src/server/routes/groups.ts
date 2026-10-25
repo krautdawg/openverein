@@ -30,11 +30,12 @@ const toDto = (g: Selectable<ClubGroupTable>, memberCount: number) => ({
   nextGroupId: g.next_group_id,
   nextGroupAge: g.next_group_age,
   nextGroupOn: g.next_group_on,
+  portalOverrides: g.portal_overrides as Record<string, 'allow' | 'deny'>,
   archived: g.archived_at !== null,
   memberCount,
 });
 
-const columns = (b: Partial<z.infer<typeof groupFields>>) => {
+const columns = (b: Partial<z.infer<typeof groupPatch>>) => {
   const out: Record<string, unknown> = {};
   if (b.name !== undefined) out.name = b.name;
   if (b.shortCode !== undefined) out.short_code = b.shortCode;
@@ -46,6 +47,7 @@ const columns = (b: Partial<z.infer<typeof groupFields>>) => {
   if (b.nextGroupId !== undefined) out.next_group_id = b.nextGroupId;
   if (b.nextGroupAge !== undefined) out.next_group_age = b.nextGroupAge;
   if (b.nextGroupOn !== undefined) out.next_group_on = b.nextGroupOn;
+  if (b.portalOverrides !== undefined) out.portal_overrides = JSON.stringify(b.portalOverrides);
   return out;
 };
 
