@@ -6,7 +6,7 @@ import { donation, donationInput, donationSettings, receipt } from '../../shared
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
-import { RECEIPT_TEMPLATE, renderReceiptPdf } from '../donations/receipt-pdf.ts';
+import { RECEIPT_TEMPLATE, RECEIPT_TEMPLATE_IN_KIND, renderReceiptPdf } from '../donations/receipt-pdf.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { lockJournal, postEntry, reverseEntry } from '../ledger/service.ts';
 import { nextNumber } from '../members/numbers.ts';
@@ -47,13 +47,13 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
       .leftJoin('journal_entry', 'journal_entry.id', 'donation.journal_entry_id')
       .leftJoin('donation_receipt_item as i', (j) => j.onRef('i.donation_id', '=', 'donation.id').on('i.live', '=', true))
       .leftJoin('donation_receipt as r', 'r.id', 'i.receipt_id')
-      .select(['donation.id', 'donation.person_id', 'donation.donated_on', 'donation.amount_cents', 'donation.waiver', 'donation.note', 'journal_entry.number as journal', 'r.id as receipt_id', 'r.number as receipt_number', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
+      .select(['donation.id', 'donation.person_id', 'donation.donated_on', 'donation.amount_cents', 'donation.waiver', 'donation.note', 'donation.kind as dkind', 'donation.in_kind_description', 'donation.in_kind_source', 'donation.in_kind_valuation_docs', 'journal_entry.number as journal', 'r.id as receipt_id', 'r.number as receipt_number', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
       .where('donation.organization_id', '=', organizationId)
       .where('donation.voided_at', 'is', null);
     if (filter.year) q = q.where('donation.donated_on', '>=', `${filter.year}-01-01`).where('donation.donated_on', '<=', `${filter.year}-12-31`);
     if (filter.ids) q = q.where('donation.id', 'in', filter.ids);
     const rows = await q.orderBy('donation.donated_on', 'desc').orderBy('donation.id', 'desc').execute();
-    return rows.map((d) => ({ id: d.id, personId: d.person_id, donorName: nameOf(d), date: d.donated_on, amountCents: Number(d.amount_cents), waiver: d.waiver, note: d.note, journalNumber: d.journal ?? null, receipt: d.receipt_id ? { id: d.receipt_id, number: d.receipt_number! } : null }));
+    return rows.map((d) => ({ id: d.id, personId: d.person_id, donorName: nameOf(d), date: d.donated_on, amountCents: Number(d.amount_cents), waiver: d.waiver, note: d.note, inKind: d.dkind === 'in_kind' ? { description: d.in_kind_description!, source: d.in_kind_source!, valuationDocs: !!d.in_kind_valuation_docs } : null, journalNumber: d.journal ?? null, receipt: d.receipt_id ? { id: d.receipt_id, number: d.receipt_number! } : null }));
   }
 
   app.get('/donations', { schema: { tags, summary: 'Spenden eines Jahres mit Bestätigungsstand', querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100) }), response: { 200: z.array(donation) } } }, async (req) => {
@@ -62,7 +62,7 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     return donationsDto(actor.organizationId, { year: req.query.year });
   });
 
-  app.post('/donations', { schema: { tags, summary: 'Geldspende erfassen (auf Wunsch gleich ins Journal buchen)', body: donationInput, response: { 201: donation } } }, async (req, reply) => {
+  app.post('/donations', { schema: { tags, summary: 'Spende erfassen: Geld (auf Wunsch gleich ins Journal buchen) oder Sache (mit Wert, Beschreibung und Herkunft)', body: donationInput, response: { 201: donation } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'donations', 'write');
     const b = req.body;
@@ -93,7 +93,7 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
           lines: [{ accountId: money.id, debitCents: b.amountCents, sphere: 'ideell' }, { accountId: income.id, creditCents: b.amountCents, sphere: 'ideell' }],
         })).id;
       }
-      const d = await tx.insertInto('donation').values({ organization_id: actor.organizationId, person_id: personId, donated_on: b.date, amount_cents: b.amountCents, waiver: b.waiver, note: b.note ?? null, journal_entry_id: entryId, created_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
+      const d = await tx.insertInto('donation').values({ organization_id: actor.organizationId, person_id: personId, donated_on: b.date, amount_cents: b.amountCents, waiver: b.waiver, note: b.note ?? null, journal_entry_id: entryId, created_by: actor.userId, ...(b.inKind && { kind: 'in_kind' as const, in_kind_description: b.inKind.description, in_kind_source: b.inKind.source, in_kind_valuation_docs: b.inKind.valuationDocs }) }).returning('id').executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'donation.created', entityType: 'donation', entityId: d.id, diff: { amountCents: [null, b.amountCents] } });
       return d.id;
     });
@@ -165,6 +165,9 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     const items = await tx.selectFrom('donation').selectAll().where('id', 'in', donationIds).where('person_id', '=', personId).where('organization_id', '=', actor.organizationId).where('voided_at', 'is', null).orderBy('id').forUpdate().execute();
     if (items.length !== donationIds.length || !items.length) throw invalid('donationIds', 'Spenden nicht gefunden oder von einer anderen Person.');
     if (new Set(items.map((i) => i.donated_on.slice(0, 4))).size > 1) throw invalid('donationIds', 'Eine Sammelbestätigung gilt für ein Kalenderjahr.');
+    // Sachzuwendungen have their own template and are never part of a collective receipt.
+    const inKind = items.length === 1 && items[0]!.kind === 'in_kind' ? items[0]! : null;
+    if (!inKind && items.some((i) => i.kind === 'in_kind')) throw invalid('donationIds', 'Sachspenden bekommen jede eine eigene Bestätigung.');
     const number = await nextNumber(tx, actor.organizationId, 'donation_receipt', 'ZB-{YYYY}-{seq:4}', today);
     const total = items.reduce((s, i) => s + Number(i.amount_cents), 0);
     const pdf = await renderReceiptPdf({
@@ -176,10 +179,11 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
       exemption: { kind: org.exemption_kind, office: org.exemption_office, taxNumber: org.exemption_tax_number, date: org.exemption_date, period: org.exemption_period, purposes: org.exemption_purposes },
       signer: org.receipt_signer,
       demo: org.is_demo,
+      ...(inKind && { inKind: { description: inKind.in_kind_description!, source: inKind.in_kind_source!, valuationDocs: !!inKind.in_kind_valuation_docs } }),
     });
     const r = await tx
       .insertInto('donation_receipt')
-      .values({ organization_id: actor.organizationId, number, kind: items.length > 1 ? 'collective' : 'single', person_id: personId, issued_on: today, total_cents: total, template: RECEIPT_TEMPLATE, pdf, sha256: createHash('sha256').update(pdf).digest('hex'), created_by: actor.userId })
+      .values({ organization_id: actor.organizationId, number, kind: items.length > 1 ? 'collective' : 'single', person_id: personId, issued_on: today, total_cents: total, template: inKind ? RECEIPT_TEMPLATE_IN_KIND : RECEIPT_TEMPLATE, pdf, sha256: createHash('sha256').update(pdf).digest('hex'), created_by: actor.userId })
       .returning('id')
       .executeTakeFirstOrThrow();
     // The partial unique index refuses a donation that is already on a valid receipt.
@@ -206,13 +210,17 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'donations', 'write');
     const open = (await donationsDto(actor.organizationId, { year: req.body.year })).filter((d) => !d.receipt);
+    // Money donations of a person go on one receipt; each in-kind donation gets its own.
     const byPerson = new Map<string, typeof open>();
-    for (const d of open) byPerson.set(d.personId, [...(byPerson.get(d.personId) ?? []), d]);
+    for (const d of open) {
+      const key = d.inKind ? `${d.personId}:${d.id}` : d.personId;
+      byPerson.set(key, [...(byPerson.get(key) ?? []), d]);
+    }
     let issued = 0;
     const skipped: { donorName: string; reason: string }[] = [];
-    for (const [personId, ds] of byPerson) {
+    for (const ds of byPerson.values()) {
       try {
-        await db.transaction().execute((tx) => issue(tx, actor, personId, ds.map((d) => d.id)));
+        await db.transaction().execute((tx) => issue(tx, actor, ds[0]!.personId, ds.map((d) => d.id)));
         issued++;
       } catch (err) {
         // Club-wide problems stop the run; a single donor's problem is reported and skipped.

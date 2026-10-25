@@ -1084,6 +1084,10 @@ export interface DonationTable {
   waiver: Generated<boolean>;
   note: string | null;
   journal_entry_id: string | null;
+  kind: Generated<'money' | 'in_kind'>;
+  in_kind_description: string | null;
+  in_kind_source: 'business' | 'private' | 'unknown' | null;
+  in_kind_valuation_docs: boolean | null;
   voided_at: Date | null;
   void_reason: string | null;
   created_by: string | null;

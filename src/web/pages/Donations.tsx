@@ -112,7 +112,7 @@ export function Donations({ me }: { me: Me }) {
               {list.data?.map((d) => (
                 <tr key={d.id}>
                   <td className="num">{formatDate(d.date)}</td>
-                  <td><span className="name">{d.donorName}</span>{d.waiver && <span className="meta"> · Aufwandsspende</span>}</td>
+                  <td><span className="name">{d.donorName}</span>{d.waiver && <span className="meta"> · Aufwandsspende</span>}{d.inKind && <span className="meta"> · Sachspende</span>}</td>
                   <td className="num">{euro(d.amountCents)}</td>
                   <td className="hide-sm num">{d.journalNumber ? `Nr. ${d.journalNumber}` : '–'}</td>
                   <td>{d.receipt ? <a href={`/api/v1/donation-receipts/${d.receipt.id}/pdf`} target="_blank" rel="noreferrer">{d.receipt.number}</a> : canWrite ? <span style={{ display: 'inline-flex', gap: 'var(--s-1)' }}><button className="btn btn-ghost" aria-label={`Spende von ${d.donorName} vom ${formatDate(d.date)} bestätigen`} onClick={() => void single(d)}>Bestätigen</button><button className="btn btn-ghost" aria-label={`Spende von ${d.donorName} vom ${formatDate(d.date)} ungültig machen`} onClick={() => setVoiding(d)}>Ungültig …</button></span> : <span className="muted">offen</span>}</td>
@@ -144,6 +144,7 @@ function CreateDonation({ onClose }: { onClose: () => void }) {
   const [term, setTerm] = useState('');
   const found = useQuery({ queryKey: ['donor-pick', term], queryFn: () => api<Donor[]>(`/donations/donors?q=${encodeURIComponent(term)}`), enabled: term.trim().length >= 2 && !member });
   const [waiver, setWaiver] = useState(false);
+  const [goods, setGoods] = useState(false);
   const [error, setError] = useState<ApiError>();
   const usable = accounts.data?.filter((a) => !a.retired && !a.hidden) ?? [];
   const fieldError = (f: string) => error?.problem.errors?.find((x) => x.field === f || x.field.startsWith(`${f}.`))?.message;
@@ -160,10 +161,11 @@ function CreateDonation({ onClose }: { onClose: () => void }) {
           ...(member ? { personId: member.personId } : { donor: { kind: s('kind') ?? 'natural', firstName: s('firstName'), lastName: s('lastName'), companyName: s('companyName'), street: s('street'), postalCode: s('postalCode'), city: s('city'), email: s('email') } }),
           date: f.get('date'),
           amountCents: Number(f.get('amount')),
-          waiver,
+          waiver: !goods && waiver,
           note: s('note'),
-          moneyAccountId: waiver ? null : s('moneyAccountId'),
-          incomeAccountId: waiver ? null : s('incomeAccountId'),
+          moneyAccountId: waiver || goods ? null : s('moneyAccountId'),
+          incomeAccountId: waiver || goods ? null : s('incomeAccountId'),
+          inKind: goods ? { description: s('inKindDescription') ?? '', source: f.get('inKindSource'), valuationDocs: f.get('inKindDocs') === 'on' } : null,
         },
       });
       await qc.invalidateQueries({ queryKey: ['donations'] });
@@ -198,12 +200,36 @@ function CreateDonation({ onClose }: { onClose: () => void }) {
             <button type="button" className="btn btn-ghost" style={{ justifySelf: 'start' }} onClick={() => setNewDonor(true)}>Neu: Name und Anschrift eingeben</button>
           </div>
         )}
+        <div className="segmented" role="group" aria-label="Art der Zuwendung" style={{ alignSelf: 'flex-start' }}>
+          <button type="button" aria-pressed={!goods} onClick={() => setGoods(false)}>Geld</button>
+          <button type="button" aria-pressed={goods} onClick={() => setGoods(true)}>Sache</button>
+        </div>
         <div className="form-row">
           <Field label="Datum der Zuwendung" name="date" type="date" defaultValue={todayLocal()} max={todayLocal()} error={fieldError('date')} />
-          <MoneyField label="Betrag" name="amount" error={fieldError('amountCents')} />
+          <MoneyField label={goods ? 'Wert' : 'Betrag'} name="amount" error={fieldError('amountCents')} />
         </div>
-        <label className="check"><input type="checkbox" checked={waiver} onChange={(e) => setWaiver(e.target.checked)} /> Verzicht auf Erstattung von Aufwendungen (Aufwandsspende, es fließt kein Geld)</label>
-        {!waiver && (
+        {goods ? (
+          <>
+            <div className="field">
+              <label htmlFor="inKindDescription">Genaue Bezeichnung (Alter, Zustand, Kaufpreis usw.)</label>
+              <textarea id="inKindDescription" name="inKindDescription" className="textarea" maxLength={1000} aria-invalid={!!fieldError('inKind') || undefined} />
+              {fieldError('inKind') && <span className="error">{fieldError('inKind')}</span>}
+            </div>
+            <div className="field">
+              <label htmlFor="inKindSource">Herkunft laut Spender:in</label>
+              <select id="inKindSource" name="inKindSource" className="select" defaultValue="private">
+                <option value="private">Privatvermögen</option>
+                <option value="business">Betriebsvermögen (Entnahmewert inkl. USt.)</option>
+                <option value="unknown">Keine Angabe trotz Nachfrage</option>
+              </select>
+            </div>
+            <label className="check"><input type="checkbox" name="inKindDocs" /> Unterlagen zur Wertermittlung liegen vor (z. B. Rechnung, Gutachten)</label>
+            <p className="meta" style={{ margin: 0 }}>Sachspenden werden nicht als Geld gebucht und bekommen jede eine eigene Bestätigung.</p>
+          </>
+        ) : (
+          <label className="check"><input type="checkbox" checked={waiver} onChange={(e) => setWaiver(e.target.checked)} /> Verzicht auf Erstattung von Aufwendungen (Aufwandsspende, es fließt kein Geld)</label>
+        )}
+        {!waiver && !goods && (
           <div className="form-row">
             <div className="field">
               <label htmlFor="moneyAccountId">Eingegangen auf</label>

@@ -9,6 +9,7 @@ const FONT_BOLD = require.resolve('source-sans/TTF/SourceSans3-Semibold.ttf');
 
 /** Wording follows the BMF templates for money donations to § 5 Abs. 1 Nr. 9 KStG bodies; bump when it changes. */
 export const RECEIPT_TEMPLATE = 'BMF-Muster Geldzuwendung (Stand 2023)';
+export const RECEIPT_TEMPLATE_IN_KIND = 'BMF-Muster Sachzuwendung (Stand 2023)';
 
 export interface ReceiptPdf {
   number: string;
@@ -19,6 +20,8 @@ export interface ReceiptPdf {
   exemption: { kind: 'freistellung' | 'feststellung'; office: string; taxNumber: string; date: string; period: string | null; purposes: string };
   signer: string | null;
   demo: boolean;
+  /** Sachzuwendung: always a single receipt. */
+  inKind?: { description: string; source: 'business' | 'private' | 'unknown'; valuationDocs: boolean };
 }
 
 const mm = (v: number) => (v * 72) / 25.4;
@@ -57,7 +60,7 @@ export function renderReceiptPdf(d: ReceiptPdf): Promise<Buffer> {
   doc.font('text').fontSize(8).fillColor(muted).text('Aussteller (Bezeichnung und Anschrift der steuerbegünstigten Einrichtung)', left, mm(18), { width });
   doc.font('bold').fontSize(10).fillColor(ink).text(issuer, { width });
   doc.moveDown(0.8);
-  doc.font('bold').fontSize(12.5).text(collective ? 'Sammelbestätigung über Geldzuwendungen' : 'Bestätigung über Geldzuwendungen', { width });
+  doc.font('bold').fontSize(12.5).text(d.inKind ? 'Bestätigung über Sachzuwendungen' : collective ? 'Sammelbestätigung über Geldzuwendungen' : 'Bestätigung über Geldzuwendungen', { width });
   doc.font('text').fontSize(8.5).text('im Sinne des § 10b des Einkommensteuergesetzes an eine der in § 5 Abs. 1 Nr. 9 des Körperschaftsteuergesetzes bezeichneten Körperschaften, Personenvereinigungen oder Vermögensmassen', { width });
   doc.font('text').fontSize(8).fillColor(muted).text(`Nr. ${d.number}`, { width, align: 'right' });
 
@@ -65,14 +68,31 @@ export function renderReceiptPdf(d: ReceiptPdf): Promise<Buffer> {
   box('Name und Anschrift des Zuwendenden', d.donor.join(', '), left, y, width, 34);
   y += 40;
   const third = width / 3;
-  box(collective ? 'Gesamtbetrag der Zuwendung – in Ziffern –' : 'Betrag der Zuwendung – in Ziffern –', money(total), left, y, third - 4, 44);
+  box(d.inKind ? 'Wert der Zuwendung – in Ziffern –' : collective ? 'Gesamtbetrag der Zuwendung – in Ziffern –' : 'Betrag der Zuwendung – in Ziffern –', money(total), left, y, third - 4, 44);
   box('– in Buchstaben –', euroInWords(total), left + third, y, third - 4, 44);
   const dates = d.items.map((i) => i.date).sort();
   box(collective ? 'Zeitraum der Sammelbestätigung' : 'Tag der Zuwendung', collective ? `${formatDate(dates[0]!)} – ${formatDate(dates.at(-1)!)}` : formatDate(dates[0]!), left + 2 * third, y, third, 44);
   y += 54;
 
   doc.font('text').fontSize(9).fillColor(ink);
-  if (collective) {
+  if (d.inKind) {
+    const k = d.inKind;
+    doc.rect(left, y, width, 58).lineWidth(0.6).strokeColor('#8a9097').stroke();
+    doc.font('text').fontSize(7.5).fillColor(muted).text('Genaue Bezeichnung der Sachzuwendung mit Alter, Zustand, Kaufpreis usw.', left + 4, y + 3, { width: width - 8 });
+    doc.font('bold').fontSize(10).fillColor(ink).text(k.description, left + 4, y + 13, { width: width - 8, height: 42, ellipsis: true });
+    y += 66;
+    doc.font('text').fontSize(9).fillColor(ink);
+    const option = (on: boolean, text: string) => {
+      check(on, left, y + 1.5);
+      doc.text(text, left + 14, y, { width: width - 14 });
+      y = doc.y + 5;
+    };
+    option(k.source === 'business', 'Die Sachzuwendung stammt nach den Angaben des Zuwendenden aus dem Betriebsvermögen. Die Zuwendung wurde nach dem Wert der Entnahme (ggf. mit dem niedrigeren gemeinen Wert) und nach der Umsatzsteuer, die auf die Entnahme entfällt, bewertet.');
+    option(k.source === 'private', 'Die Sachzuwendung stammt nach den Angaben des Zuwendenden aus dem Privatvermögen.');
+    option(k.source === 'unknown', 'Der Zuwendende hat trotz Aufforderung keine Angaben zur Herkunft der Sachzuwendung gemacht.');
+    option(k.valuationDocs, 'Geeignete Unterlagen, die zur Wertermittlung gedient haben, z. B. Rechnung, Gutachten, liegen vor.');
+    doc.y = y;
+  } else if (collective) {
     doc.text('Ob es sich um den Verzicht auf Erstattung von Aufwendungen handelt, ist der Anlage zur Sammelbestätigung zu entnehmen.', left, y, { width });
   } else {
     doc.text('Es handelt sich um den Verzicht auf Erstattung von Aufwendungen', left, y, { continued: false });
@@ -100,10 +120,12 @@ export function renderReceiptPdf(d: ReceiptPdf): Promise<Buffer> {
   y = doc.y + 10;
   doc.text(`Es wird bestätigt, dass die Zuwendung nur zur Förderung ${purposes} verwendet wird.`, left, y, { width });
   y = doc.y + 8;
-  doc.font('text').fontSize(8).fillColor(muted).text('Nur für steuerbegünstigte Einrichtungen, bei denen die Mitgliedsbeiträge steuerlich nicht abziehbar sind:', left, y, { width });
-  y = doc.y + 3;
-  check(true, left, y + 1.5);
-  doc.font('text').fontSize(9).fillColor(ink).text('Es wird bestätigt, dass es sich nicht um Mitgliedsbeiträge handelt, deren Abzug nach § 10b Abs. 1 des Einkommensteuergesetzes ausgeschlossen ist.', left + 14, y, { width: width - 14 });
+  if (!d.inKind) {
+    doc.font('text').fontSize(8).fillColor(muted).text('Nur für steuerbegünstigte Einrichtungen, bei denen die Mitgliedsbeiträge steuerlich nicht abziehbar sind:', left, y, { width });
+    y = doc.y + 3;
+    check(true, left, y + 1.5);
+    doc.font('text').fontSize(9).fillColor(ink).text('Es wird bestätigt, dass es sich nicht um Mitgliedsbeiträge handelt, deren Abzug nach § 10b Abs. 1 des Einkommensteuergesetzes ausgeschlossen ist.', left + 14, y, { width: width - 14 });
+  }
   if (collective) {
     y = doc.y + 8;
     doc.text('Es wird bestätigt, dass über die in der Gesamtsumme enthaltenen Zuwendungen keine weiteren Bestätigungen, weder formelle Zuwendungsbestätigungen noch Beitragsquittungen oder ähnliches ausgestellt wurden und werden.', left, y, { width });

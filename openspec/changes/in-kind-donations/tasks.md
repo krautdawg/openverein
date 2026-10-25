@@ -1,0 +1,4 @@
+- [x] migration and schema
+- [x] template and issue rules
+- [x] form
+- [x] tests and e2e
