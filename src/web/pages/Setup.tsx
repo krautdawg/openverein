@@ -43,7 +43,7 @@ export function Setup() {
       <p>Lege Deinen Verein und Dein Admin-Konto an. Alles Weitere kannst Du danach in Ruhe einstellen.</p>
       <form className="form" onSubmit={submit} noValidate>
         {error && !error.problem.errors && <div className="alert alert-error" role="alert">{error.problem.title}</div>}
-        <Field label="Name des Vereins" name="clubName" placeholder="TSV Musterstadt 1890 e.V." required error={error?.fieldError('clubName')} />
+        <Field label="Name des Vereins" name="clubName" placeholder="z. B. TSV Musterstadt 1890 e.V." required error={error?.fieldError('clubName')} />
         <Field label="Dein Name" name="name" autoComplete="name" required error={error?.fieldError('name')} />
         <Field label="E-Mail" name="email" type="email" autoComplete="username" required error={error?.fieldError('email')} />
         <Field label="Passwort" name="password" type="password" autoComplete="new-password" hint="Mindestens 12 Zeichen. Ein Satz aus mehreren Wörtern ist ideal." required error={error?.fieldError('password')} />

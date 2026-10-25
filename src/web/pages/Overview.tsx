@@ -11,6 +11,7 @@ interface OverviewData {
   members: { active: number; future: number; applicants: number; resigned: number; joinedThisYear: number; leftThisYear: number } | null;
   groups: number | null;
   onlineApplications: number | null;
+  setup: { clubDetails: boolean; users: number };
 }
 
 function greeting() {
@@ -24,10 +25,10 @@ export function Overview({ me }: { me: Me }) {
   const m = data?.members;
   // Checklist items tick themselves off from real data; modules add their items as they ship.
   const steps = [
-    { label: 'Verein angelegt', done: true, to: '/einstellungen' },
+    { label: 'Anschrift und E-Mail des Vereins eintragen', done: !!data?.setup.clubDetails, to: '/einstellungen' },
     { label: 'Gruppen und Abteilungen anlegen', done: (data?.groups ?? 0) > 0, to: '/gruppen' },
     { label: 'Erste Mitglieder erfassen', done: !!m && m.active + m.future + m.resigned > 0, to: '/mitglieder?neu=1' },
-    { label: 'Weitere Zugänge für den Vorstand einrichten', done: false, to: '/einstellungen/zugaenge' },
+    { label: 'Weitere Zugänge für den Vorstand einrichten', done: (data?.setup.users ?? 0) > 1, to: '/einstellungen/zugaenge' },
   ].filter((s) => s.to !== '/einstellungen/zugaenge' || me.permissions.settings === 'write');
 
   return (
