@@ -61,7 +61,8 @@ export function FilterSheet({ me, params, onApply, onClose }: { me: Me; params: 
     for (const k of Object.keys(FILTERS) as FilterKey[]) {
       if (k === 'feld' || k === 'offen') continue;
       const val = ((f.get(k) as string | null) ?? '').trim();
-      if (val) next.set(k, val);
+      // Ages are whole numbers; anything else is dropped instead of breaking the list.
+      if (val && (!k.startsWith('alter') || /^\d{1,3}$/.test(val))) next.set(k, val);
       else next.delete(k);
     }
     if (f.get('offen') === 'on') next.set('offen', 'true');
@@ -93,42 +94,53 @@ export function FilterSheet({ me, params, onApply, onClose }: { me: Me; params: 
     }
   }
   async function remove(id: string) {
-    await api(`/member-views/${id}`, { method: 'DELETE' }).catch(() => undefined);
+    setError(undefined);
+    try {
+      await api(`/member-views/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
+    }
     await qc.invalidateQueries({ queryKey: ['member-views'] });
   }
+  // Facets only for data the user may see (the API refuses the others).
+  const may = { age: !me.restricted.includes('birth_date'), mandate: (me.permissions.sepa ?? 'none') !== 'none', open: (me.permissions.invoices ?? 'none') !== 'none', pay: (me.permissions.fees ?? 'none') !== 'none' };
 
   return (
     <Sheet title="Filter" open onClose={onClose}>
       <form className="form" noValidate onSubmit={apply}>
         {error && <div className="alert alert-error" role="alert">{error}</div>}
-        <div className="form-row">
-          <div className="field"><label htmlFor="f-pay">Zahlweise</label><select id="f-pay" name="zahlweise" className="select" style={{ width: '100%' }} defaultValue={v('zahlweise')}><option value="">alle</option><option value="direct_debit">Lastschrift</option><option value="transfer">Überweisung</option><option value="cash">Bar</option><option value="none">keine</option></select></div>
-          <div className="field"><label htmlFor="f-mandate">SEPA-Mandat</label><select id="f-mandate" name="mandat" className="select" style={{ width: '100%' }} defaultValue={v('mandat')}><option value="">egal</option><option value="active">aktiv</option><option value="none">keins</option></select></div>
-        </div>
-        <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="label">Alter (volle Jahre)</legend>
+        {(may.pay || may.mandate) && (
           <div className="form-row">
-            <div className="field"><label htmlFor="f-age-from">von</label><input id="f-age-from" name="alter_von" className="input num" inputMode="numeric" defaultValue={v('alter_von')} /></div>
-            <div className="field"><label htmlFor="f-age-to">bis</label><input id="f-age-to" name="alter_bis" className="input num" inputMode="numeric" defaultValue={v('alter_bis')} /></div>
+            {may.pay && <div className="field"><label htmlFor="f-pay">Zahlweise</label><select id="f-pay" name="zahlweise" className="select" style={{ width: '100%' }} defaultValue={v('zahlweise')}><option value="">alle</option><option value="direct_debit">Lastschrift</option><option value="transfer">Überweisung</option><option value="cash">Bar</option><option value="none">keine</option></select></div>}
+            {may.mandate && <div className="field"><label htmlFor="f-mandate">SEPA-Mandat</label><select id="f-mandate" name="mandat" className="select" style={{ width: '100%' }} defaultValue={v('mandat')}><option value="">egal</option><option value="active">aktiv</option><option value="none">keins</option></select></div>}
           </div>
-        </fieldset>
+        )}
+        {may.age && (
+          <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend className="label">Alter (volle Jahre)</legend>
+            <div className="form-row">
+              <div className="field"><label htmlFor="f-age-from">von<span className="sr-only"> (Alter)</span></label><input id="f-age-from" name="alter_von" className="input num" inputMode="numeric" pattern="\d*" defaultValue={v('alter_von')} /></div>
+              <div className="field"><label htmlFor="f-age-to">bis<span className="sr-only"> (Alter)</span></label><input id="f-age-to" name="alter_bis" className="input num" inputMode="numeric" pattern="\d*" defaultValue={v('alter_bis')} /></div>
+            </div>
+          </fieldset>
+        )}
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="label">Eintritt</legend>
           <div className="form-row">
-            <div className="field"><label htmlFor="f-join-from">von</label><input id="f-join-from" name="eintritt_von" type="date" className="input" defaultValue={v('eintritt_von')} /></div>
-            <div className="field"><label htmlFor="f-join-to">bis</label><input id="f-join-to" name="eintritt_bis" type="date" className="input" defaultValue={v('eintritt_bis')} /></div>
+            <div className="field"><label htmlFor="f-join-from">von<span className="sr-only"> (Eintritt)</span></label><input id="f-join-from" name="eintritt_von" type="date" className="input" defaultValue={v('eintritt_von')} /></div>
+            <div className="field"><label htmlFor="f-join-to">bis<span className="sr-only"> (Eintritt)</span></label><input id="f-join-to" name="eintritt_bis" type="date" className="input" defaultValue={v('eintritt_bis')} /></div>
           </div>
         </fieldset>
         <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="label">Austritt (zeigt auch Ehemalige)</legend>
           <div className="form-row">
-            <div className="field"><label htmlFor="f-exit-from">von</label><input id="f-exit-from" name="austritt_von" type="date" className="input" defaultValue={v('austritt_von')} /></div>
-            <div className="field"><label htmlFor="f-exit-to">bis</label><input id="f-exit-to" name="austritt_bis" type="date" className="input" defaultValue={v('austritt_bis')} /></div>
+            <div className="field"><label htmlFor="f-exit-from">von<span className="sr-only"> (Austritt)</span></label><input id="f-exit-from" name="austritt_von" type="date" className="input" defaultValue={v('austritt_von')} /></div>
+            <div className="field"><label htmlFor="f-exit-to">bis<span className="sr-only"> (Austritt)</span></label><input id="f-exit-to" name="austritt_bis" type="date" className="input" defaultValue={v('austritt_bis')} /></div>
           </div>
         </fieldset>
         <div className="form-row">
           <div className="field"><label htmlFor="f-hh">Haushalt</label><select id="f-hh" name="haushalt" className="select" style={{ width: '100%' }} defaultValue={v('haushalt')}><option value="">egal</option><option value="yes">im Haushalt</option><option value="no">einzeln</option></select></div>
-          <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" name="offen" defaultChecked={v('offen') === 'true'} /> Mit offenen Posten</label>
+          {may.open && <label className="check" style={{ alignSelf: 'end' }}><input type="checkbox" name="offen" defaultChecked={v('offen') === 'true'} /> Mit offenen Posten</label>}
         </div>
         {fields && fields.filter((f) => !f.archived).length > 0 && (
           <div className="form-row">

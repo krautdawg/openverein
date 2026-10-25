@@ -1,3 +1,4 @@
+import { PAYMENT_METHODS } from './fees.ts';
 import { z } from 'zod';
 
 export const MEMBER_STATUSES = ['applicant', 'future', 'active', 'resigned', 'former', 'rejected'] as const;
@@ -147,7 +148,7 @@ export const memberListQuery = z.object({
   status: z.union([memberStatus, z.array(memberStatus)]).optional(),
   groupId: z.uuid().optional(),
   includeFormer: z.stringbool().optional(),
-  paymentMethod: z.enum(['direct_debit', 'transfer', 'cash', 'none']).optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
   ageFrom: z.coerce.number().int().min(0).max(120).optional(),
   ageTo: z.coerce.number().int().min(0).max(120).optional(),
   joinFrom: date.optional(),

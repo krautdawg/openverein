@@ -37,6 +37,7 @@ export const viewRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!(await db.selectFrom('role').select('id').where('id', '=', b.sharedRoleId).where('organization_id', '=', actor.organizationId).executeTakeFirst())) throw notFound('Rolle');
     }
     const params = new URLSearchParams(b.params).toString();
+    if (params.length > 2000) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'params', message: 'Zu viele Filter für eine Ansicht.' }] });
     const r = await db.transaction().execute(async (tx) => {
       const r = await tx.insertInto('saved_view').values({ organization_id: actor.organizationId, owner_id: actor.id, name: b.name, params, shared_role_id: b.sharedRoleId ?? null }).returningAll().executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'member_view.saved', entityType: 'saved_view', entityId: r.id, diff: { name: [null, b.name], shared: [null, !!b.sharedRoleId] } });

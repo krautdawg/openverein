@@ -8,7 +8,7 @@ test('member list: filter by age, save the view, open it again', async ({ page }
   await page.goto('/mitglieder');
   await page.getByRole('button', { name: /^Filter/ }).click();
   const sheet = page.getByRole('dialog', { name: 'Filter' });
-  await sheet.getByLabel('bis', { exact: true }).first().fill('12');
+  await sheet.getByLabel('bis (Alter)').fill('12');
   await sheet.getByLabel('Name').fill('Kinder bis 12');
   await sheet.getByRole('button', { name: 'Speichern' }).click();
   await expect(page.getByRole('table', { name: 'Mitglieder' })).toContainText('Filterkind, Fiona');

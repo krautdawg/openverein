@@ -32,6 +32,14 @@ describe('member facets and saved views', () => {
     expect(names(await admin.get('/members?openBalance=true'))).toEqual(['Erwachsen']);
     expect(names(await admin.get('/members?exitFrom=2022-01-01&exitTo=2022-12-31&includeFormer=true'))).toEqual(['Weg']);
     expect(names(await admin.get('/members?mandate=none&household=no&ageTo=17'))).toEqual(['Kind']);
+    expect(names(await admin.get('/members?exitFrom=2022-01-01'))).toEqual(['Weg']); // exit ranges include former members
+    // Facets need the right to see what they filter on.
+    const group = (await admin.post('/groups', { name: 'Alle', shortCode: 'ALL' })).body.id;
+    const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Trainer:in', [group]) });
+    expect((await trainer.get('/members?openBalance=true')).status).toBe(403);
+    expect((await trainer.get('/members?mandate=active')).status).toBe(403);
+    const adviser = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Steuerberatung', null) });
+    expect((await adviser.get('/members?ageFrom=18')).status).toBe(403);
   });
 
   it('saves private views, shares them with a role only with settings rights', async () => {
