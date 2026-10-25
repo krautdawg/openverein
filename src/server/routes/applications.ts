@@ -1,11 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
+import { baseUrlFor } from '../tenant.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { ageOn, applicationDataOut, formInput, publicForm, submission, type ApplicationData } from '../../shared/applications.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
-import { config } from '../config.ts';
 import { blindIndex, decrypt, encrypt } from '../crypto.ts';
 import { emailHash } from '../mail/worker.ts';
 import type { Db } from '../db.ts';
@@ -182,12 +182,13 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     if (scopeOf(actor, 'members', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Aufnahmeanträge bearbeiten Zugänge für den ganzen Verein.', { permission: 'members:write (ganzer Verein)' });
   };
   const formDto = z.object({ id: z.uuid(), slug: z.string(), title: z.string(), intro: z.string().nullable(), groupIds: z.array(z.uuid()), feePlanIds: z.array(z.uuid()), askMandate: z.boolean(), consentText: z.string(), consentVersion: z.number(), privacyUrl: z.string().nullable(), allowedOrigins: z.array(z.string()), active: z.boolean(), url: z.string() });
-  const toFormDto = (f: Awaited<ReturnType<typeof loadForm>>) => ({ id: f.id, slug: f.slug, title: f.title, intro: f.intro, groupIds: f.group_ids, feePlanIds: f.fee_plan_ids, askMandate: f.ask_mandate, consentText: f.consent_text, consentVersion: f.consent_version, privacyUrl: f.privacy_url, allowedOrigins: f.allowed_origins, active: f.active, url: `${config.publicUrl}/aufnahme/${f.slug}` });
+  const toFormDto = (f: Awaited<ReturnType<typeof loadForm>>, base: string) => ({ id: f.id, slug: f.slug, title: f.title, intro: f.intro, groupIds: f.group_ids, feePlanIds: f.fee_plan_ids, askMandate: f.ask_mandate, consentText: f.consent_text, consentVersion: f.consent_version, privacyUrl: f.privacy_url, allowedOrigins: f.allowed_origins, active: f.active, url: `${base}/aufnahme/${f.slug}` });
 
   app.get('/application-forms', { schema: { tags, summary: 'Aufnahmeformulare', response: { 200: z.array(formDto) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'read');
-    return (await db.selectFrom('application_form').selectAll().where('organization_id', '=', actor.organizationId).orderBy('created_at').execute()).map(toFormDto);
+    const base = await baseUrlFor(db, actor.organizationId);
+    return (await db.selectFrom('application_form').selectAll().where('organization_id', '=', actor.organizationId).orderBy('created_at').execute()).map((f) => toFormDto(f, base));
   });
 
   app.post('/application-forms', { schema: { tags, summary: 'Aufnahmeformular anlegen', body: formInput, response: { 201: formDto } } }, async (req, reply) => {
@@ -200,7 +201,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
       return f;
     });
     reply.status(201);
-    return toFormDto(f);
+    return toFormDto(f, await baseUrlFor(db, actor.organizationId));
   });
 
   app.put('/application-forms/:id', { schema: { tags, summary: 'Aufnahmeformular ändern (ein neuer Einwilligungstext bekommt eine neue Version)', params: idParam, body: formInput, response: { 200: formDto } } }, async (req) => {
@@ -219,7 +220,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
       await audit(tx, actor.organizationId, actor, { action: 'application_form.updated', entityType: 'application_form', entityId: f.id, diff: { consentVersion: [old.consent_version, f.consent_version], active: [old.active, f.active] } });
       return f;
     });
-    return toFormDto(f);
+    return toFormDto(f, await baseUrlFor(db, actor.organizationId));
   });
 
   type AppRow = { id: string; form_id: string; payload: unknown; consent: unknown; status: 'new' | 'accepted' | 'rejected' | 'spam'; member_id: string | null; reason: string | null; created_at: Date; application_date: string; iban_last4: string | null };

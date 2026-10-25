@@ -50,3 +50,23 @@ Note it in the club's records: the reset bypasses the audit log.
 Every anonymisation is written to the database (`erasure_log`) and appended to `FILES_DIR/erasure-log.jsonl`. At start-up the server mirrors missing database entries into the file and then anonymises again every person from the file that a restored database brought back, before it accepts requests.
 
 This only works if the erasure file survives the restore. `ovctl restore` takes care of it: it keeps the current `erasure-log.jsonl` and merges it into the restored files. If you restore by hand, keep the current `erasure-log.jsonl` (do not roll the files volume back to the same date), or copy it back before starting the server.
+
+## Managed hosting: several clubs on one installation
+
+For clubs without a technical volunteer, one operator can host several clubs on one OpenVerein installation. Every table already carries the club (`organization_id`); each club is reached under its own host name, for example `tsv-musterstadt.example-hosting.de`.
+
+1. Set `MULTI_TENANT=true` and an `OPERATOR_TOKEN` of at least 32 random characters (from your secret store). `DEMO_MODE` cannot be combined with it. The open setup page is closed then.
+2. Point each club's host name at the server. With Caddy, use a wildcard certificate or on-demand TLS restricted to the host names you created (Caddy's `ask` endpoint), so nobody can make the server request certificates for arbitrary names.
+3. Create a club with its first admin:
+
+   ```sh
+   curl -X POST https://<any-host>/api/v1/operator/tenants \
+     -H "X-Operator-Token: $OPERATOR_TOKEN" -H 'content-type: application/json' \
+     -d '{"clubName":"TSV Musterstadt 1890 e.V.","hostname":"tsv-musterstadt.example-hosting.de","adminName":"Erika Mustermann","adminEmail":"vorstand@tsv-musterstadt.de"}'
+   ```
+
+   The admin gets an invitation mail with a link on the club's host name (the answer also contains the link, valid for seven days). `GET /api/v1/operator/tenants` lists the clubs; `PATCH /api/v1/operator/tenants/<id>` changes a host name or name.
+
+What a club sees and does stays inside its club: members, mails, files, the portal (the portal signs members in for the club whose host name they use) and the full export under Einstellungen → Gesamtexport. One e-mail address can be an admin access in one club only. Mail goes out per club, each with its own rate and pause switch.
+
+Not yet included: deleting or moving out a single club (until then: full export, then delete the club's data by hand), per-club backups (`ovctl backup` backs up the whole installation), and the data-processing agreement template (Art. 28 GDPR) the operator needs with each club.

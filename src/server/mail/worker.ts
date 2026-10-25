@@ -1,4 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
+import { baseUrlOf } from '../tenant.ts';
+import { config } from '../config.ts';
 import { sql } from 'kysely';
 import { customPlaceholders, fill, textToHtml, type PlaceholderValues } from '../../shared/mail.ts';
 import { blindIndex, decryptBytes } from '../crypto.ts';
@@ -35,9 +37,14 @@ const isSetupError = (err: unknown) => {
  * crashed and is retried. Delivery is at-least-once: a crash between SMTP accept and the status update resends.
  */
 export async function processQueue(db: Db, opts: { baseUrl?: string; limit?: number } = {}) {
-  // shortcut: one club per install, so one rate limit and one pause switch; per-tenant limits come with multi-tenant hosting.
-  const org = await db.selectFrom('organization').select(['id', 'mail_per_minute', 'mail_paused_reason']).executeTakeFirst();
-  if (!org || org.mail_paused_reason) return 0;
+  // Each club with its own rate and pause switch (several clubs under managed hosting).
+  const orgs = await db.selectFrom('organization').select(['id', 'mail_per_minute', 'hostname']).where('mail_paused_reason', 'is', null).orderBy('created_at').execute();
+  let sent = 0;
+  for (const org of orgs) sent += await processClub(db, org, { ...opts, baseUrl: config.multiTenant ? baseUrlOf(org) : opts.baseUrl });
+  return sent;
+}
+
+async function processClub(db: Db, org: { id: string; mail_per_minute: number }, opts: { baseUrl?: string; limit?: number }) {
   const claimed = await db.transaction().execute(async (tx) => {
     // The budget is counted under the club's row lock, including claims still in flight, so several instances
     // together stay within the per-minute rate (Codex review of #7).
@@ -51,8 +58,9 @@ export async function processQueue(db: Db, opts: { baseUrl?: string; limit?: num
     await tx.updateTable('delivery').set({ status: 'failed', error: 'Versand abgebrochen (zu viele Versuche).' }).where('status', '=', 'sending').where('attempts', '>=', MAX_ATTEMPTS).where('claimed_at', '<', sql<Date>`now() - interval '10 minutes'`).execute();
     const rows = await sql<{ id: string }>`
       select d.id from delivery d
-      where (d.status = 'queued' and d.next_attempt_at <= now())
-         or (d.status = 'sending' and d.claimed_at < now() - interval '10 minutes')
+      where d.organization_id = ${org.id}
+        and ((d.status = 'queued' and d.next_attempt_at <= now())
+         or (d.status = 'sending' and d.claimed_at < now() - interval '10 minutes'))
       order by d.next_attempt_at
       limit ${budget}
       for update skip locked`.execute(tx);

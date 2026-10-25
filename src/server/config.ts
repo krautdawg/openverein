@@ -23,7 +23,13 @@ export const config = {
   // Webhooks to private addresses or plain http: only for development and tests (SSRF guard).
   webhooksAllowPrivate: env.WEBHOOKS_ALLOW_PRIVATE === 'true',
   webDist: env.WEB_DIST ?? new URL('../../dist/web', import.meta.url).pathname,
+  /** Managed hosting: several clubs, each under its own host name; clubs are created through the operator API. */
+  multiTenant: env.MULTI_TENANT === 'true',
+  /** Secret for the operator API (header X-Operator-Token), at least 32 characters; only used with MULTI_TENANT. */
+  operatorToken: env.OPERATOR_TOKEN ?? '',
 };
+if (config.multiTenant && config.operatorToken.length < 32) throw new Error('MULTI_TENANT=true braucht OPERATOR_TOKEN mit mindestens 32 Zeichen.');
+if (config.multiTenant && config.demoMode) throw new Error('DEMO_MODE und MULTI_TENANT schließen sich aus.');
 
 /** Whole hours between demo resets, 0 to switch them off; anything else stops the start (a typo must not mean "never"). */
 export function demoResetHours(v: string | undefined) {
