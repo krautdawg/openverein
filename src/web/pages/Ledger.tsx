@@ -279,6 +279,8 @@ export function EuerReport({ me }: { me: Me }) {
   return (
     <LedgerLayout me={me}>
       <RangePicker from={from} to={to} onChange={(f, t) => setParams({ von: f, bis: t })} />
+      {/* The treasurer's report covers a calendar year: the one the chosen range starts in. */}
+      <p style={{ marginBottom: 'var(--s-4)' }}><a className="btn" href={`/api/v1/ledger/reports/treasurer.pdf?year=${from.slice(0, 4)}`} download>Kassenbericht {from.slice(0, 4)} (PDF)</a></p>
       {data && (
         <>
           {data.warnings.length > 0 && (

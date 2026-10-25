@@ -2,13 +2,14 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { account, accountInput, accountPatch, bookingInput, costCenter, euerReport, journalEntry, ledgerSettings, SPHERES, taxRate, wirtschaftLimitCents } from '../../shared/ledger.ts';
+import { treasurerReportPdf } from '../ledger/report-pdf.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { assertCashNotNegative, bookingLines, lockJournal, postEntry, reverseEntry, syncAllocations, unpostedPayments } from '../ledger/service.ts';
 import { orgToday } from '../members/query.ts';
-import { requireClubWide, requireStepUp } from '../policy.ts';
+import { requireClubWide, requireStepUp, type Actor } from '../policy.ts';
 
 const tags = ['ledger'];
 const idParam = z.object({ id: z.uuid() });
@@ -308,7 +309,10 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'read');
     await syncAllocations(db, actor.organizationId);
-    const { from, to } = req.query;
+    return euer(actor, req.query.from, req.query.to);
+  });
+
+  async function euer(actor: Actor, from: string, to: string) {
     const rows = await sql<{ account_id: string; number: string; name: string; kind: 'income' | 'expense' | 'tax'; sphere: (typeof SPHERES)[number]; credit: number; debit: number }>`
       select a.id as account_id, a.number, a.name, a.kind, l.sphere, sum(l.credit_cents)::bigint as credit, sum(l.debit_cents)::bigint as debit
       from journal_line l join journal_entry e on e.id = l.entry_id join ledger_account a on a.id = l.account_id
@@ -336,13 +340,16 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
       totals: { incomeCents, expenseCents, resultCents: incomeCents - expenseCents },
       warnings: await warnings(actor.organizationId, from, to),
     };
-  });
+  }
 
   app.get('/ledger/reports/balances', { schema: { tags, summary: 'Summen und Salden je Konto (Anfangsbestand, Soll, Haben, Endbestand)', querystring: range, response: { 200: z.array(z.object({ accountId: z.uuid(), number: z.string(), name: z.string(), kind: z.string(), openingCents: z.number(), debitCents: z.number(), creditCents: z.number(), closingCents: z.number() })) } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'read');
     await syncAllocations(db, actor.organizationId);
-    const { from, to } = req.query;
+    return balances(actor, req.query.from, req.query.to);
+  });
+
+  async function balances(actor: Actor, from: string, to: string) {
     const rows = await sql<{ id: string; number: string; name: string; kind: string; opening: number; debit: number; credit: number }>`
       select a.id, a.number, a.name, a.kind,
         coalesce(sum(case when e.entry_date < ${from}::date then l.debit_cents - l.credit_cents end), 0)::bigint as opening,
@@ -352,5 +359,17 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
       where a.organization_id = ${actor.organizationId}
       group by a.id order by a.number`.execute(db);
     return rows.rows.filter((r) => Number(r.opening) || Number(r.debit) || Number(r.credit)).map((r) => ({ accountId: r.id, number: r.number, name: r.name, kind: r.kind, openingCents: Number(r.opening), debitCents: Number(r.debit), creditCents: Number(r.credit), closingCents: Number(r.opening) + Number(r.debit) - Number(r.credit) }));
+  }
+
+  app.get('/ledger/reports/treasurer.pdf', { schema: { tags, summary: 'Kassenbericht für die Mitgliederversammlung: Bestände je Geldkonto, Einnahmen und Ausgaben nach Sphären und Konten', querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100) }) } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'read');
+    await syncAllocations(db, actor.organizationId);
+    const from = `${req.query.year}-01-01`;
+    const to = `${req.query.year}-12-31`;
+    const org = await db.selectFrom('organization').select(['name', 'is_demo']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+    const pdf = await treasurerReportPdf({ club: org.name, year: req.query.year, euer: await euer(actor, from, to), money: (await balances(actor, from, to)).filter((b) => b.kind === 'money') });
+    await audit(db, actor.organizationId, actor, { action: 'ledger.report_treasurer', entityType: 'organization', entityId: actor.organizationId, diff: { year: [null, req.query.year] } });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="Kassenbericht-${req.query.year}.pdf"`).header('cache-control', 'private, no-store').send(pdf);
   });
 };
