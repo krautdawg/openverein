@@ -1,0 +1,705 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T00:00:00Z",
+  "title": "Design System: OpenVerein",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Pale Birch Floor",
+        "canonical": "#f3f4f1",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#242422",
+          "#3f403e",
+          "#5d5e5b",
+          "#7d7e7b",
+          "#9e9f9c",
+          "#c3c4c2",
+          "#eeefec"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Sheet White",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ]
+      },
+      "surface-sunk": {
+        "role": "neutral",
+        "displayName": "Worn Floor",
+        "canonical": "#eceee9",
+        "tonalRamp": [
+          "#0a0c09",
+          "#232521",
+          "#3f403c",
+          "#5d5e5a",
+          "#7c7e79",
+          "#9d9f9a",
+          "#c3c5c0",
+          "#edefea"
+        ]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "Hallenblau",
+        "canonical": "#12355b",
+        "tonalRamp": [
+          "#00082b",
+          "#012448",
+          "#1e4168",
+          "#3c6089",
+          "#5b80ab",
+          "#7ba2cf",
+          "#a0c8f7",
+          "#caf2ff"
+        ]
+      },
+      "rail-raised": {
+        "role": "neutral",
+        "displayName": "Rail Lift",
+        "canonical": "#1b4471",
+        "tonalRamp": [
+          "#00062f",
+          "#00234d",
+          "#18416d",
+          "#36608f",
+          "#5680b1",
+          "#76a2d5",
+          "#9bc8fd",
+          "#c4f3ff"
+        ]
+      },
+      "rail-ink": {
+        "role": "neutral",
+        "displayName": "Rail Chalk",
+        "canonical": "#e9eff6",
+        "tonalRamp": [
+          "#080c10",
+          "#20242a",
+          "#3b4046",
+          "#595e64",
+          "#787e84",
+          "#999fa5",
+          "#bfc5cb",
+          "#e9eff6"
+        ]
+      },
+      "rail-ink-muted": {
+        "role": "neutral",
+        "displayName": "Rail Haze",
+        "canonical": "#a9bdd2",
+        "tonalRamp": [
+          "#010c1a",
+          "#152535",
+          "#314153",
+          "#4e6072",
+          "#6d7f93",
+          "#8da1b5",
+          "#b2c7dc",
+          "#dcf1ff"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Hall Ink",
+        "canonical": "#14202e",
+        "tonalRamp": [
+          "#030c18",
+          "#192533",
+          "#344151",
+          "#515f70",
+          "#707f90",
+          "#91a0b2",
+          "#b6c6d9",
+          "#e0f0ff"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Ink 2",
+        "canonical": "#47525f",
+        "tonalRamp": [
+          "#040c16",
+          "#1b2530",
+          "#36414d",
+          "#545f6c",
+          "#737f8d",
+          "#93a0ae",
+          "#b9c6d5",
+          "#e3f0ff"
+        ]
+      },
+      "ink-3": {
+        "role": "neutral",
+        "displayName": "Ink 3",
+        "canonical": "#5f6874",
+        "tonalRamp": [
+          "#060b14",
+          "#1d252f",
+          "#38404b",
+          "#565e6a",
+          "#757e8b",
+          "#969fac",
+          "#bbc5d3",
+          "#e5f0fe"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d8dbd4",
+        "tonalRamp": [
+          "#0a0c08",
+          "#232520",
+          "#3e413b",
+          "#5c5f59",
+          "#7c7e78",
+          "#9da099",
+          "#c2c5be",
+          "#edf0e9"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Control Edge",
+        "canonical": "#858b83",
+        "tonalRamp": [
+          "#080d07",
+          "#21261f",
+          "#3c423b",
+          "#5a6058",
+          "#797f77",
+          "#9aa198",
+          "#c0c6be",
+          "#eaf1e8"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Handball-Line Orange-Red",
+        "canonical": "#bf3a13",
+        "tonalRamp": [
+          "#340000",
+          "#580000",
+          "#7c0800",
+          "#a03315",
+          "#c65639",
+          "#ec785a",
+          "#ff9e7f",
+          "#ffc9a8"
+        ]
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Accent Deep",
+        "canonical": "#a5310f",
+        "tonalRamp": [
+          "#340000",
+          "#580000",
+          "#7c0800",
+          "#a03315",
+          "#c65639",
+          "#ec785a",
+          "#ff9e7f",
+          "#ffc9a8"
+        ]
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Accent Ink",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ]
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Accent Wash",
+        "canonical": "#fbe9e3",
+        "tonalRamp": [
+          "#130805",
+          "#2d211c",
+          "#4a3c37",
+          "#695a55",
+          "#897974",
+          "#ab9a95",
+          "#d1c0ba",
+          "#fceae4"
+        ]
+      },
+      "ok": {
+        "role": "state",
+        "displayName": "Ok",
+        "canonical": "#2b7a4b",
+        "tonalRamp": [
+          "#001500",
+          "#003106",
+          "#004f23",
+          "#1d6f40",
+          "#43905f",
+          "#65b280",
+          "#8bd9a4",
+          "#b5ffce"
+        ]
+      },
+      "ok-soft": {
+        "role": "state",
+        "displayName": "Ok Soft",
+        "canonical": "#e3f1e8",
+        "tonalRamp": [
+          "#050e08",
+          "#1c2720",
+          "#38433c",
+          "#556159",
+          "#748179",
+          "#95a29a",
+          "#bbc8bf",
+          "#e5f3ea"
+        ]
+      },
+      "warn": {
+        "role": "state",
+        "displayName": "Warn",
+        "canonical": "#8f5a00",
+        "tonalRamp": [
+          "#240000",
+          "#431300",
+          "#633100",
+          "#845000",
+          "#a77026",
+          "#ca924b",
+          "#f2b771",
+          "#ffe29a"
+        ]
+      },
+      "warn-soft": {
+        "role": "state",
+        "displayName": "Warn Soft",
+        "canonical": "#fbf0d9",
+        "tonalRamp": [
+          "#110a00",
+          "#2b2311",
+          "#483f2c",
+          "#665d49",
+          "#867c68",
+          "#a89d88",
+          "#cec3ad",
+          "#f8edd6"
+        ]
+      },
+      "danger": {
+        "role": "state",
+        "displayName": "Danger",
+        "canonical": "#b42318",
+        "tonalRamp": [
+          "#340000",
+          "#580000",
+          "#7c0300",
+          "#a13125",
+          "#c75445",
+          "#ed7665",
+          "#ff9c8a",
+          "#ffc7b3"
+        ]
+      },
+      "danger-soft": {
+        "role": "state",
+        "displayName": "Danger Soft",
+        "canonical": "#fbe7e5",
+        "tonalRamp": [
+          "#130807",
+          "#2e201f",
+          "#4b3b3a",
+          "#6a5957",
+          "#8a7877",
+          "#ac9998",
+          "#d2bfbd",
+          "#fde9e7"
+        ]
+      },
+      "demo": {
+        "role": "state",
+        "displayName": "Hall Yellow",
+        "canonical": "#f2c230",
+        "tonalRamp": [
+          "#220000",
+          "#401700",
+          "#5f3600",
+          "#7f5500",
+          "#a17600",
+          "#c49800",
+          "#ebbe3a",
+          "#ffe96c"
+        ]
+      },
+      "court-blau": {
+        "role": "court",
+        "displayName": "Court Blau",
+        "canonical": "#1f5fa8",
+        "tonalRamp": [
+          "#000041",
+          "#001d61",
+          "#003d83",
+          "#1d5da6",
+          "#407fca",
+          "#61a1ef",
+          "#86c8ff",
+          "#b0f3ff"
+        ]
+      },
+      "court-gruen": {
+        "role": "court",
+        "displayName": "Court Gruen",
+        "canonical": "#2b7a4b",
+        "tonalRamp": [
+          "#001500",
+          "#003106",
+          "#004f23",
+          "#1d6f40",
+          "#43905f",
+          "#65b280",
+          "#8bd9a4",
+          "#b5ffce"
+        ]
+      },
+      "court-rot": {
+        "role": "court",
+        "displayName": "Court Rot",
+        "canonical": "#c43b3b",
+        "tonalRamp": [
+          "#340000",
+          "#580000",
+          "#7c0010",
+          "#a12f2f",
+          "#c7524e",
+          "#ed756e",
+          "#ff9b92",
+          "#ffc5bb"
+        ]
+      },
+      "court-gelb": {
+        "role": "court",
+        "displayName": "Court Gelb",
+        "canonical": "#c99a06",
+        "tonalRamp": [
+          "#230000",
+          "#411600",
+          "#603500",
+          "#815400",
+          "#a37500",
+          "#c69700",
+          "#edbd44",
+          "#ffe873"
+        ]
+      },
+      "court-orange": {
+        "role": "court",
+        "displayName": "Court Orange",
+        "canonical": "#d9661a",
+        "tonalRamp": [
+          "#320000",
+          "#550000",
+          "#791400",
+          "#9d3a00",
+          "#c25c19",
+          "#e87e42",
+          "#ffa469",
+          "#ffce93"
+        ]
+      },
+      "court-tuerkis": {
+        "role": "court",
+        "displayName": "Court Tuerkis",
+        "canonical": "#13867f",
+        "tonalRamp": [
+          "#001513",
+          "#00312d",
+          "#004e49",
+          "#006e68",
+          "#238f88",
+          "#4eb1a9",
+          "#76d8cf",
+          "#a1fffa"
+        ]
+      },
+      "court-grau": {
+        "role": "court",
+        "displayName": "Court Grau",
+        "canonical": "#6b7480",
+        "tonalRamp": [
+          "#060b14",
+          "#1d252e",
+          "#38404b",
+          "#565e6a",
+          "#757e8a",
+          "#969fac",
+          "#bbc5d2",
+          "#e5f0fd"
+        ]
+      },
+      "court-schwarz": {
+        "role": "court",
+        "displayName": "Court Schwarz",
+        "canonical": "#1d232b",
+        "tonalRamp": [
+          "#070b12",
+          "#1e252d",
+          "#3a4049",
+          "#575e68",
+          "#777e88",
+          "#979fa9",
+          "#bdc5d0",
+          "#e7effa"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page h1, portal and form h1."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section h2, sheet titles."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "h3, sheet section heads, rail club name."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default text and inputs, 15px floor."
+      },
+      "body-dense": {
+        "displayName": "Body dense",
+        "purpose": "Tables, buttons, labels."
+      },
+      "label": {
+        "displayName": "Label / meta",
+        "purpose": "Table headers, hints, calendar entries."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "Overview counts, tabular."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-sheet",
+        "value": "-12px 0 32px rgb(20 32 46 / 0.12)",
+        "purpose": "Right side sheet only."
+      },
+      {
+        "name": "shadow-pop",
+        "value": "0 12px 32px rgb(20 32 46 / 0.18)",
+        "purpose": "Command palette and open mobile rail drawer."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "All transitions."
+      },
+      {
+        "name": "t-fast",
+        "value": "150ms",
+        "purpose": "Hover, border, row-action reveal."
+      },
+      {
+        "name": "t-med",
+        "value": "220ms",
+        "purpose": "Sheet slide-in (24px + fade), mobile rail drawer."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0ms",
+        "purpose": "All transitions and animations zeroed under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "form-stack",
+        "value": "560px"
+      },
+      {
+        "name": "portal-tabs-top",
+        "value": "720px (min-width)"
+      },
+      {
+        "name": "compact-table",
+        "value": "760px"
+      },
+      {
+        "name": "rail-drawer",
+        "value": "860px"
+      },
+      {
+        "name": "compose-stack",
+        "value": "900px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action per region: page head, sheet foot, inline form.",
+      "html": "<button class=\"ds-btn ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M5 12h14M12 5v14\"/></svg>Mitglied anlegen</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 16px;border-radius:4px;border:1px solid #858b83;background:#fff;color:#14202e;font:600 14px 'Source Sans 3 Variable','Source Sans 3',system-ui,sans-serif;cursor:pointer;transition:background 150ms cubic-bezier(0.2,0.8,0.2,1),border-color 150ms cubic-bezier(0.2,0.8,0.2,1)}.ds-btn:focus-visible{outline:2px solid #bf3a13;outline-offset:2px}.ds-btn-primary{background:#bf3a13;border-color:#bf3a13;color:#fff}.ds-btn-primary:hover{background:#a5310f;border-color:#a5310f}"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Secondary actions such as CSV export.",
+      "html": "<button class=\"ds-btn2\">CSV</button>",
+      "css": ".ds-btn2{height:36px;padding:0 16px;border-radius:4px;border:1px solid #858b83;background:#fff;color:#14202e;font:600 14px 'Source Sans 3 Variable',system-ui,sans-serif;cursor:pointer;transition:background 150ms}.ds-btn2:hover{background:#eceee9}.ds-btn2:focus-visible{outline:2px solid #bf3a13;outline-offset:2px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Cancel and quiet row actions.",
+      "html": "<button class=\"ds-btn-ghost\">Abbrechen</button>",
+      "css": ".ds-btn-ghost{height:36px;padding:0 16px;border-radius:4px;border:1px solid transparent;background:transparent;color:#14202e;font:600 14px 'Source Sans 3 Variable',system-ui,sans-serif;cursor:pointer}.ds-btn-ghost:hover{background:#eceee9}.ds-btn-ghost:focus-visible{outline:2px solid #bf3a13;outline-offset:2px}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Fields, search and inline edit.",
+      "html": "<label class=\"ds-field\"><span>Nachname</span><input class=\"ds-input\" placeholder=\"Becker\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:4px;font:600 14px 'Source Sans 3 Variable',system-ui,sans-serif;color:#14202e}.ds-input{height:36px;padding:0 12px;border:1px solid #858b83;border-radius:4px;background:#fff;color:#14202e;font:400 15px 'Source Sans 3 Variable',system-ui,sans-serif;transition:border-color 150ms}.ds-input::placeholder{color:#5f6874}.ds-input:hover{border-color:#5f6874}.ds-input:focus-visible{outline:2px solid #bf3a13;outline-offset:0;border-color:#bf3a13}"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "Hallenblau side rail; current link carries a 24px accent court line.",
+      "html": "<nav class=\"ds-rail\"><a href=\"#\">Übersicht</a><a href=\"#\" aria-current=\"page\">Mitglieder</a><a href=\"#\">Gruppen</a></nav>",
+      "css": ".ds-rail{display:flex;flex-direction:column;gap:2px;width:208px;padding:12px;background:#12355b;font:400 15px 'Source Sans 3 Variable',system-ui,sans-serif}.ds-rail a{position:relative;display:flex;align-items:center;min-height:36px;padding:0 12px;border-radius:4px;color:#a9bdd2;text-decoration:none;transition:background 150ms,color 150ms}.ds-rail a:hover{color:#e9eff6;background:rgb(255 255 255/.06)}.ds-rail a:focus-visible{outline:2px solid #bf3a13;outline-offset:2px}.ds-rail a[aria-current=page]{color:#fff;background:#1b4471}.ds-rail a[aria-current=page]::after{content:'';position:absolute;left:12px;right:12px;bottom:4px;height:2px;background:linear-gradient(to right,#bf3a13 24px,transparent 24px)}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "chip",
+      "refersTo": "segmented-pressed",
+      "description": "List view switch; pressed segment in Hall Ink.",
+      "html": "<div class=\"ds-seg\"><button aria-pressed=\"true\">Aktuell</button><button aria-pressed=\"false\">Aktiv</button><button aria-pressed=\"false\">Ehemalige</button></div>",
+      "css": ".ds-seg{display:inline-flex;border:1px solid #858b83;border-radius:4px;background:#fff;padding:2px}.ds-seg button{border:0;background:transparent;font:400 14px 'Source Sans 3 Variable',system-ui,sans-serif;padding:0 12px;height:30px;border-radius:3px;color:#47525f;cursor:pointer}.ds-seg button[aria-pressed=true]{background:#14202e;color:#fff}.ds-seg button:hover:not([aria-pressed=true]){background:#eceee9}.ds-seg button:focus-visible{outline:2px solid #bf3a13;outline-offset:2px}"
+    },
+    {
+      "name": "Group Badge (court line)",
+      "kind": "custom",
+      "refersTo": "court-gruen",
+      "description": "Signature: a 14x2px stroke in the group colour before the name.",
+      "html": "<span class=\"ds-court\" style=\"--court:#2b7a4b\">Fußball</span> <span class=\"ds-court\" style=\"--court:#c99a06\">Jugend</span>",
+      "css": ".ds-court{display:inline-flex;align-items:center;gap:6px;font:400 14px 'Source Sans 3 Variable',system-ui,sans-serif;color:#14202e;margin-right:12px}.ds-court::before{content:'';width:14px;height:2px;border-radius:1px;background:var(--court,#6b7480)}"
+    },
+    {
+      "name": "Membership Court Lines",
+      "kind": "custom",
+      "refersTo": "court-blau",
+      "description": "Signature: group history as coloured lines on one time axis; open spells end in an arrowhead.",
+      "html": "<div class=\"ds-cl\"><div class=\"ds-cl-row\" style=\"--court:#2b7a4b\"><div class=\"ds-cl-label\"><span>Fußball</span><span>01.03.2018 – heute</span></div><div class=\"ds-cl-track\"><div class=\"ds-cl-line ds-open\" style=\"left:0;width:100%\"></div></div></div><div class=\"ds-cl-row\" style=\"--court:#1f5fa8\"><div class=\"ds-cl-label\"><span>Turnen</span><span>01.09.2019 – 31.12.2022</span></div><div class=\"ds-cl-track\"><div class=\"ds-cl-line\" style=\"left:20%;width:45%\"></div></div></div></div>",
+      "css": ".ds-cl{width:420px;font:400 14px 'Source Sans 3 Variable',system-ui,sans-serif;color:#14202e}.ds-cl-row{display:grid;gap:2px;padding:6px 0}.ds-cl-label{display:flex;justify-content:space-between}.ds-cl-label span+span{color:#5f6874;font-variant-numeric:tabular-nums}.ds-cl-track{position:relative;height:3px;background:repeating-linear-gradient(to right,#d8dbd4 0 4px,transparent 4px 8px)}.ds-cl-line{position:absolute;top:0;height:3px;border-radius:2px;background:var(--court)}.ds-open::after{content:'';position:absolute;right:-6px;top:-3px;width:7px;height:9px;background:var(--court);clip-path:polygon(0 0,100% 50%,0 100%)}"
+    },
+    {
+      "name": "Dense Table Row",
+      "kind": "card",
+      "refersTo": "table-row",
+      "description": "44px rows, hairlines, hover wash, row actions on hover/focus.",
+      "html": "<table class=\"ds-table\"><thead><tr><th>Name</th><th class=\"n\">Nr.</th><th></th></tr></thead><tbody><tr tabindex=\"0\"><td><b>Becker, Jonas</b></td><td class=\"n\">0116</td><td><button class=\"ds-ra\">Bearbeiten</button></td></tr><tr tabindex=\"0\" aria-selected=\"true\"><td><b>Braun, Ole</b></td><td class=\"n\">0119</td><td><button class=\"ds-ra\">Bearbeiten</button></td></tr></tbody></table>",
+      "css": ".ds-table{width:420px;border-collapse:collapse;background:#fff;border:1px solid #d8dbd4;font:400 14px 'Source Sans 3 Variable',system-ui,sans-serif;color:#14202e}.ds-table th{text-align:left;font-size:13px;font-weight:600;color:#47525f;padding:8px 12px;border-bottom:1px solid #d8dbd4}.ds-table td{height:44px;padding:0 12px;border-bottom:1px solid #d8dbd4}.ds-table .n{text-align:right;font-variant-numeric:tabular-nums}.ds-table tbody tr{transition:background 150ms}.ds-table tbody tr:hover{background:#eceee9}.ds-table tbody tr[aria-selected=true]{background:#fbe9e3}.ds-table tbody tr:focus-visible{outline:2px solid #bf3a13;outline-offset:-2px}.ds-ra{opacity:0;border:0;background:none;color:#47525f;text-decoration:underline;font:inherit;cursor:pointer;transition:opacity 150ms}.ds-table tr:hover .ds-ra,.ds-table tr:focus-within .ds-ra{opacity:1}"
+    },
+    {
+      "name": "Portal Tab Bar",
+      "kind": "nav",
+      "refersTo": "portal-tabs",
+      "description": "Phone-first bottom tabs; current tab gets a 3px accent bar on top.",
+      "html": "<nav class=\"ds-tabs\"><a href=\"#\" aria-current=\"page\">Profil</a><a href=\"#\">Rechnungen</a><a href=\"#\">Dokumente</a></nav>",
+      "css": ".ds-tabs{display:grid;grid-template-columns:repeat(3,1fr);width:360px;background:#fff;border-top:1px solid #d8dbd4;font:400 13px 'Source Sans 3 Variable',system-ui,sans-serif}.ds-tabs a{position:relative;display:flex;align-items:center;justify-content:center;min-height:56px;color:#47525f;text-decoration:none}.ds-tabs a:focus-visible{outline:2px solid #bf3a13;outline-offset:-2px}.ds-tabs a[aria-current=page]{color:#14202e;font-weight:600}.ds-tabs a[aria-current=page]::before{content:'';position:absolute;top:-1px;left:30%;right:30%;height:3px;background:#bf3a13}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Sports Hall Floor",
+    "overview": "The admin app is a calm pale floor (birch ground) with a deep Hallenblau rail along the left. Structure comes from lines: 1px hairlines separate rows, sections and sheet parts, and each group owns one court-line colour that appears as a short 2px stroke, never as a filled box. One signal orange-red, taken from the handball line, marks primary actions, focus and the current selection. Nothing else on the screen is that colour.\n\nThe density is set for the work: tables with 44px rows at 14px, the page title large at top left with a one-line summary under it, and the table directly beneath. Detail opens in a side sheet from the right, so the list stays put. Editing happens in place. Cmd/Ctrl+K opens a command palette from anywhere. Copy is German and uses \"Du\".\n\nRejected: a coloured header bar over grey cards and modal stacks (the easyVerein anti-reference), plus the banned generic tells listed under Don'ts.",
+    "keyCharacteristics": [
+      "Pale ground, white surfaces only where data lives (tables, sheets, inputs, portal cards).",
+      "Lines carry structure; there are no card shadows.",
+      "Group colour always appears as a short court line next to its name.",
+      "One accent, used only for action, focus and current position.",
+      "Display face for headings and headline figures, text face for everything else.",
+      "Keyboard-first: palette, inline edit, row actions on hover and focus."
+    ],
+    "rules": [
+      {
+        "name": "The One Signal Rule",
+        "body": "The accent marks action, focus and \"you are here\". If it is not clickable, focused, selected or current, it is not accent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Line-Not-Fill Rule",
+        "body": "Court colours are drawn as lines (2-3px strokes, a 2px inset underline, a 2px left bar), always next to a text label. Never a filled chip or tinted card.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Column Rule",
+        "body": "Body text keeps proportional figures (`'tnum' 0` on body). Numbers that align or compare (money and number columns, dates in timelines and court-line labels, headline figures) switch on tabular numerals and money columns align right.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Caps Rule",
+        "body": "No uppercase labels and no tracked-out small caps anywhere; hierarchy comes from size, weight and colour.",
+        "section": "typography"
+      },
+      {
+        "name": "The Floor-Is-Flat Rule",
+        "body": "Tables, cards, banners and buttons never carry a shadow. If it sits on the floor, it is outlined with a 1px hairline.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do take every colour, size, space and duration from `tokens.css`; new group colours get a `--court-*` token.",
+      "Do keep the accent for primary action, focus, selection and current position.",
+      "Do draw group and calendar colour as a short line next to its name.",
+      "Do open detail and edit flows in the right side sheet or inline; keep the list visible.",
+      "Do right-align money and number columns with tabular numerals.",
+      "Do show row actions on hover and focus-within, never hide them from keyboard users.",
+      "Do keep text at 15px for body and 13px as the floor for meta; keep the 2px accent focus outline on every interactive element.",
+      "Do give controls 44px on coarse pointers and in the portal.",
+      "Do write German UI copy with \"Du\"; label demo data with the yellow demo banner.",
+      "Do zero all motion under `prefers-reduced-motion` (already global)."
+    ],
+    "donts": [
+      "Don't add a coloured header bar over grey cards, or stack modals (the easyVerein anti-reference).",
+      "Don't use a centred hero with a gradient blob, three identical cards, glassmorphism, purple gradients, or rounded-2xl with shadow-lg.",
+      "Don't put shadows on tables, cards, buttons or banners.",
+      "Don't exceed 4px radius on controls and containers.",
+      "Don't fill chips or cards with a group colour.",
+      "Don't use uppercase eyebrow or kicker labels above headings.",
+      "Don't use emoji or text glyphs as icons; icons are Lucide SVGs at 14-18px.",
+      "Don't load third-party fonts, trackers or CDNs; fonts ship through @fontsource.",
+      "Don't invent stats or testimonials; overview figures are live counts.",
+      "Don't let colour carry meaning alone; pair every status and court colour with text."
+    ]
+  }
+}
