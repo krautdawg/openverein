@@ -24,6 +24,7 @@ import { applicationRoutes } from './routes/applications.ts';
 import { importRoutes } from './routes/imports.ts';
 import { ledgerRoutes } from './routes/ledger.ts';
 import { exportRoutes } from './routes/exports.ts';
+import { registerIdempotency } from './http/idempotency.ts';
 import { donationRoutes } from './routes/donations.ts';
 import { privacyRoutes } from './routes/privacy.ts';
 import { sepaRoutes } from './routes/sepa.ts';
@@ -63,7 +64,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   await app.register(swagger, {
     openapi: {
       openapi: '3.1.0',
-      info: { title: 'OpenVerein API', version: '1', description: 'Jede Aktion der Oberfläche ist auch über diese API möglich. Fehler im Format RFC 9457.' },
+      info: { title: 'OpenVerein API', version: '1', description: 'Jede Aktion der Oberfläche ist auch über diese API möglich. Fehler im Format RFC 9457. POST-Anfragen, die Geld-Objekte anlegen (Rechnungen, Zahlungen, Beitragsläufe, Einzüge, Buchungen, Spenden, Zuwendungsbestätigungen, DATEV-Exporte), brauchen den Header `Idempotency-Key` (8 bis 200 Zeichen): Eine Wiederholung mit demselben Schlüssel und demselben Inhalt liefert 24 Stunden lang die erste Antwort (Header `Idempotent-Replayed: true`), statt noch einmal zu buchen.' },
       components: { securitySchemes: { session: { type: 'apiKey', in: 'cookie', name: 'ov_session' }, token: { type: 'http', scheme: 'bearer', description: 'API-Schlüssel aus den Einstellungen (ov_…)' } } },
       security: [{ session: [] }, { token: [] }],
     },
@@ -99,6 +100,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     }
     req.actor = await actorFromRequest(db, req, reply);
   });
+  registerIdempotency(app, db);
 
   await app.register(
     async (api) => {

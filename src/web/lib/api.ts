@@ -28,20 +28,22 @@ export const setStepUpHandler = (h: typeof stepUpHandler) => {
 const stepUp = () => (stepUpInFlight ??= stepUpHandler!().finally(() => (stepUpInFlight = null)));
 
 /** The UI talks only to the public REST API, so every UI action is also an API action. */
-export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}, retried = false): Promise<T> {
+export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}, retried = false, key = crypto.randomUUID()): Promise<T> {
   const method = init.method ?? 'GET';
   // Every write is JSON, even without payload: the server rejects other content types (CSRF guard).
   const body = method === 'GET' ? undefined : JSON.stringify(init.body ?? {});
+  // Money writes need an idempotency key; the same key goes with the retry after a second-factor prompt.
+  const headers: Record<string, string> = body ? { 'content-type': 'application/json', ...(method === 'POST' ? { 'idempotency-key': key } : {}) } : {};
   let res: Response;
   try {
-    res = await fetch(`/api/v1${path}`, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body, credentials: 'same-origin' });
+    res = await fetch(`/api/v1${path}`, { method, headers, body, credentials: 'same-origin' });
   } catch {
     throw new ApiError({ type: 'network', title: 'Keine Verbindung zum Server. Bitte prüfe Deine Internetverbindung.', status: 0 });
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({ title: 'Keine Antwort vom Server.', status: res.status, type: 'network' }));
   if (!res.ok) {
-    if (!retried && res.status === 403 && String((data as ApiProblem).type).endsWith('/step-up-required') && stepUpHandler && (await stepUp())) return api<T>(path, init, true);
+    if (!retried && res.status === 403 && String((data as ApiProblem).type).endsWith('/step-up-required') && stepUpHandler && (await stepUp())) return api<T>(path, init, true, key);
     throw new ApiError(data as ApiProblem);
   }
   return data as T;
