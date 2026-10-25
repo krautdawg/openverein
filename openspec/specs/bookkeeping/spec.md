@@ -206,3 +206,10 @@ The system SHALL produce XRechnung files whose amount due equals the issued invo
 - **WHEN** a 19 % line of 10.01 € gross is issued as XRechnung
 - **THEN** the file's amount due is 10.01 € and the KoSIT validator accepts it
 
+### Requirement: E-invoices are mailed with their XML
+The system SHALL attach the stored XRechnung XML to the invoice mail and send it to the recipient's e-invoice address when that is an e-mail address.
+
+#### Scenario: City with an e-invoice mailbox
+- **WHEN** an issued XRechnung invoice to a city with e-invoice address rechnung@stadt.example is mailed
+- **THEN** one mail goes to rechnung@stadt.example with the PDF and the XML attached
+
