@@ -1,0 +1,94 @@
+# Codemagic workflows for the OpenVerein mobile apps (Capacitor wraps the web build).
+# Debug workflows need no credentials. Release workflows read signing material from Codemagic
+# environment groups and integrations; see docs/mobile.md for setting them up.
+definitions:
+  env: &env
+    node: 24
+    vars:
+      # The club's OpenVerein server the app opens, e.g. https://verein.example.org
+      OPENVEREIN_URL: https://demo.openverein.org
+  web_build: &web_build
+    - name: Install and build the web app
+      script: |
+        npm ci
+        npm run build
+    - name: Sync web build into the native projects
+      script: npx cap sync
+
+workflows:
+  android-debug:
+    name: Android debug (unsigned)
+    instance_type: linux_x2
+    max_build_duration: 30
+    environment:
+      <<: *env
+      java: 21
+    scripts:
+      - *web_build
+      - name: Build debug APK
+        script: cd android && ./gradlew assembleDebug
+    artifacts:
+      - android/app/build/outputs/apk/debug/*.apk
+
+  ios-debug:
+    name: iOS debug (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      <<: *env
+      xcode: latest
+    scripts:
+      - *web_build
+      - name: Build for the simulator without signing
+        script: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+    artifacts:
+      - build/Build/Products/Debug-iphonesimulator/*.app
+
+  android-release:
+    name: Android release (signed AAB)
+    instance_type: linux_x2
+    max_build_duration: 45
+    environment:
+      <<: *env
+      java: 21
+      # Codemagic → Teams → Code signing identities → Android keystores, reference name "openverein"
+      android_signing:
+        - openverein
+      groups:
+        - openverein_release # OPENVEREIN_URL, OPENVEREIN_APP_ID, OPENVEREIN_APP_NAME for the club build
+    scripts:
+      - *web_build
+      - name: Build signed bundle
+        script: cd android && ./gradlew bundleRelease
+    artifacts:
+      - android/app/build/outputs/bundle/release/*.aab
+
+  ios-release:
+    name: iOS release (signed IPA)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: OpenVerein App Store Connect # Codemagic → Integrations → App Store Connect API key
+    environment:
+      <<: *env
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: org.openverein.app
+      groups:
+        - openverein_release
+    scripts:
+      - *web_build
+      - name: Use the Codemagic signing profiles
+        script: xcode-project use-profiles
+      - name: Build IPA
+        script: xcode-project build-ipa --project ios/App/App.xcodeproj --scheme App
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true

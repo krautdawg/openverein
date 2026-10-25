@@ -26,3 +26,12 @@ const refresh = () =>
 await refresh();
 setInterval(refresh, 60 * 60 * 1000).unref();
 startMailWorker(db, config.publicUrl, (err) => app.log.error(err));
+
+// Public demo: load the demo club into an empty instance, and reset it on a schedule (DEMO_RESET_HOURS, default 24).
+if (config.demoMode) {
+  const { seedDemo } = await import('./demo/seed.ts');
+  const org = await db.selectFrom('organization').select('is_demo').executeTakeFirst();
+  if (!org) await seedDemo(db).then(() => app.log.info('demo club loaded'), (err) => app.log.error(err));
+  const hours = Number(process.env.DEMO_RESET_HOURS ?? 24);
+  if (hours > 0) setInterval(() => void seedDemo(db, { reset: true }).then(() => app.log.info('demo reset'), (err) => app.log.error(err)), hours * 3_600_000).unref();
+}

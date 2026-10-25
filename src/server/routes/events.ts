@@ -206,7 +206,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       .select(['participation.member_id', 'participation.status', 'participation.invoice_id', 'participation.updated_at', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
       .where('participation.event_id', '=', e.id)
       .where('participation.occurrence_date', '=', date)
-      .orderBy('participation.waitlisted_at', sql`asc nulls first`)
+      .orderBy('participation.waitlisted_at', (ob) => ob.asc().nullsFirst())
       .orderBy('person.last_name')
       .execute();
     return {
