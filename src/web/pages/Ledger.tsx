@@ -385,7 +385,86 @@ export function Accounts({ me }: { me: Me }) {
           </tbody>
         </table>
       </div>
+      <TaxRates canWrite={canWrite} accounts={data ?? []} />
     </LedgerLayout>
+  );
+}
+
+/** Tax rates with validity; the club can add its own and end a rate (the rate itself never changes). */
+function TaxRates({ canWrite, accounts }: { canWrite: boolean; accounts: Account[] }) {
+  const qc = useQueryClient();
+  const rates = useQuery({ queryKey: ['tax-rates'], queryFn: () => api<(TaxRate & { outputAccountId: string | null; inputAccountId: string | null })[]>('/ledger/tax-rates') });
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<ApiError>();
+  const [rowError, setRowError] = useState<string>();
+  const taxAccounts = accounts.filter((a) => a.kind === 'tax' && !a.retired);
+  const name = (id: string | null) => { const a = accounts.find((x) => x.id === id); return a ? `${a.number} ${a.name}` : '—'; };
+  async function add(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setError(undefined);
+    try {
+      await api('/ledger/tax-rates', { method: 'POST', body: { label: f.get('label'), rateBp: Math.round(Number(String(f.get('rate')).replace(',', '.')) * 100), validFrom: f.get('validFrom'), validTo: f.get('validTo') || null, outputAccountId: f.get('output') || null, inputAccountId: f.get('input') || null } });
+      setAdding(false);
+      await qc.invalidateQueries({ queryKey: ['tax-rates'] });
+    } catch (err) {
+      setError(err instanceof ApiError ? err : undefined);
+    }
+  }
+  async function end(id: string, validTo: string) {
+    setRowError(undefined);
+    try {
+      await api(`/ledger/tax-rates/${id}`, { method: 'PATCH', body: { validTo: validTo || null } });
+      await qc.invalidateQueries({ queryKey: ['tax-rates'] });
+    } catch (err) {
+      setRowError(err instanceof ApiError ? (err.problem.errors?.[0]?.message ?? err.problem.title) : 'Das hat nicht geklappt.');
+    }
+  }
+  return (
+    <section aria-labelledby="tax-rates" style={{ marginTop: 'var(--s-7)' }}>
+      <div className="toolbar">
+        <h2 id="tax-rates" style={{ margin: 0 }}>Steuersätze</h2>
+        <span style={{ flex: 1 }} />
+        {canWrite && !adding && <button className="btn" onClick={() => setAdding(true)}><Plus size={16} aria-hidden /> Steuersatz anlegen</button>}
+      </div>
+      <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '72ch' }}>Gilt ein Satz nicht mehr, setz sein Ende. Der Satz selbst ändert sich nie, damit gebuchte Zeilen stimmen.</p>
+      {adding && (
+        <form className="inline-form" noValidate onSubmit={add} style={{ maxWidth: 720, marginBottom: 'var(--s-4)' }} aria-label="Neuer Steuersatz">
+          {error && <div className="alert alert-error" role="alert">{error.problem.errors?.map((x) => x.message).join(' ') ?? error.problem.title}</div>}
+          <div className="form-row">
+            <Field label="Bezeichnung" name="label" error={error?.fieldError('label')} />
+            <Field label="Satz in %" name="rate" inputMode="decimal" error={error?.fieldError('rateBp')} />
+          </div>
+          <div className="form-row">
+            <Field label="Gültig ab" name="validFrom" type="date" error={error?.fieldError('validFrom')} />
+            <Field label="Gültig bis (optional)" name="validTo" type="date" error={error?.fieldError('validTo')} />
+          </div>
+          <div className="form-row">
+            <div className="field"><label htmlFor="tr-out">Umsatzsteuerkonto</label><select id="tr-out" name="output" className="select"><option value="">keins</option>{taxAccounts.map((a) => <option key={a.id} value={a.id}>{a.number} {a.name}</option>)}</select>{error?.fieldError('outputAccountId') && <p className="error">{error.fieldError('outputAccountId')}</p>}</div>
+            <div className="field"><label htmlFor="tr-in">Vorsteuerkonto</label><select id="tr-in" name="input" className="select"><option value="">keins</option>{taxAccounts.map((a) => <option key={a.id} value={a.id}>{a.number} {a.name}</option>)}</select></div>
+          </div>
+          <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">Anlegen</button><button type="button" className="btn btn-ghost" onClick={() => setAdding(false)}>Abbrechen</button></div>
+        </form>
+      )}
+      {rowError && <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-3)' }}>{rowError}</div>}
+      <div className="table-wrap">
+        <table className="table" aria-label="Steuersätze">
+          <thead><tr><th scope="col">Bezeichnung</th><th scope="col" className="num">Satz</th><th scope="col" className="num">ab</th><th scope="col" className="num">bis</th><th scope="col" className="hide-sm">Umsatzsteuer</th><th scope="col" className="hide-sm">Vorsteuer</th></tr></thead>
+          <tbody>
+            {rates.data?.map((r) => (
+              <tr key={r.id}>
+                <td>{r.label}</td>
+                <td className="num">{(r.rateBp / 100).toLocaleString('de-DE')} %</td>
+                <td className="num">{formatDate(r.validFrom)}</td>
+                <td className="num">{canWrite ? <input type="date" className="input" style={{ width: 'auto' }} aria-label={`${r.label}: gültig bis`} defaultValue={r.validTo ?? ''} onBlur={(e) => e.target.value !== (r.validTo ?? '') && void end(r.id, e.target.value)} /> : r.validTo ? formatDate(r.validTo) : '—'}</td>
+                <td className="hide-sm">{name(r.outputAccountId)}</td>
+                <td className="hide-sm">{name(r.inputAccountId)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

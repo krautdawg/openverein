@@ -151,4 +151,22 @@ describe('ledger', () => {
     await admin.post('/ledger/bookings', { kind: 'expense', date: '2026-02-02', text: 'Bälle', moneyAccountId: acc('1000'), lines: [{ grossCents: 8000, accountId: acc('6100') }] });
     expect((await admin.post(`/ledger/entries/${income.body.id}/reverse`, {})).status).toBe(409);
   });
+
+  it('lets the club add its own tax rate and end it, never before a booking with it', async () => {
+    const accounts = (await admin.get('/ledger/accounts')).body as { id: string; kind: string }[];
+    const tax = accounts.find((a) => a.kind === 'tax')!.id;
+    const income = accounts.find((a) => a.kind === 'income')!.id;
+    expect((await admin.post('/ledger/tax-rates', { label: 'Sondersatz 10 %', rateBp: 1000, validFrom: '2026-01-01' })).status).toBe(400);
+    expect((await admin.post('/ledger/tax-rates', { label: 'Sondersatz 10 %', rateBp: 1000, validFrom: '2026-01-01', outputAccountId: income })).status).toBe(400);
+    const r = await admin.post('/ledger/tax-rates', { label: 'Sondersatz 10 %', rateBp: 1000, validFrom: '2026-01-01', outputAccountId: tax });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const settings = (await admin.get('/ledger/settings')).body;
+    const money = settings.cashAccountId ?? accounts.find((a) => a.kind === 'money')!.id;
+    const b = await admin.post('/ledger/bookings', { kind: 'income', date: '2026-03-01', text: 'Verkauf', moneyAccountId: money, lines: [{ grossCents: 1100, accountId: income, taxRateId: r.body.id, sphere: 'wirtschaft' }] });
+    expect(b.status, JSON.stringify(b.body)).toBe(201);
+    expect(b.body.lines.find((l: { accountId: string }) => l.accountId === tax).creditCents).toBe(100);
+    expect((await admin.patch(`/ledger/tax-rates/${r.body.id}`, { validTo: '2026-02-28' })).status).toBe(409);
+    expect((await admin.patch(`/ledger/tax-rates/${r.body.id}`, { validTo: '2026-06-30' })).body.validTo).toBe('2026-06-30');
+    expect((await admin.post('/ledger/bookings', { kind: 'income', date: '2026-07-01', text: 'Verkauf', moneyAccountId: money, lines: [{ grossCents: 1100, accountId: income, taxRateId: r.body.id }] })).status).toBe(400);
+  });
 });
