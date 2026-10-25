@@ -68,7 +68,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/setup',
     { schema: { ...publicRoute, tags: ['auth'], summary: 'Ob die Ersteinrichtung noch aussteht', response: { 200: z.object({ needsSetup: z.boolean() }) } } },
-    async () => ({ needsSetup: !(await db.selectFrom('organization').select('id').executeTakeFirst()) }),
+    async () => ({ needsSetup: !config.multiTenant && !(await db.selectFrom('organization').select('id').executeTakeFirst()) }),
   );
 
   app.post(
@@ -79,6 +79,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       // On a public demo, a visitor must never get to create the club between a reset and the reseed.
       const demoSeed = req.headers['x-demo-seed'] === DEMO_SEED_KEY;
       if (config.demoMode && !demoSeed) throw new Problem(403, 'demo', 'In der Demo ist das gesperrt.');
+      // Under managed hosting the operator creates clubs; nobody may set one up through the open setup page.
+      if (config.multiTenant) throw new Problem(403, 'operator', 'Neue Vereine legt der Betreiber an.');
       // Cheap check before the expensive hash; the authoritative check runs under the lock below.
       if (await db.selectFrom('organization').select('id').executeTakeFirst()) throw alreadySetUp();
       const pwProblem = passwordProblem(req.body.password);
@@ -87,16 +89,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       const { user, token } = await db.transaction().execute(async (tx) => {
         await sql`select pg_advisory_xact_lock(4711)`.execute(tx);
         if (await tx.selectFrom('organization').select('id').executeTakeFirst()) throw alreadySetUp();
-        const org = await tx.insertInto('organization').values({ name: req.body.clubName, is_demo: demoSeed }).returningAll().executeTakeFirstOrThrow();
-        const user = await tx
-          .insertInto('app_user')
-          .values({ organization_id: org.id, email: req.body.email, name: req.body.name, password_hash: passwordHash })
-          .returningAll()
-          .executeTakeFirstOrThrow();
-        await sql`select ov_seed_builtin_roles(${org.id}::uuid)`.execute(tx);
-        await sql`select ov_seed_ledger(${org.id}::uuid)`.execute(tx);
-        const admin = await tx.selectFrom('role').select('id').where('organization_id', '=', org.id).where('builtin_key', '=', 'admin').executeTakeFirstOrThrow();
-        await tx.insertInto('role_grant').values({ organization_id: org.id, user_id: user.id, role_id: admin.id }).execute();
+        const { org, user } = await createClub(tx, { name: req.body.clubName, isDemo: demoSeed, hostname: null, admin: { email: req.body.email, name: req.body.name, passwordHash } });
         await audit(tx, org.id, userActor(user), { action: 'organization.setup', entityType: 'organization', entityId: org.id });
         return { user, token: await insertSession(tx, user.id, req.headers['user-agent']) };
       });
@@ -119,7 +112,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .where((eb) => eb(eb.fn('lower', ['email']), '=', req.body.email))
           .forUpdate()
           .executeTakeFirst();
-        const usable = user && user.status === 'active' && user.password_hash;
+        // Under managed hosting an access signs in only on its own club's host name (no club data under another club's address).
+        const ownHost = !config.multiTenant || (!!user && (await tx.selectFrom('organization').select('hostname').where('id', '=', user.organization_id).executeTakeFirst())?.hostname === req.hostname.toLowerCase().replace(/:\d+$/, ''));
+        const usable = user && user.status === 'active' && user.password_hash && ownHost;
         const ok = await verifyPassword(usable ? user.password_hash : dummyHash, req.body.password);
         if (!user || !usable) return null;
         const locked = user.locked_until !== null && user.locked_until > new Date();
@@ -305,3 +300,18 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 };
 
+
+/** A club with its built-in roles, its chart of accounts and a first admin (setup, or the operator under managed hosting). */
+export async function createClub(tx: Db, v: { name: string; isDemo: boolean; hostname: string | null; admin: { email: string; name: string; passwordHash: string | null } }) {
+  const org = await tx.insertInto('organization').values({ name: v.name, is_demo: v.isDemo, hostname: v.hostname }).returningAll().executeTakeFirstOrThrow();
+  const user = await tx
+    .insertInto('app_user')
+    .values({ organization_id: org.id, email: v.admin.email, name: v.admin.name, password_hash: v.admin.passwordHash })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+  await sql`select ov_seed_builtin_roles(${org.id}::uuid)`.execute(tx);
+  await sql`select ov_seed_ledger(${org.id}::uuid)`.execute(tx);
+  const admin = await tx.selectFrom('role').select('id').where('organization_id', '=', org.id).where('builtin_key', '=', 'admin').executeTakeFirstOrThrow();
+  await tx.insertInto('role_grant').values({ organization_id: org.id, user_id: user.id, role_id: admin.id }).execute();
+  return { org, user };
+}

@@ -72,6 +72,7 @@ export interface OrganizationTable {
   offer_number_pattern: Generated<string>;
   birthday_greetings: Generated<'off' | 'round' | 'all'>;
   anniversary_greetings: Generated<boolean>;
+  hostname: string | null;
 }
 
 export interface AppUserTable {

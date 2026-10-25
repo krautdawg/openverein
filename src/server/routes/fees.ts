@@ -1,8 +1,8 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { baseUrlOf } from '../tenant.ts';
 import { sql, type Selectable } from 'kysely';
 import { z } from 'zod';
 import { addDays, formatDate } from '../../shared/dates.ts';
-import { config } from '../config.ts';
 import { mailer, senderOf } from '../mail/transport.ts';
 import {
   assignment,
@@ -69,7 +69,7 @@ export async function runFeeSchedules(db: Db) {
       const org = await db.selectFrom('organization').selectAll().where('id', '=', o.id).executeTakeFirstOrThrow();
       const sender = senderOf(org);
       const sum = (run.totals.totalCents / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
-      await mailer().sendMail({ from: { name: sender.name, address: sender.address }, to: user.email, subject: `Beitragslauf bis ${formatDate(until)}: Vorschau ist fertig`, text: `Hallo ${user.name},\n\ndie automatische Vorschau des Beitragslaufs bis ${formatDate(until)} ist fertig: ${run.totals.members} Mitglieder, ${sum}. Gebucht ist noch nichts.\n\nPrüfen und buchen: ${config.publicUrl}/beitraege/laeufe/${run.id}\n\n${o.name}` }).catch(() => undefined);
+      await mailer().sendMail({ from: { name: sender.name, address: sender.address }, to: user.email, subject: `Beitragslauf bis ${formatDate(until)}: Vorschau ist fertig`, text: `Hallo ${user.name},\n\ndie automatische Vorschau des Beitragslaufs bis ${formatDate(until)} ist fertig: ${run.totals.members} Mitglieder, ${sum}. Gebucht ist noch nichts.\n\nPrüfen und buchen: ${baseUrlOf(org)}/beitraege/laeufe/${run.id}\n\n${o.name}` }).catch(() => undefined);
     } catch (err) {
       await audit(db, o.id, null, { action: 'fee_schedule.failed', entityType: 'organization', entityId: o.id, diff: { reason: [null, err instanceof Problem ? err.message : 'Fehler beim Erstellen der Vorschau'] } });
     }

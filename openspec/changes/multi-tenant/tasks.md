@@ -1,0 +1,4 @@
+- [x] host name, tenant lookup, links
+- [x] operator API
+- [x] setup closed, own-host login, portal by host, mail per club
+- [x] integration test, docs

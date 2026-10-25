@@ -1,11 +1,11 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { baseUrlOf } from '../tenant.ts';
 import { z } from 'zod';
 import { formatDate } from '../../shared/dates.ts';
 import { displayName } from '../../shared/members.ts';
 import { task, taskInput, taskPatch } from '../../shared/tasks.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
-import { config } from '../config.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { mailer, senderOf } from '../mail/transport.ts';
@@ -71,7 +71,7 @@ export const taskRoutes: FastifyPluginAsyncZod = async (app) => {
   async function notify(actor: Actor, to: { name: string; email: string }, title: string, dueOn: string | null | undefined) {
     const org = await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
     const sender = senderOf(org);
-    await mailer().sendMail({ from: { name: sender.name, address: sender.address }, to: to.email, subject: `Neue Aufgabe: ${title}`, text: `Hallo ${to.name},\n\n${actor.name} hat Dir eine Aufgabe gegeben: ${title}${dueOn ? ` (bis ${formatDate(dueOn)})` : ''}.\n\n${config.publicUrl}/aufgaben\n\n${org.name}` }).catch(() => undefined);
+    await mailer().sendMail({ from: { name: sender.name, address: sender.address }, to: to.email, subject: `Neue Aufgabe: ${title}`, text: `Hallo ${to.name},\n\n${actor.name} hat Dir eine Aufgabe gegeben: ${title}${dueOn ? ` (bis ${formatDate(dueOn)})` : ''}.\n\n${baseUrlOf(org)}/aufgaben\n\n${org.name}` }).catch(() => undefined);
   }
 
   app.get('/tasks', { schema: { tags, summary: 'Aufgaben: offen (Standard), meine oder erledigt', querystring: z.object({ filter: z.enum(['open', 'mine', 'done']).default('open') }), response: { 200: z.array(task) } } }, async (req) => {

@@ -1,4 +1,5 @@
 import { customText } from '../../shared/customFields.ts';
+import { baseUrlOf, tenantForRequest } from '../tenant.ts';
 import { uploadName } from '../http/upload.ts';
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -129,7 +130,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Anmeldecode per E-Mail anfordern (antwortet immer gleich, damit niemand Adressen ausprobieren kann)', security: [], body: z.object({ email: emailSchema }) } },
     async (req) => {
       const email = req.body.email.trim().toLowerCase();
-      const org = await db.selectFrom('organization').select('id').executeTakeFirst();
+      const org = await tenantForRequest(db, req);
       if (!org) return { ok: true };
       const member = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select('member.id').where('member.organization_id', '=', org.id).where(sql<boolean>`lower(person.email) = ${email}`).where('member.status', 'in', [...CURRENT]).executeTakeFirst();
       // At most three codes per address and hour, so the endpoint cannot be used to flood an inbox.
@@ -139,7 +140,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       if (member && recent.n < 3) {
         // Not awaited: the answer must take as long for members as for unknown addresses.
         void issueLoginCode(db, org.id, email, null)
-          .then((code) => sendSystemMail(db, org.id, 'login_code', email, { code, link: `${config.publicUrl}/portal/anmelden#${new URLSearchParams({ email, code })}` }))
+          .then((code) => sendSystemMail(db, org.id, 'login_code', email, { code, link: `${baseUrlOf(org)}/portal/anmelden#${new URLSearchParams({ email, code })}` }))
           .catch((err: unknown) => req.log.error(err, 'login code mail failed'));
       }
       return { ok: true };

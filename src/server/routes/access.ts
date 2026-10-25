@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { baseUrlFor } from '../tenant.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -17,7 +18,6 @@ import {
   userPatch,
 } from '../../shared/access.ts';
 import { audit } from '../audit.ts';
-import { config } from '../config.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, Level } from '../db.ts';
@@ -135,7 +135,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /** Mails the invitation link; when no mail server works, the admin passes the shown link on by hand. */
   async function sendInvite(actor: Actor, email: string, name: string, token: string) {
-    return sendSystemMail(db, actor.organizationId, 'invitation', email, { name, vorname: name.split(' ')[0], link: `${config.publicUrl}/einladung#${token}` });
+    return sendSystemMail(db, actor.organizationId, 'invitation', email, { name, vorname: name.split(' ')[0], link: `${await baseUrlFor(db, actor.organizationId)}/einladung#${token}` });
   }
 
   // ---------- Roles ----------

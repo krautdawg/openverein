@@ -1,0 +1,71 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { sql } from 'kysely';
+import { z } from 'zod';
+import { audit } from '../audit.ts';
+import { sha256 } from '../auth/session.ts';
+import { config } from '../config.ts';
+import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
+import { sendSystemMail } from '../mail/system.ts';
+import { baseUrlOf } from '../tenant.ts';
+import { createClub } from './auth.ts';
+
+const tags = ['operator'];
+const hostname = z.string().trim().toLowerCase().max(253).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, 'Bitte einen Hostnamen wie verein.example.org angeben.');
+const tenant = z.object({ id: z.uuid(), name: z.string(), hostname: z.string().nullable(), members: z.number(), users: z.number(), createdAt: z.string() });
+const INVITE_DAYS = 7;
+CONSTRAINT_MESSAGES.organization_hostname_key = 'Dieser Hostname gehört schon einem Verein.';
+
+/**
+ * Operator API for managed hosting (roadmap P2.11): creating clubs and their first admin. Only with MULTI_TENANT=true,
+ * authorized by the X-Operator-Token header (not a user session: the operator is not a member of any club).
+ */
+export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
+  const { db } = app;
+  const digest = (t: string) => createHash('sha256').update(t).digest();
+
+  app.addHook('onRequest', async (req) => {
+    if (!req.url.startsWith('/api/v1/operator/')) return;
+    if (!config.multiTenant) throw notFound('Seite');
+    const given = req.headers['x-operator-token'];
+    if (typeof given !== 'string' || !timingSafeEqual(digest(given), digest(config.operatorToken))) throw new Problem(401, 'operator-token', 'Betreiber-Schlüssel fehlt oder stimmt nicht.');
+  });
+
+  app.get('/operator/tenants', { schema: { tags, summary: 'Vereine dieser Installation (Betreiber)', security: [], response: { 200: z.array(tenant) } } }, async () => {
+    const rows = await db.selectFrom('organization').select(['id', 'name', 'hostname', 'created_at'])
+      .select((eb) => [
+        eb.selectFrom('member').select(sql<number>`count(*)::int`.as('n')).whereRef('member.organization_id', '=', 'organization.id').where('member.status', 'in', ['active', 'future', 'resigned']).as('members'),
+        eb.selectFrom('app_user').select(sql<number>`count(*)::int`.as('n')).whereRef('app_user.organization_id', '=', 'organization.id').where('app_user.status', '=', 'active').as('users'),
+      ])
+      .orderBy('created_at').execute();
+    return rows.map((r) => ({ id: r.id, name: r.name, hostname: r.hostname, members: Number(r.members ?? 0), users: Number(r.users ?? 0), createdAt: r.created_at.toISOString() }));
+  });
+
+  app.post('/operator/tenants', { schema: { tags, summary: 'Verein anlegen: mit Hostname und erstem Admin, der eine Einladung bekommt (Betreiber)', security: [], body: z.object({ clubName: z.string().trim().min(1).max(200), hostname, adminName: z.string().trim().min(2).max(120), adminEmail: z.email().max(254) }), response: { 201: z.object({ id: z.uuid(), hostname: z.string(), inviteLink: z.string(), mailed: z.boolean() }) } } }, async (req, reply) => {
+    const b = req.body;
+    if (await db.selectFrom('organization').select('id').where('hostname', '=', b.hostname).executeTakeFirst()) throw new Problem(409, 'hostname-taken', 'Dieser Hostname gehört schon einem Verein.');
+    if (await db.selectFrom('app_user').select('id').where(sql<boolean>`lower(email) = ${b.adminEmail.toLowerCase()}`).executeTakeFirst()) throw new Problem(409, 'email-taken', 'Diese E-Mail-Adresse hat hier schon einen Zugang.', 'Ein Zugang gehört zu genau einem Verein; nimm eine andere Adresse.');
+    const token = randomBytes(32).toString('base64url');
+    const org = await db.transaction().execute(async (tx) => {
+      const { org, user } = await createClub(tx, { name: b.clubName, isDemo: false, hostname: b.hostname, admin: { email: b.adminEmail, name: b.adminName, passwordHash: null } });
+      await tx.updateTable('app_user').set({ invite_token_hash: sha256(token), invite_expires_at: new Date(Date.now() + INVITE_DAYS * 86_400_000) }).where('id', '=', user.id).execute();
+      await audit(tx, org.id, null, { action: 'organization.provisioned', entityType: 'organization', entityId: org.id, diff: { hostname: [null, b.hostname] } });
+      return org;
+    });
+    const inviteLink = `${baseUrlOf(org)}/einladung#${token}`;
+    const mailed = await sendSystemMail(db, org.id, 'invitation', b.adminEmail, { name: b.adminName, vorname: b.adminName.split(' ')[0], link: inviteLink });
+    reply.status(201);
+    return { id: org.id, hostname: b.hostname, inviteLink, mailed };
+  });
+
+  app.patch('/operator/tenants/:id', { schema: { tags, summary: 'Hostname oder Namen eines Vereins ändern (Betreiber)', security: [], params: z.object({ id: z.uuid() }), body: z.object({ hostname: hostname.optional(), clubName: z.string().trim().min(1).max(200).optional() }), response: { 200: tenant.pick({ id: true, name: true, hostname: true }) } } }, async (req) => {
+    const b = req.body;
+    const r = await db.transaction().execute(async (tx) => {
+      const r = await tx.updateTable('organization').set({ ...(b.hostname ? { hostname: b.hostname } : {}), ...(b.clubName ? { name: b.clubName } : {}), updated_at: new Date() }).where('id', '=', req.params.id).returning(['id', 'name', 'hostname']).executeTakeFirst();
+      if (!r) throw notFound('Verein');
+      await audit(tx, r.id, null, { action: 'organization.operator_updated', entityType: 'organization', entityId: r.id, diff: { hostname: [null, b.hostname ?? null], name: [null, b.clubName ?? null] } });
+      return r;
+    });
+    return r;
+  });
+};
