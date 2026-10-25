@@ -41,6 +41,7 @@ const PERSON_COLUMNS = {
   lastName: 'last_name',
   companyName: 'company_name',
   birthDate: 'birth_date',
+  gender: 'gender',
   email: 'email',
   phone: 'phone',
   street: 'street',
@@ -139,7 +140,7 @@ const listFilter = (q: z.infer<typeof memberListQuery>, actor: Actor, today: str
   return query;
 };
 
-const csvCell = (v: unknown) => {
+export const csvCell = (v: unknown) => {
   let s = v === null || v === undefined ? '' : String(v);
   // Formula injection: spreadsheet software must show these as text.
   if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;

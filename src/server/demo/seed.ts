@@ -30,6 +30,8 @@ export function testIban(blz: string, account: number) {
   return `DE${String(98 - rem).padStart(2, '0')}${bban}`;
 }
 
+// Demo genders follow the first name (a few without entry); not drawn from the random stream, so the rest stays the same.
+const FEMALE = new Set(['Anna', 'Clara', 'Emma', 'Greta', 'Ida', 'Karla', 'Mia', 'Olivia', 'Rosa', 'Tilda', 'Vera', 'Yasmin', 'Zoe', 'Ayşe', 'Nele', 'Pia', 'Lotta', 'Frieda', 'Lina', 'Sophie', 'Elif']);
 const FIRST = ['Anna', 'Ben', 'Clara', 'David', 'Emma', 'Felix', 'Greta', 'Hannes', 'Ida', 'Jonas', 'Karla', 'Leon', 'Mia', 'Noah', 'Olivia', 'Paul', 'Rosa', 'Samuel', 'Tilda', 'Ugur', 'Vera', 'Wim', 'Yasmin', 'Zoe', 'Ayşe', 'Jörg', 'Malte', 'Nele', 'Ole', 'Pia', 'Quentin', 'Lotta', 'Emil', 'Frieda', 'Henri', 'Lina', 'Mats', 'Sophie', 'Theo', 'Elif'];
 const LAST = ['Becker', 'Braun', 'Demir', 'Fischer', 'Hartmann', 'Hoffmann', 'Jung', 'Kaiser', 'Keller', 'Koch', 'Kowalski', 'Krause', 'Lange', 'Lehmann', 'Meyer', 'Neumann', 'Nowak', 'Otto', 'Peters', 'Richter', 'Schäfer', 'Schmidt', 'Schneider', 'Schulz', 'Vogel', 'Wagner', 'Weber', 'Wolf', 'Yılmaz', 'Zimmermann'];
 const STREETS = ['Lindenallee', 'Am Sportplatz', 'Ringstraße', 'Gartenweg', 'Hauptstraße', 'Schulstraße', 'Mühlenweg', 'Birkenhof'];
@@ -98,7 +100,7 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
       const divisions = [age < 18 ? jugend : null, pick([fussball, turnen, tennis, fussball, turnen])].filter((x): x is string => !!x);
       if (i < 5) divisions.push(vorstand);
       const m = await call('POST', '/members', {
-        firstName, lastName, birthDate,
+        firstName, lastName, birthDate, gender: i % 37 === 0 ? null : FEMALE.has(firstName) ? 'female' : 'male',
         email: r() < 0.85 ? `${firstName}.${lastName}.${i}@example.org`.toLowerCase().normalize('NFD').replace(/[^a-z0-9.@-]/g, '') : null,
         phone: r() < 0.5 ? `0171 ${String(1000000 + Math.floor(r() * 8999999))}` : null,
         street: `${pick(STREETS)} ${1 + Math.floor(r() * 80)}`, postalCode: '12345', city: 'Lindenhof',

@@ -48,7 +48,7 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   const today = await orgToday(tx, organizationId);
   await tx
     .updateTable('person')
-    .set({ kind: 'natural', first_name: null, last_name: ANONYMOUS, company_name: null, birth_date: null, email: null, phone: null, street: null, postal_code: null, city: null, note: null, custom: sql`'{}'::jsonb`, einvoice_format: 'none', buyer_reference: null, einvoice_address: null, vat_id: null, preferred_channel: 'none', anonymised_at: new Date(), updated_at: new Date() })
+    .set({ kind: 'natural', first_name: null, last_name: ANONYMOUS, company_name: null, birth_date: null, email: null, phone: null, street: null, postal_code: null, city: null, note: null, custom: sql`'{}'::jsonb`, einvoice_format: 'none', buyer_reference: null, gender: null, einvoice_address: null, vat_id: null, preferred_channel: 'none', anonymised_at: new Date(), updated_at: new Date() })
     .where('id', '=', personId)
     .execute();
   const members = (await tx.selectFrom('member').select('id').where('person_id', '=', personId).execute()).map((m) => m.id);

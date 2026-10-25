@@ -119,6 +119,7 @@ export interface PersonTable {
   first_name: string | null;
   last_name: string | null;
   company_name: string | null;
+  gender: 'female' | 'male' | 'diverse' | null;
   birth_date: string | null;
   email: string | null;
   phone: string | null;
