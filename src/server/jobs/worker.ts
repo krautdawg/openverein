@@ -4,14 +4,15 @@ import { JobError, type Job, type JobContext } from './job.ts';
 import { Problem } from '../http/problem.ts';
 import { loadGrants, type Actor } from '../policy.ts';
 import { runFullExport } from '../exports/fullJob.ts';
+import { runMemberBulk } from '../members/bulkJob.ts';
 
 export type { Job } from './job.ts';
 
 /** A handler checks the actor's current permission itself and returns the result file, if any. */
-type Handler = (ctx: JobContext) => Promise<{ fileId?: string }>;
+type Handler = (ctx: JobContext) => Promise<{ fileId?: string; result?: unknown }>;
 
-const HANDLERS: Record<JobKind, Handler> = { full_export: runFullExport };
-export const JOB_LABEL: Record<JobKind, string> = { full_export: 'Gesamtexport' };
+const HANDLERS: Record<JobKind, Handler> = { full_export: runFullExport, member_bulk: runMemberBulk };
+export const JOB_LABEL: Record<JobKind, string> = { full_export: 'Gesamtexport', member_bulk: 'Sammelaktion Mitglieder' };
 
 /** A running job whose claim is older than this counts as crashed; it is retried once, then failed. */
 const STALE_MINUTES = 30;
@@ -37,7 +38,7 @@ export async function processJobs(db: Db) {
       returning *`.execute(db).then((r) => r.rows[0]);
     if (!job) return n;
     n++;
-    const finish = (set: { status: 'done' | 'failed'; error?: string; result_file_id?: string | null }) =>
+    const finish = (set: { status: 'done' | 'failed'; error?: string; result_file_id?: string | null; result?: string | null }) =>
       db.updateTable('job').set({ ...set, progress: set.status === 'done' ? 100 : sql<number>`progress`, finished_at: new Date() }).where('id', '=', job.id).execute();
     if (job.attempts > MAX_ATTEMPTS) {
       await finish({ status: 'failed', error: 'Die Aufgabe wurde unterbrochen. Starte sie neu.' });
@@ -49,7 +50,7 @@ export async function processJobs(db: Db) {
         await db.updateTable('job').set({ progress: Math.min(99, Math.round(share * 100)), claimed_at: new Date(), ...(detail !== undefined && { detail }) }).where('id', '=', job.id).execute();
       };
       const result = await HANDLERS[job.kind]({ db, job, actor, progress });
-      await finish({ status: 'done', result_file_id: result.fileId ?? null });
+      await finish({ status: 'done', result_file_id: result.fileId ?? null, result: result.result === undefined ? null : JSON.stringify(result.result) });
     } catch (err) {
       if (!(err instanceof JobError)) console.error('job failed', job.id, job.kind, err);
       // Messages of our own refusals (JobError, Problem) are for the user; anything else stays in the log.

@@ -38,6 +38,10 @@ export function Members({ me }: { me: Me }) {
   const groupId = params.get('gruppe') ?? '';
   const [search, setSearch] = useState(q);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Names for the confirmation when the selection came from "all matches" (most are not loaded).
+  const [allSample, setAllSample] = useState<string[]>();
+  // Outlives the bulk bar, which disappears with the cleared selection.
+  const [bulkResult, setBulkResult] = useState<string>();
   const [creating, setCreating] = useState(params.get('neu') === '1');
   const [filtering, setFiltering] = useState(false);
   const facets = activeFacets(params);
@@ -106,6 +110,12 @@ export function Members({ me }: { me: Me }) {
     if (e.key === ' ' && canWrite) { e.preventDefault(); toggle(id); }
   }
 
+  async function selectAll() {
+    const r = await api<{ ids: string[]; sample: string[] }>(`/members/ids?${query}`);
+    setSelected(new Set(r.ids));
+    setAllSample(r.sample);
+  }
+
   const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
   const exportHref = `/api/v1/members/export.csv?${query}`;
@@ -143,7 +153,21 @@ export function Members({ me }: { me: Me }) {
       </div>
       {filtering && <FilterSheet me={me} params={params} onApply={(next) => { setParams(next, { replace: true }); setSelected(new Set()); }} onClose={() => setFiltering(false)} />}
 
-      {selected.size > 0 && <BulkBar ids={[...selected]} onDone={() => { setSelected(new Set()); void list.refetch(); }} />}
+      {canWrite && allSelected && total > rows.length && selected.size < total && (
+        <div className="bulk-all" role="status">
+          Alle {rows.length} sichtbaren sind ausgewählt.{' '}
+          <button className="btn btn-ghost" onClick={() => void selectAll()}>Alle {total} Treffer auswählen</button>
+        </div>
+      )}
+      {selected.size > 0 && (
+        <BulkBar
+          ids={[...selected]}
+          sample={allSample ?? rows.filter((r) => selected.has(r.id)).slice(0, 5).map(displayName)}
+          canMail={me.permissions.communication === 'write'}
+          onDone={(msg) => { setSelected(new Set()); setAllSample(undefined); setBulkResult(msg); void list.refetch(); }}
+        />
+      )}
+      {bulkResult && <div className="alert alert-ok" role="status" style={{ marginBottom: 'var(--s-3)' }}>{bulkResult}</div>}
 
       {list.isError && <div className="alert alert-error" role="alert">{(list.error as Error).message}</div>}
       {list.data && rows.length === 0 ? (
@@ -208,29 +232,61 @@ export function Members({ me }: { me: Me }) {
   );
 }
 
-function BulkBar({ ids, onDone }: { ids: string[]; onDone: () => void }) {
+type BulkAction = { action: 'add_to_group' | 'end_group'; groupId: string; groupName: string; date: string };
+
+function BulkBar({ ids, sample, canMail, onDone }: { ids: string[]; sample: string[]; canMail: boolean; onDone: (result: string) => void }) {
   const { data: groups } = useGroups();
-  const [result, setResult] = useState<string>();
-  async function run(e: FormEvent<HTMLFormElement>) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [pending, setPending] = useState<BulkAction>();
+  const [error, setError] = useState<string>();
+
+  function ask(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const action = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value');
-    const r = await api<{ succeeded: number; skipped: { reason: string }[] }>('/members/bulk', { method: 'POST', body: { ids, action, groupId: f.get('groupId'), date: f.get('date') } });
-    setResult(`${r.succeeded} geändert${r.skipped.length ? `, ${r.skipped.length} übersprungen (${[...new Set(r.skipped.map((s) => s.reason))].join(' ')})` : ''}.`);
-    onDone();
+    const groupId = String(f.get('groupId'));
+    setPending({ action: (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') as BulkAction['action'], groupId, groupName: groups?.find((g) => g.id === groupId)?.name ?? '', date: String(f.get('date')) });
   }
+  async function run(p: BulkAction) {
+    setError(undefined);
+    try {
+      const r = await api<{ succeeded: number; skipped: { reason: string }[] } | { id: string; status: string }>('/members/bulk', { method: 'POST', body: { ids, action: p.action, groupId: p.groupId, date: p.date } });
+      if ('status' in r) {
+        // Over 100 members: a background job; the tray shows progress and the outcome.
+        await qc.invalidateQueries({ queryKey: ['jobs'] });
+        onDone(`Läuft im Hintergrund für ${ids.length} Mitglieder. Unten rechts siehst Du, wann es fertig ist.`);
+      } else {
+        onDone(`${r.succeeded} geändert${r.skipped.length ? `, ${r.skipped.length} übersprungen (${[...new Set(r.skipped.map((s) => s.reason))].join(' ')})` : ''}.`);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
+    }
+  }
+  const more = ids.length - sample.length;
   return (
     <>
-      <form className="bulkbar" onSubmit={run} aria-label="Sammelaktion">
-        <strong>{ids.length} ausgewählt</strong>
-        <select name="groupId" className="select" aria-label="Gruppe" required>
-          {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-        </select>
-        <input name="date" type="date" className="input" aria-label="Stichtag" defaultValue={todayLocal()} required />
-        <button className="btn btn-primary" value="add_to_group">Zur Gruppe hinzufügen</button>
-        <button className="btn" value="end_group">Gruppe beenden</button>
-      </form>
-      {result && <div className="alert alert-ok" role="status" style={{ marginBottom: 'var(--s-3)' }}>{result}</div>}
+      {pending ? (
+        <div className="bulkbar" role="alertdialog" aria-label="Sammelaktion bestätigen">
+          <span>
+            <strong>{ids.length} Mitglieder</strong> {pending.action === 'add_to_group' ? 'ab' : 'zum'} {formatDate(pending.date)} {pending.action === 'add_to_group' ? `zu „${pending.groupName}“ hinzufügen` : `aus „${pending.groupName}“ austragen`}:{' '}
+            <span className="muted">{sample.join(' · ')}{more > 0 ? ` und ${more} weitere` : ''}</span>
+          </span>
+          <button className="btn btn-primary" autoFocus onClick={() => void run(pending)}>Ja, ausführen</button>
+          <button className="btn btn-ghost" onClick={() => setPending(undefined)}>Abbrechen</button>
+        </div>
+      ) : (
+        <form className="bulkbar" onSubmit={ask} aria-label="Sammelaktion">
+          <strong>{ids.length} ausgewählt</strong>
+          <select name="groupId" className="select" aria-label="Gruppe" required>
+            {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+          <input name="date" type="date" className="input" aria-label="Stichtag" defaultValue={todayLocal()} required />
+          <button className="btn btn-primary" value="add_to_group">Zur Gruppe hinzufügen</button>
+          <button className="btn" value="end_group">Gruppe beenden</button>
+          {canMail && <button type="button" className="btn btn-ghost" onClick={() => navigate('/kommunikation', { state: { memberIds: ids } })}>E-Mail schreiben</button>}
+        </form>
+      )}
+      {error && <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-3)' }}>{error}</div>}
     </>
   );
 }

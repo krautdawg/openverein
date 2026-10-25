@@ -897,7 +897,7 @@ export interface Database {
   job: JobTable;
 }
 
-export type JobKind = 'full_export';
+export type JobKind = 'full_export' | 'member_bulk';
 export interface JobTable {
   id: Generated<string>;
   organization_id: string;
@@ -907,6 +907,8 @@ export interface JobTable {
   detail: string | null;
   error: string | null;
   result_file_id: string | null;
+  params: Generated<unknown>;
+  result: unknown;
   attempts: Generated<number>;
   created_by: string | null;
   created_at: Generated<Date>;

@@ -6,7 +6,7 @@ import { notFound } from '../http/problem.ts';
 import { JOB_LABEL, type Job } from '../jobs/worker.ts';
 
 /** Where the result of a finished job lives in the web app. */
-const RESULT_PATH: Record<JobKind, string> = { full_export: '/einstellungen/export' };
+const RESULT_PATH: Record<JobKind, string> = { full_export: '/einstellungen/export', member_bulk: '/mitglieder' };
 
 export const jobSchema = z.object({
   id: z.uuid(),
@@ -17,6 +17,8 @@ export const jobSchema = z.object({
   detail: z.string().nullable(),
   error: z.string().nullable(),
   resultFileId: z.uuid().nullable(),
+  /** Per-record outcome of a bulk action: succeeded count and skipped ids with reasons. */
+  result: z.object({ succeeded: z.number(), skipped: z.array(z.object({ id: z.string(), reason: z.string() })) }).nullable(),
   resultPath: z.string(),
   createdAt: z.string(),
   finishedAt: z.string().nullable(),
@@ -30,6 +32,7 @@ export const jobDto = (j: Job): z.infer<typeof jobSchema> => ({
   detail: j.detail,
   error: j.error,
   resultFileId: j.result_file_id,
+  result: (j.result as { succeeded: number; skipped: { id: string; reason: string }[] } | null) ?? null,
   resultPath: RESULT_PATH[j.kind],
   createdAt: j.created_at.toISOString(),
   finishedAt: j.finished_at?.toISOString() ?? null,

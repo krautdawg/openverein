@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { proposeExitDate } from '../../shared/dates.ts';
 import {
   bulkBody,
+  displayName,
   bulkResult,
   date,
   memberCreate,
@@ -17,6 +18,8 @@ import {
   type MemberStatus,
 } from '../../shared/members.ts';
 import { audit, diffOf } from '../audit.ts';
+import { assertGroup, BULK_INLINE_MAX, memberBulk } from '../members/bulk.ts';
+import { jobDto, jobSchema } from './jobs.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { forbidden, Problem } from '../http/problem.ts';
@@ -162,6 +165,15 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     const total = Number(rows[0]?.total ?? (offset === 0 ? 0 : (await listFilter(req.query, actor, today)(db).select(sql<number>`count(*)`.as('n')).executeTakeFirstOrThrow()).n));
     const next = offset + rows.length < total ? Buffer.from(String(offset + rows.length)).toString('base64url') : null;
     return { items: rows.map((r) => toListItem(r, groups.get(r.id) ?? [], hidden)), total, nextCursor: next };
+  });
+
+  app.get('/members/ids', { schema: { tags, summary: 'Alle Treffer eines Filters auswählen: IDs (höchstens 5.000) und die ersten fünf Namen zur Bestätigung', querystring: memberListQuery.omit({ cursor: true, limit: true }), response: { 200: z.object({ ids: z.array(z.uuid()), total: z.number(), sample: z.array(z.string()) }) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'members', 'read');
+    const today = await orgToday(db, actor.organizationId);
+    const rows = await listFilter({ ...req.query, limit: 5000 }, actor, today)(db).select(['member.id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name']).orderBy('person.last_name').orderBy('person.first_name').orderBy('member.id').limit(5001).execute();
+    if (rows.length > 5000) throw new Problem(422, 'too-many', 'Mehr als 5.000 Treffer.', 'Grenze den Filter weiter ein.');
+    return { ids: rows.map((r) => r.id), total: rows.length, sample: rows.slice(0, 5).map((r) => displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name })) };
   });
 
   app.get('/members/export.csv', { schema: { tags, summary: 'Gefilterte Mitgliederliste als CSV (UTF-8, Semikolon)', querystring: memberListQuery.omit({ cursor: true, limit: true }) } }, async (req, reply) => {
@@ -338,59 +350,20 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     return memberDetail(db, actor, req.params.id);
   });
 
-  app.post('/members/bulk', { schema: { tags, summary: 'Gruppenzugehörigkeit für viele Mitglieder auf einmal ändern', body: bulkBody, response: { 200: bulkResult } } }, async (req) => {
+  app.post('/members/bulk', { schema: { tags, summary: 'Gruppenzugehörigkeit für viele Mitglieder auf einmal ändern (über 100 Mitglieder als Hintergrundaufgabe, Antwort 202)', body: bulkBody, response: { 200: bulkResult, 202: jobSchema } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'write');
-    const today = await orgToday(db, actor.organizationId);
-    const { ids, action, groupId, date: on } = req.body;
-    const writable = new Set(
-      (await db.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('id', 'in', ids).where(applyScope(actor, today, 'write')).execute()).map((r) => r.id),
-    );
-    const skipped: { id: string; reason: string }[] = [];
-    let succeeded = 0;
-    await db.transaction().execute(async (tx) => {
-      await assertGroup(tx, actor, groupId);
-      for (const id of ids) {
-        if (!writable.has(id)) {
-          skipped.push({ id, reason: 'Nicht in Deinem Bereich oder nicht gefunden.' });
-          continue;
-        }
-        if (action === 'add_to_group') {
-          const overlap = await tx
-            .selectFrom('group_membership')
-            .select('id')
-            .where('member_id', '=', id)
-            .where('group_id', '=', groupId)
-            .where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>=', on)]))
-            .executeTakeFirst();
-          if (overlap) {
-            skipped.push({ id, reason: 'Ist zu diesem Datum schon in der Gruppe.' });
-            continue;
-          }
-          await tx.insertInto('group_membership').values({ organization_id: actor.organizationId, member_id: id, group_id: groupId, valid_from: on }).execute();
-        } else {
-          const res = await tx
-            .updateTable('group_membership')
-            .set({ valid_to: on })
-            .where('member_id', '=', id)
-            .where('group_id', '=', groupId)
-            .where('valid_to', 'is', null)
-            .where('valid_from', '<=', on)
-            .executeTakeFirst();
-          if (Number(res.numUpdatedRows) === 0) {
-            skipped.push({ id, reason: 'Ist zu diesem Datum nicht in der Gruppe.' });
-            continue;
-          }
-        }
-        succeeded++;
-      }
-      await audit(tx, actor.organizationId, actor, { action: `member.bulk.${action}`, entityType: 'club_group', entityId: groupId, diff: { date: on, ids, succeeded, skipped: skipped.length } });
-    });
-    return { succeeded, skipped };
+    await assertGroup(db, actor, req.body.groupId);
+    if (req.body.ids.length > BULK_INLINE_MAX) {
+      // The selection is frozen now; the job re-checks the starting user's rights and scope when it runs.
+      const job = await db.insertInto('job').values({ organization_id: actor.organizationId, kind: 'member_bulk', created_by: actor.userId, params: JSON.stringify(req.body) }).returningAll().executeTakeFirstOrThrow();
+      reply.status(202);
+      return jobDto(job);
+    }
+    return memberBulk(db, actor, req.body);
   });
 };
 
-/** The group must exist in the organisation and, for scoped actors, be one of their groups. */
 /** Person, membership (number from the pattern) and group memberships in the caller's transaction. */
 /** `requireCustom`: only the create form can ask for the club's required custom fields; imports and admitted applications cannot. */
 export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof memberCreate>, today: string, action = 'member.created', importRunId: string | null = null, requireCustom = false) {
@@ -423,12 +396,4 @@ export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof m
   }
   await audit(tx, actor.organizationId, actor, { action, entityType: 'member', entityId: member.id, diff: { status: [null, status], membershipNumber: [null, number] } });
   return member.id;
-}
-
-export async function assertGroup(db: Db, actor: Actor, groupId: string) {
-  const group = await db.selectFrom('club_group').select(['id', 'archived_at']).where('id', '=', groupId).where('organization_id', '=', actor.organizationId).executeTakeFirst();
-  if (!group) throw new Problem(404, 'not-found', 'Gruppe nicht gefunden.');
-  if (group.archived_at) throw new Problem(409, 'archived', 'Die Gruppe ist archiviert.');
-  const scope = scopeOf(actor, 'members', 'write');
-  if (scope !== null && !scope.includes(groupId)) throw forbidden('members:write (Gruppe außerhalb Deines Bereichs)');
 }

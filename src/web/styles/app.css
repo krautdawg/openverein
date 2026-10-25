@@ -372,6 +372,11 @@ dialog::backdrop { background: rgb(20 32 46 / 0.35); }
 .bulkbar .select, .bulkbar .input { height: 32px; width: auto; }
 .bulkbar .btn { height: 32px; }
 .bulkbar strong { margin-right: var(--s-2); }
+/* On the dark bar: light secondary text (9.6:1) and visible ghost buttons. */
+.bulkbar .muted { color: #c4ccd6; }
+.bulkbar .btn-ghost { color: #fff; }
+.bulkbar .btn-ghost:hover { background: rgb(255 255 255 / 0.12); }
+.bulk-all { display: flex; align-items: center; gap: var(--s-2); font-size: var(--text-sm); color: var(--ink-2); margin-bottom: var(--s-2); }
 
 .table td.cb, .table th.cb { width: 40px; padding-right: 0; }
 .table td.cb input, .table th.cb input { width: 16px; height: 16px; accent-color: var(--accent); }

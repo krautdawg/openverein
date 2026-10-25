@@ -9,7 +9,7 @@ import type { ClubGroupTable } from '../db.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { applyScope, currentGroups, loadMemberRow, memberColumns, orgToday, toListItem } from '../members/query.ts';
 import { requirePermission, restrictedFields, type Actor } from '../policy.ts';
-import { assertGroup } from './members.ts';
+import { assertGroup } from '../members/bulk.ts';
 
 CONSTRAINT_MESSAGES.club_group_code_key = 'Dieses Kürzel ist schon vergeben.';
 CONSTRAINT_MESSAGES.group_membership_member_id_group_id_daterange_excl = 'In diesem Zeitraum ist das Mitglied schon in der Gruppe.';
