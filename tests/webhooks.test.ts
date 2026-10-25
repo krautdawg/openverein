@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
-import { isPrivateAddress, processWebhooks, signature } from '../src/server/webhooks/worker.ts';
+import { isPrivateAddress, processWebhooks, pruneWebhookDeliveries, signature } from '../src/server/webhooks/worker.ts';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
@@ -63,6 +63,10 @@ describe('webhooks', () => {
       expect(payload).toMatchObject({ event: 'member.created', entityType: 'member' });
       expect(payload).not.toHaveProperty('diff');
       expect(last.headers['x-openverein-signature']).toBe(signature(secret, Number(last.headers['x-openverein-timestamp']), last.body));
+
+      // Old delivered entries are pruned, fresh ones kept.
+      await ctx.db.updateTable('webhook_delivery').set({ occurred_at: new Date(Date.now() - 31 * 86_400_000) }).where('status', '=', 'sent').execute();
+      expect(await pruneWebhookDeliveries(ctx.db)).toBe(1);
 
       const treasurer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Kassenwart', null) });
       expect((await treasurer.get('/webhooks')).status).toBe(403);
