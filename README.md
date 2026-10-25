@@ -39,6 +39,10 @@ docker compose --profile app up --build
 
 Then open http://localhost:3300.
 
+## Run it on a server
+
+`./ovctl install` sets up Caddy (HTTPS), the app and Postgres with Docker Compose; `./ovctl backup`, `restore`, `update` and `doctor` keep it running. See [docs/operations.md](docs/operations.md).
+
 ## Tests
 
 ```sh
