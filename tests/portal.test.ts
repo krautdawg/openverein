@@ -18,6 +18,15 @@ beforeEach(async () => {
 });
 
 const inbox = async (to: string) => (await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`)).json()).messages as { ID: string; Subject: string }[];
+/** Waits up to two seconds for the n-th mail to an address (mails go out after the response). */
+async function mailTo(to: string, n = 1) {
+  for (let i = 0; i < 40; i++) {
+    const m = await inbox(to);
+    if (m.length >= n) return m;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`no mail to ${to}`);
+}
 const text = async (id: string) => String((await (await fetch(`${MAILPIT}/api/v1/message/${id}`)).json()).Text);
 const post = (url: string, payload: unknown, cookie?: string) => ctx.app.inject({ method: 'POST', url: `/api/v1${url}`, headers: cookie ? { cookie } : {}, payload: payload as object });
 const get = (url: string, cookie: string) => ctx.app.inject({ method: 'GET', url: `/api/v1${url}`, headers: { cookie } });
@@ -70,14 +79,13 @@ describe('member portal', () => {
     await admin.post('/members', { lastName: 'Code', email: 'code@example.org', joinDate: '2024-01-01' });
     await post('/portal/auth/request-code', { email: 'code@example.org' });
     for (let i = 0; i < 5; i++) expect((await post('/portal/auth/verify', { email: 'code@example.org', code: '000000' })).statusCode).toBe(400);
-    await new Promise((r) => setTimeout(r, 300));
-    const code = (await text((await inbox('code@example.org'))[0]!.ID)).match(/\b(\d{6})\b/)![1]!;
+    const code = (await text((await mailTo('code@example.org'))[0]!.ID)).match(/\b(\d{6})\b/)![1]!;
     expect((await post('/portal/auth/verify', { email: 'code@example.org', code })).statusCode).toBe(400); // used up by wrong attempts
     // An admin can hand out a code when mail does not arrive; a newer mailed code does not hide it.
     const m = (await admin.get('/members?q=code')).body.items[0].id;
     const issued = (await admin.post(`/members/${m}/portal-code`, {})).body;
     await post('/portal/auth/request-code', { email: 'code@example.org' });
-    await new Promise((r) => setTimeout(r, 300));
+    await mailTo('code@example.org', 2);
     expect((await post('/portal/auth/verify', { email: 'code@example.org', code: issued.code })).statusCode).toBe(200);
     // Signing in consumes every live code for the address.
     expect(await ctx.db.selectFrom('login_code').select('id').where('consumed_at', 'is', null).execute()).toHaveLength(0);

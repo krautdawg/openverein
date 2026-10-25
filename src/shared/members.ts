@@ -1,3 +1,4 @@
+import { PAYMENT_METHODS } from './fees.ts';
 import { z } from 'zod';
 
 export const MEMBER_STATUSES = ['applicant', 'future', 'active', 'resigned', 'former', 'rejected'] as const;
@@ -147,6 +148,18 @@ export const memberListQuery = z.object({
   status: z.union([memberStatus, z.array(memberStatus)]).optional(),
   groupId: z.uuid().optional(),
   includeFormer: z.stringbool().optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
+  ageFrom: z.coerce.number().int().min(0).max(120).optional(),
+  ageTo: z.coerce.number().int().min(0).max(120).optional(),
+  joinFrom: date.optional(),
+  joinTo: date.optional(),
+  exitFrom: date.optional(),
+  exitTo: date.optional(),
+  /** active SEPA mandate or none */
+  mandate: z.enum(['active', 'none']).optional(),
+  household: z.enum(['yes', 'no']).optional(),
+  /** open receivables (open or partly paid invoices) */
+  openBalance: z.stringbool().optional(),
   /** one custom field filter: `<field id>:<value>` (text matches partly, others exactly) */
   cf: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.{1,100}$/, 'Format: <Feld-ID>:<Wert>').optional(),
   sort: z.enum(['name', 'number', 'joinDate']).default('name'),

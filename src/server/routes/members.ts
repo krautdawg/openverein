@@ -69,13 +69,33 @@ const listFilter = (q: z.infer<typeof memberListQuery>, actor: Actor, today: str
     .where(applyScope(actor, today, 'read'));
   const statuses = q.status ? ([] as MemberStatus[]).concat(q.status) : null;
   if (statuses) query = query.where('member.status', 'in', statuses);
-  else if (!q.includeFormer) query = query.where('member.status', 'not in', ['former', 'rejected']);
+  // An exit range is about former members: it includes them.
+  else if (!q.includeFormer && !q.exitFrom && !q.exitTo) query = query.where('member.status', 'not in', ['former', 'rejected']);
   if (q.groupId) {
     query = query.where(
       sql<boolean>`exists (select 1 from group_membership gm where gm.member_id = member.id and gm.group_id = ${q.groupId}
         and gm.valid_from <= ${today}::date and (gm.valid_to is null or gm.valid_to >= ${today}::date))`,
     );
   }
+  // Facets reveal what they filter on: each needs the right to see that data (403, never a silently wider list).
+  if ((q.ageFrom !== undefined || q.ageTo !== undefined) && restrictedFields(actor).has('birth_date')) throw forbidden('members.field.birth_date');
+  if (q.mandate && !can(actor, 'sepa', 'read')) throw forbidden('sepa:read');
+  if (q.openBalance && !can(actor, 'invoices', 'read')) throw forbidden('invoices:read');
+  if (q.paymentMethod && !can(actor, 'fees', 'read')) throw forbidden('fees:read');
+  // Facets combine with AND; ages are completed years on today's date (members without birth date drop out).
+  if (q.paymentMethod) query = query.where('member.payment_method', '=', q.paymentMethod);
+  if (q.ageFrom !== undefined) query = query.where(sql<boolean>`person.birth_date <= (${today}::date - make_interval(years => ${q.ageFrom}))`);
+  if (q.ageTo !== undefined) query = query.where(sql<boolean>`person.birth_date > (${today}::date - make_interval(years => ${q.ageTo + 1}))`);
+  if (q.joinFrom) query = query.where('member.join_date', '>=', q.joinFrom);
+  if (q.joinTo) query = query.where('member.join_date', '<=', q.joinTo);
+  if (q.exitFrom) query = query.where('member.exit_date', '>=', q.exitFrom);
+  if (q.exitTo) query = query.where('member.exit_date', '<=', q.exitTo);
+  if (q.mandate) {
+    const has = sql<boolean>`exists (select 1 from sepa_mandate s where s.person_id = person.id and s.status = 'active')`;
+    query = query.where(q.mandate === 'active' ? has : sql<boolean>`not ${has}`);
+  }
+  if (q.household) query = query.where('member.household_id', q.household === 'yes' ? 'is not' : 'is', null);
+  if (q.openBalance) query = query.where(sql<boolean>`exists (select 1 from invoice i where (i.member_id = member.id or i.recipient_person_id = person.id) and i.status in ('open', 'partially_paid') and i.kind in ('membership', 'other', 'dunning_fee'))`);
   if (q.cf) {
     const [id, value] = [q.cf.slice(0, 36), q.cf.slice(37)];
     const like = `%${value.replace(/[%_\\]/g, (c) => '\\' + c)}%`;

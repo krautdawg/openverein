@@ -2,6 +2,8 @@ const env = process.env;
 
 export const config = {
   port: Number(env.PORT ?? 3300),
+  /** API requests per minute and client address (one office behind one address shares it) */
+  rateLimitPerMinute: Math.max(Number(env.RATE_LIMIT_PER_MINUTE ?? 600) || 600, 60),
   databaseUrl: env.DATABASE_URL ?? 'postgres://openverein:openverein@localhost:54329/openverein',
   cookieSecure: env.COOKIE_SECURE === 'true',
   // Comma-separated proxy addresses/CIDRs whose X-Forwarded-For is trusted (e.g. "127.0.0.1,172.16.0.0/12").

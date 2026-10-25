@@ -10,7 +10,7 @@ import { destroySession, insertSession, requireActor, setSessionCookie, sha256 }
 import type { AppUser, Db } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import { blindIndex, decrypt, encrypt } from '../crypto.ts';
-import { level, loadGrants, mfaRequired, MODULES, requireStepUp, type Grant } from '../policy.ts';
+import { level, loadGrants, mfaRequired, MODULES, requireStepUp, type Grant, restrictedFields } from '../policy.ts';
 import { newSecret, otpauthUri, recoveryCodes, verifyCode } from '../auth/totp.ts';
 
 const MAX_FAILS = 5;
@@ -30,6 +30,7 @@ async function meOf(db: Db, user: AppUser, grants?: Grant[]) {
     organization: { id: org.id, name: org.name, isDemo: org.is_demo },
     permissions: Object.fromEntries(MODULES.map((m) => [m, level(actor, m)])),
     roles: g.map((x) => x.roleName),
+    restricted: [...restrictedFields(actor)],
     mfa: { required: !config.demoMode && !org.is_demo && mfaRequired(g), enrolled: config.demoMode || org.is_demo || !!user.totp_enabled_at },
   };
 }
