@@ -271,6 +271,7 @@ export interface FeePlanVersionTable {
   proration: Generated<'none' | 'month'>;
   admission_fee_cents: Generated<number>;
   created_at: Timestamp;
+  age_brackets: Generated<unknown>;
 }
 
 export interface FeeAssignmentTable {

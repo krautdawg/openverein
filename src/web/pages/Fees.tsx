@@ -12,6 +12,7 @@ import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { todayLocal } from '../lib/hooks.ts';
+import { euroInput, parseEuro } from '../lib/money.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 export function FeesLayout({ children }: { children: React.ReactNode }) {
@@ -61,7 +62,33 @@ function VersionFields({ error, defaults }: { error?: ApiError; defaults?: Plan[
           </select>
         </div>
       </div>
+      <AgeBrackets defaults={defaults?.ageBrackets ?? []} error={error?.fieldError('version.ageBrackets') ?? error?.fieldError('ageBrackets')} />
     </>
+  );
+}
+
+/** Optional age-based amounts: "bis 17 Jahre 60 €"; the age at the start of each period decides. Sent as JSON in a hidden field. */
+function AgeBrackets({ defaults, error }: { defaults: { upToAge: number; amountCents: number }[]; error?: string }) {
+  const [rows, setRows] = useState(defaults.map((b) => ({ age: String(b.upToAge), amount: euroInput(b.amountCents) })));
+  const value = rows.filter((r) => r.age !== '' || r.amount !== '').map((r) => ({ upToAge: r.age === '' ? NaN : Number(r.age), amountCents: parseEuro(r.amount) ?? NaN }));
+  const set = (i: number, k: 'age' | 'amount', v: string) => setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  return (
+    <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+      <legend className="label" style={{ padding: 0, marginBottom: 'var(--s-2)' }}>Altersstufen (optional)</legend>
+      <input type="hidden" name="ageBrackets" value={JSON.stringify(value)} />
+      {rows.map((r, i) => (
+        <div key={i} className="inline-edit" style={{ marginBottom: 'var(--s-2)' }}>
+          <span>bis</span>
+          <input className="input num" inputMode="numeric" style={{ width: 72 }} aria-label={`Altersstufe ${i + 1}: bis Alter`} value={r.age} onChange={(e) => set(i, 'age', e.target.value)} />
+          <span>Jahre</span>
+          <input className="input num" inputMode="decimal" style={{ width: 110 }} aria-label={`Altersstufe ${i + 1}: Betrag in Euro`} placeholder="0,00 €" value={r.amount} onChange={(e) => set(i, 'amount', e.target.value)} />
+          <button type="button" className="linklike" onClick={() => setRows(rows.filter((_, j) => j !== i))}>entfernen</button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-ghost" style={{ alignSelf: 'flex-start', paddingLeft: 0 }} onClick={() => setRows([...rows, { age: '', amount: '' }])}>Altersstufe hinzufügen</button>
+      <p className="hint">Zum Beispiel Kinder bis 17 Jahre günstiger. Es zählt das Alter zu Beginn des Zeitraums; wer älter ist, zahlt den Betrag oben.</p>
+      {error && <p className="error">{error}</p>}
+    </fieldset>
   );
 }
 
@@ -72,6 +99,7 @@ const versionFrom = (f: FormData) => ({
   anchor: f.get('anchor'),
   proration: f.get('proration'),
   admissionFeeCents: f.get('admissionFeeCents') === '' ? 0 : Number(f.get('admissionFeeCents')),
+  ageBrackets: JSON.parse(String(f.get('ageBrackets') ?? '[]')) as unknown[],
 });
 
 export function FeePlans({ me }: { me: Me }) {
@@ -186,7 +214,7 @@ function PlanSheet({ plan, canWrite, onClose }: { plan: Plan | null; canWrite: b
                   <time>ab {formatDate(v.validFrom)}</time>
                   <span>
                     <strong className="num">{euro(v.amountCents)}</strong> {INTERVAL_LABEL(v.intervalMonths)}
-                    <span className="muted"> · {v.anchor === 'calendar' ? 'am Kalender' : 'ab Eintritt'}, {v.proration === 'month' ? 'anteilig' : 'voller Betrag'}{v.admissionFeeCents > 0 && ` · Aufnahmegebühr ${euro(v.admissionFeeCents)}`}</span>
+                    <span className="muted"> · {v.anchor === 'calendar' ? 'am Kalender' : 'ab Eintritt'}, {v.proration === 'month' ? 'anteilig' : 'voller Betrag'}{v.admissionFeeCents > 0 && ` · Aufnahmegebühr ${euro(v.admissionFeeCents)}`}{v.ageBrackets.length > 0 && ` · ${v.ageBrackets.map((b) => `bis ${b.upToAge} Jahre ${euro(b.amountCents)}`).join(', ')}`}</span>
                   </span>
                 </li>
               ))}

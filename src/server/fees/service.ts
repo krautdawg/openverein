@@ -13,6 +13,8 @@ export interface MemberInputs {
   status: string;
   exitDate: string | null;
   paymentMethod: PaymentMethod;
+  /** for age brackets */
+  birthDate: string | null;
   assignments: Assignment[];
   billed: BilledRange[];
 }
@@ -22,7 +24,7 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
   let q = db
     .selectFrom('member')
     .innerJoin('person', 'person.id', 'member.person_id')
-    .select(['member.id', 'member.person_id', 'member.membership_number', 'member.status', 'member.exit_date', 'member.payment_method', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
+    .select(['member.id', 'member.person_id', 'member.membership_number', 'member.status', 'member.exit_date', 'member.payment_method', 'person.birth_date', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
     .where('member.organization_id', '=', organizationId)
     .where('member.status', 'not in', ['applicant', 'rejected']);
   if (opts.memberIds) q = q.where('member.id', 'in', opts.memberIds.length ? opts.memberIds : ['00000000-0000-0000-0000-000000000000']);
@@ -47,7 +49,7 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
   const versions = new Map<string, PlanVersion[]>();
   for (const v of versionRows) {
     const list = versions.get(v.fee_plan_id) ?? [];
-    list.push({ validFrom: v.valid_from, amountCents: v.amount_cents, intervalMonths: v.interval_months, anchor: v.anchor, proration: v.proration, admissionFeeCents: v.admission_fee_cents });
+    list.push({ validFrom: v.valid_from, amountCents: v.amount_cents, intervalMonths: v.interval_months, anchor: v.anchor, proration: v.proration, admissionFeeCents: v.admission_fee_cents, ageBrackets: v.age_brackets as PlanVersion['ageBrackets'] });
     versions.set(v.fee_plan_id, list);
   }
   const billedRows = await db
@@ -68,6 +70,7 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
       status: m.status,
       exitDate: m.exit_date,
       paymentMethod: m.payment_method,
+      birthDate: m.birth_date,
       assignments: assignments
         .filter((a) => a.member_id === m.id)
         .map((a) => ({ id: a.id, planId: a.fee_plan_id, planName: a.name, lineText: a.line_text, isMain: a.is_main, validFrom: a.valid_from, validTo: a.valid_to, firstPeriodStart: a.first_period_start, overrideCents: a.override_cents })),
@@ -82,11 +85,11 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
  */
 export function inputHash(m: MemberInputs, versions: Map<string, PlanVersion[]>, until: string, hasMandate = false) {
   const plans = [...new Set(m.assignments.map((a) => a.planId))].sort().map((p) => [p, versions.get(p)]);
-  return createHash('sha256').update(JSON.stringify([until, m.membershipNumber, m.exitDate, m.paymentMethod, hasMandate, m.assignments, m.billed, plans])).digest('hex').slice(0, 32);
+  return createHash('sha256').update(JSON.stringify([until, m.membershipNumber, m.exitDate, m.paymentMethod, hasMandate, m.birthDate, m.assignments, m.billed, plans])).digest('hex').slice(0, 32);
 }
 
 export function previewFor(m: MemberInputs, versions: Map<string, PlanVersion[]>, until: string, today: string, hasMandate: boolean): PreviewMember {
-  const { lines, skipped } = assess({ assignments: m.assignments, versions, billed: m.billed, until, exitDate: m.exitDate, today, membershipNumber: m.membershipNumber });
+  const { lines, skipped } = assess({ assignments: m.assignments, versions, billed: m.billed, until, exitDate: m.exitDate, today, membershipNumber: m.membershipNumber, birthDate: m.birthDate });
   const total = lines.reduce((s, l) => s + l.amountCents, 0);
   const warnings: string[] = [];
   if (lines.length > 0) {
