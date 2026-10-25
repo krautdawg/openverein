@@ -95,4 +95,25 @@ describe('managed hosting (several clubs)', () => {
     expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { host: 'verein-a.example.org' }, payload: { email: 'admin-a@example.org', password: 'ein-sehr-langes-passwort' } })).statusCode).toBe(401);
     expect((await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' })).statusCode).toBe(404);
   });
+
+  it('refuses to delete a club while a row of another club points into it, and deletes nothing', async () => {
+    const a = await club('TSV A', 'verein-a.example.org', 'admin-a@example.org');
+    const b = await club('SV B', 'verein-b.example.org', 'admin-b@example.org');
+    const anna = (await a.admin.post('/members', { firstName: 'Anna', lastName: 'Alpha', joinDate: '2024-01-01' })).body;
+    const bert = (await b.admin.post('/members', { firstName: 'Bert', lastName: 'Beta', joinDate: '2024-01-01' })).body;
+    // A cross-club reference the app never creates, made by hand: club B's member sits in club A's household.
+    const hh = await ctx.db.insertInto('household').values({ organization_id: a.id, name: 'Familie Alpha', payer_person_id: anna.personId }).returning('id').executeTakeFirstOrThrow();
+    await ctx.db.updateTable('member').set({ household_id: hh.id }).where('id', '=', bert.id).execute();
+    const count = async (org: string) => Number((await sql<{ n: number }>`select (select count(*) from member where organization_id = ${org}) + (select count(*) from person where organization_id = ${org}) as n`.execute(ctx.db)).rows[0]!.n);
+    const before = await count(a.id);
+
+    const res = await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().type).toMatch(/purge-dangling$/);
+    expect(res.json().title).toContain('member_household_id_fkey');
+    // Rolled back: club A is complete, and the replica mode did not outlive the transaction.
+    expect(await count(a.id)).toBe(before);
+    expect((await operator('GET', '/tenants')).json()).toHaveLength(2);
+    expect((await sql<{ r: string }>`select current_setting('session_replication_role') as r`.execute(ctx.db)).rows[0]!.r).toBe('origin');
+  });
 });
