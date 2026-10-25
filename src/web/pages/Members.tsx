@@ -114,6 +114,7 @@ export function Members({ me }: { me: Me }) {
         actions={
           <>
             <Link className="btn btn-ghost" to="/mitglieder/haushalte">Haushalte</Link>
+            <Link className="btn btn-ghost" to="/mitglieder/dubletten">Dubletten</Link>
             <a className="btn" href={exportHref} download><Download size={16} aria-hidden /> CSV</a>
             {canWrite && <button className="btn btn-primary" onClick={() => setCreating(true)} aria-keyshortcuts="n"><Plus size={16} aria-hidden /> Mitglied anlegen</button>}
           </>

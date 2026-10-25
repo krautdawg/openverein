@@ -21,6 +21,7 @@ import { Accounts, EuerReport, Journal, LedgerExports, LedgerSettings } from './
 import { DonationReceipts, Donations, DonationSettingsPage } from './pages/Donations.tsx';
 import { Households } from './pages/Households.tsx';
 import { CashBookPage, Receipts } from './pages/Receipts.tsx';
+import { Duplicates } from './pages/Duplicates.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
@@ -83,6 +84,7 @@ function AdminApp() {
         <Route index element={<Overview me={me.data} />} />
         <Route path="/mitglieder" element={<Members me={me.data} />} />
         <Route path="/mitglieder/haushalte" element={<Households me={me.data} />} />
+        <Route path="/mitglieder/dubletten" element={<Duplicates me={me.data} />} />
         <Route path="/mitglieder/:id" element={<Members me={me.data} />} />
         <Route path="/gruppen" element={<Groups me={me.data} />} />
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
