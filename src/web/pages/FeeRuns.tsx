@@ -64,6 +64,7 @@ export function FeeRuns({ me }: { me: Me }) {
           <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary" aria-busy={busy} disabled={busy}>Vorschau erstellen</button></div>
         </form>
       )}
+      <Schedule canWrite={canWrite} />
       <div className="table-wrap">
         {runs.data?.length === 0 ? (
           <div className="empty-state"><h3>Noch kein Beitragslauf.</h3><p>Ordne Mitgliedern Beitragsarten zu, dann erstellst Du hier die erste Vorschau.</p></div>
@@ -254,5 +255,51 @@ export function FeeRunDetail({ me }: { me: Me }) {
         </>
       )}
     </FeesLayout>
+  );
+}
+
+interface ScheduleState { day: number | null; leadDays: number; setBy: string | null; lastRunOn: string | null }
+
+/** Monthly automatic preview: set up by a treasurer, runs with their rights, posting still needs a click. */
+function Schedule({ canWrite }: { canWrite: boolean }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['fee-schedule'], queryFn: () => api<ScheduleState>('/fee-schedule') });
+  const [error, setError] = useState<string>();
+  const [saved, setSaved] = useState(false);
+  if (!data) return null;
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setError(undefined);
+    setSaved(false);
+    try {
+      qc.setQueryData(['fee-schedule'], await api<ScheduleState>('/fee-schedule', { method: 'PUT', body: { day: f.get('day') ? Number(f.get('day')) : null, leadDays: Number(f.get('leadDays')) } }));
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.problem.errors?.map((x) => x.message).join(' ') ?? err.problem.detail ?? err.problem.title) : 'Das hat nicht geklappt.');
+    }
+  }
+  const state = data.day ? `Eingeschaltet: am ${data.day}. jeden Monats, eingerichtet von ${data.setBy ?? '–'}${data.lastRunOn ? `, zuletzt am ${formatDate(data.lastRunOn)}` : ''}.` : 'Ausgeschaltet.';
+  return (
+    <section aria-labelledby="schedule" style={{ marginBottom: 'var(--s-6)' }}>
+      <h3 id="schedule" style={{ marginBottom: 'var(--s-2)' }}>Automatische Vorschau</h3>
+      <p className="meta" style={{ maxWidth: '72ch', marginBottom: 'var(--s-3)' }}>OpenVerein erstellt einmal im Monat die Vorschau und schickt Dir den Link. Gebucht wird erst, wenn Du bestätigst.</p>
+      <p style={{ marginBottom: 'var(--s-3)' }}>{state}</p>
+      {canWrite && (
+        <form className="age-rule" onSubmit={save} aria-label="Automatische Vorschau">
+          <span>Am</span>
+          <select name="day" className="select" aria-label="Tag im Monat" defaultValue={data.day ?? ''}>
+            <option value="">nie</option>
+            {Array.from({ length: 28 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}.</option>)}
+          </select>
+          <span>jeden Monats, alle Zeiträume, die in den nächsten</span>
+          <input name="leadDays" type="number" min={0} max={366} className="input" aria-label="Vorlauf in Tagen" defaultValue={data.leadDays} />
+          <span>Tagen beginnen</span>
+          <button className="btn">Speichern</button>
+          {saved && <span className="meta" role="status">Gespeichert.</span>}
+          {error && <span className="error" role="alert">{error}</span>}
+        </form>
+      )}
+    </section>
   );
 }

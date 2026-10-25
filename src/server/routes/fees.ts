@@ -1,7 +1,9 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql, type Selectable } from 'kysely';
 import { z } from 'zod';
-import { addDays } from '../../shared/dates.ts';
+import { addDays, formatDate } from '../../shared/dates.ts';
+import { config } from '../config.ts';
+import { mailer, senderOf } from '../mail/transport.ts';
 import {
   assignment,
   assignmentInput,
@@ -27,7 +29,7 @@ import { previewHouseholds, type PreviewHousehold } from '../fees/household.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
-import { requireClubWide, requirePermission, scopeOf, type Actor } from '../policy.ts';
+import { loadGrants, requireClubWide, requirePermission, scopeOf, type Actor } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.fee_plan_organization_id_name_key = 'Einen Beitrag mit diesem Namen gibt es schon.';
 CONSTRAINT_MESSAGES.fee_plan_version_fee_plan_id_valid_from_key = 'Ab diesem Datum gibt es schon einen Preis.';
@@ -37,6 +39,43 @@ CONSTRAINT_MESSAGES.assessment_no_double_billing = 'Mindestens ein Zeitraum ist 
 
 const idParam = z.object({ id: z.uuid() });
 const tags = ['fees'];
+
+/** Set when the routes are registered: the scheduler creates previews through the same code as the API. */
+let scheduledRun: ((actor: Actor, until: string) => Promise<{ id: string; totals: { members: number; totalCents: number } } | null>) | undefined;
+
+/**
+ * Monthly fee-run previews (spec X2): on the set day, a preview up to today + lead days for the user who set it up,
+ * with their current rights, and a mail to them. Each month is claimed before the run, so it happens once.
+ */
+export async function runFeeSchedules(db: Db) {
+  if (!scheduledRun) return 0;
+  const orgs = await db.selectFrom('organization').select(['id', 'name', 'fee_schedule_day', 'fee_schedule_lead_days', 'fee_schedule_user_id', 'fee_schedule_last_run']).where('fee_schedule_day', 'is not', null).execute();
+  let created = 0;
+  for (const o of orgs) {
+    const today = await orgToday(db, o.id);
+    const monthStart = `${today.slice(0, 7)}-01`;
+    if (Number(today.slice(8, 10)) < o.fee_schedule_day! || (o.fee_schedule_last_run && o.fee_schedule_last_run >= monthStart)) continue;
+    const claimed = await db.updateTable('organization').set({ fee_schedule_last_run: today }).where('id', '=', o.id)
+      .where((eb) => eb.or([eb('fee_schedule_last_run', 'is', null), eb('fee_schedule_last_run', '<', monthStart)])).executeTakeFirst();
+    if (!claimed.numUpdatedRows) continue;
+    const user = o.fee_schedule_user_id ? await db.selectFrom('app_user').select(['id', 'name', 'email', 'status', 'organization_id']).where('id', '=', o.fee_schedule_user_id).executeTakeFirst() : undefined;
+    const until = addDays(today, o.fee_schedule_lead_days);
+    try {
+      if (!user || user.status !== 'active' || user.organization_id !== o.id) throw new Problem(409, 'schedule-user', 'Das Konto, das die automatische Vorschau eingerichtet hat, ist nicht mehr aktiv.');
+      const actor: Actor = { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: o.id, grants: await loadGrants(db, user.id) };
+      const run = await scheduledRun(actor, until);
+      if (!run) continue;
+      created++;
+      const org = await db.selectFrom('organization').selectAll().where('id', '=', o.id).executeTakeFirstOrThrow();
+      const sender = senderOf(org);
+      const sum = (run.totals.totalCents / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+      await mailer().sendMail({ from: { name: sender.name, address: sender.address }, to: user.email, subject: `Beitragslauf bis ${formatDate(until)}: Vorschau ist fertig`, text: `Hallo ${user.name},\n\ndie automatische Vorschau des Beitragslaufs bis ${formatDate(until)} ist fertig: ${run.totals.members} Mitglieder, ${sum}. Gebucht ist noch nichts.\n\nPrüfen und buchen: ${config.publicUrl}/beitraege/laeufe/${run.id}\n\n${o.name}` }).catch(() => undefined);
+    } catch (err) {
+      await audit(db, o.id, null, { action: 'fee_schedule.failed', entityType: 'organization', entityId: o.id, diff: { reason: [null, err instanceof Problem ? err.message : 'Fehler beim Erstellen der Vorschau'] } });
+    }
+  }
+  return created;
+}
 
 /** One lock per club for fee runs and every change to their inputs: a run posts what its preview saw. */
 const lockFees = (tx: Db, organizationId: string) => sql`select pg_advisory_xact_lock(hashtext(${`fees:${organizationId}`}))`.execute(tx);
@@ -350,30 +389,63 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     }));
   });
 
-  app.post('/fee-runs', { schema: { tags, summary: 'Vorschau eines Beitragslaufs erstellen (bucht noch nichts)', body: feeRunCreate, response: { 201: feeRun } } }, async (req, reply) => {
-    const actor = requireActor(req);
+  /** Creates a preview (API and scheduler); `skipEmpty` returns null instead of an empty run. */
+  async function createRun(actor: Actor, body: { until: string; issueDate?: string | null; dueDate?: string | null; groupId?: string | null }, skipEmpty = false) {
     // A run bills across groups and households: only for club-wide fee and invoice rights (no partial scopes to combine).
     requireClubWide(actor, 'fees', 'write');
     requireClubWide(actor, 'invoices', 'write');
     const today = await orgToday(db, actor.organizationId);
     const org = await db.selectFrom('organization').select('payment_terms_days').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
-    const issueDate = req.body.issueDate ?? today;
-    const dueDate = req.body.dueDate ?? addDays(issueDate, org.payment_terms_days);
+    const issueDate = body.issueDate ?? today;
+    const dueDate = body.dueDate ?? addDays(issueDate, org.payment_terms_days);
     if (dueDate < issueDate) throw new Problem(400, 'validation', 'Die Fälligkeit liegt vor dem Rechnungsdatum.', undefined, { errors: [{ field: 'dueDate', message: 'Liegt vor dem Rechnungsdatum.' }] });
-    const members = await computePreview(actor, req.body.until, req.body.groupId ?? null);
+    const members = await computePreview(actor, body.until, body.groupId ?? null);
+    if (skipEmpty && !members.some((m) => m.lines.length > 0)) return null;
     const households = await previewHouseholds(db, actor.organizationId, members, issueDate);
-    const r = await db.transaction().execute(async (tx) => {
+    return db.transaction().execute(async (tx) => {
         await lockFees(tx, actor.organizationId);
       const r = await tx
         .insertInto('fee_run')
-        .values({ organization_id: actor.organizationId, until: req.body.until, issue_date: issueDate, due_date: dueDate, group_id: req.body.groupId ?? null, preview: JSON.stringify({ members, households }), input_hash: members.map((m) => m.hash).join(','), created_by: actor.userId })
+        .values({ organization_id: actor.organizationId, until: body.until, issue_date: issueDate, due_date: dueDate, group_id: body.groupId ?? null, preview: JSON.stringify({ members, households }), input_hash: members.map((m) => m.hash).join(','), created_by: actor.userId })
         .returningAll()
         .executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'fee_run.previewed', entityType: 'fee_run', entityId: r.id, diff: { until: [null, r.until], members: [null, members.length] } });
       return r;
     });
+  }
+  scheduledRun = async (actor, until) => {
+    const r = await createRun(actor, { until }, true);
+    return r && runDto(actor, r);
+  };
+
+  app.post('/fee-runs', { schema: { tags, summary: 'Vorschau eines Beitragslaufs erstellen (bucht noch nichts)', body: feeRunCreate, response: { 201: feeRun } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    const r = (await createRun(actor, req.body))!;
     reply.status(201);
     return runDto(actor, r);
+  });
+
+  const schedule = z.object({ day: z.number().int().min(1).max(28).nullable(), leadDays: z.number().int().min(0).max(366) });
+  const scheduleDto = schedule.extend({ setBy: z.string().nullable(), lastRunOn: z.string().nullable() });
+  const scheduleOf = async (organizationId: string) => {
+    const o = await db.selectFrom('organization').leftJoin('app_user', 'app_user.id', 'organization.fee_schedule_user_id').select(['organization.fee_schedule_day', 'organization.fee_schedule_lead_days', 'organization.fee_schedule_last_run', 'app_user.name']).where('organization.id', '=', organizationId).executeTakeFirstOrThrow();
+    return { day: o.fee_schedule_day, leadDays: o.fee_schedule_lead_days, setBy: o.fee_schedule_day ? o.name : null, lastRunOn: o.fee_schedule_last_run };
+  };
+  app.get('/fee-schedule', { schema: { tags, summary: 'Automatische Vorschau des Beitragslaufs (Tag im Monat, Vorlauf)', response: { 200: scheduleDto } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'fees', 'read');
+    return scheduleOf(actor.organizationId);
+  });
+  app.put('/fee-schedule', { schema: { tags, summary: 'Automatische Vorschau einrichten oder abschalten (läuft mit den Rechten der Person, die sie einrichtet)', body: schedule, response: { 200: scheduleDto } } }, async (req) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'fees', 'write');
+    requireClubWide(actor, 'invoices', 'write');
+    if (!actor.userId) throw new Problem(400, 'personal-account', 'Das geht nur mit einem persönlichen Zugang.', 'Die Vorschau läuft mit den Rechten dieser Person und geht an ihre E-Mail-Adresse.');
+    await db.transaction().execute(async (tx) => {
+      await tx.updateTable('organization').set({ fee_schedule_day: req.body.day, fee_schedule_lead_days: req.body.leadDays, fee_schedule_user_id: req.body.day ? actor.userId : null }).where('id', '=', actor.organizationId).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'fee_schedule.updated', entityType: 'organization', entityId: actor.organizationId, diff: { day: [null, req.body.day], leadDays: [null, req.body.leadDays] } });
+    });
+    return scheduleOf(actor.organizationId);
   });
 
   app.get('/fee-runs/:id', { schema: { tags, summary: 'Beitragslauf mit Vorschau', params: idParam, response: { 200: feeRun } } }, async (req) => {
