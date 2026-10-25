@@ -41,6 +41,8 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
   if (inv.status !== 'draft') throw new Problem(409, 'not-draft', 'Die Rechnung ist bereits ausgestellt.');
   const lines = await tx.selectFrom('invoice_line').select(['total_cents']).where('invoice_id', '=', inv.id).execute();
   if (lines.length === 0) throw new Problem(400, 'no-lines', 'Eine Rechnung braucht mindestens eine Position.');
+  const due = dueDate ?? inv.due_date;
+  if (due && due < issueDate && inv.kind !== 'cancellation') throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'dueDate', message: 'Die Fälligkeit liegt vor dem Rechnungsdatum.' }] });
   const total = lines.reduce((s, l) => s + l.total_cents, 0);
   const org = await tx.selectFrom('organization').selectAll().where('id', '=', organizationId).executeTakeFirstOrThrow();
   const person = await tx.selectFrom('person').selectAll().where('id', '=', inv.recipient_person_id).executeTakeFirstOrThrow();
@@ -191,6 +193,12 @@ export async function createDraft(
   return inv.id;
 }
 
+/** Quantity × unit price in cents, exact: quantities have at most two decimals; half a cent rounds away from zero (like PostgreSQL round). */
+export function lineTotal(quantity: number, unitCents: number) {
+  const product = Math.round(quantity * 100) * unitCents;
+  return Math.sign(product) * Math.floor((Math.abs(product) + 50) / 100);
+}
+
 export async function insertLines(tx: Db, organizationId: string, invoiceId: string, lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null; discount?: boolean }[]) {
   let position = 1;
   for (const l of lines) {
@@ -203,7 +211,7 @@ export async function insertLines(tx: Db, organizationId: string, invoiceId: str
         text: l.text,
         quantity: l.quantity,
         unit_cents: l.unitCents,
-        total_cents: Math.round(l.quantity * l.unitCents),
+        total_cents: lineTotal(l.quantity, l.unitCents),
         tax_rate: l.taxRate,
         assessment_id: l.assessmentId ?? null,
         discount: l.discount ?? false,
@@ -222,6 +230,8 @@ export async function cancelInvoice(tx: Db, organizationId: string, invoiceId: s
   if (!['open', 'partially_paid', 'paid', 'written_off'].includes(inv.status) || inv.kind === 'cancellation') {
     throw new Problem(409, 'not-cancellable', 'Nur ausgestellte Rechnungen lassen sich stornieren.');
   }
+  // A cancellation is a negative document; cancelling a credit note would need a positive one, which does not exist yet.
+  if (inv.kind === 'credit_note') throw new Problem(409, 'not-cancellable', 'Eine Gutschrift wird nicht storniert.', 'Stell stattdessen eine Rechnung über den Betrag aus.');
   await assertNotLive(tx, inv.id);
   const paid = await tx.selectFrom('allocation').select('method').where('invoice_id', '=', inv.id).where('status', '=', 'confirmed').executeTakeFirst();
   if (paid) {

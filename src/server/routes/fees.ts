@@ -27,7 +27,7 @@ import { previewHouseholds, type PreviewHousehold } from '../fees/household.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
-import { requirePermission, scopeOf, type Actor } from '../policy.ts';
+import { requireClubWide, requirePermission, scopeOf, type Actor } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.fee_plan_organization_id_name_key = 'Einen Beitrag mit diesem Namen gibt es schon.';
 CONSTRAINT_MESSAGES.fee_plan_version_fee_plan_id_valid_from_key = 'Ab diesem Datum gibt es schon einen Preis.';
@@ -37,6 +37,9 @@ CONSTRAINT_MESSAGES.assessment_no_double_billing = 'Mindestens ein Zeitraum ist 
 
 const idParam = z.object({ id: z.uuid() });
 const tags = ['fees'];
+
+/** One lock per club for fee runs and every change to their inputs: a run posts what its preview saw. */
+const lockFees = (tx: Db, organizationId: string) => sql`select pg_advisory_xact_lock(hashtext(${`fees:${organizationId}`}))`.execute(tx);
 
 export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -81,6 +84,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'fees', 'write');
     const id = await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       const p = await tx.insertInto('fee_plan').values({ organization_id: actor.organizationId, name: req.body.name, line_text: req.body.lineText }).returning('id').executeTakeFirstOrThrow();
       await insertVersion(tx, actor, p.id, req.body.version);
       await audit(tx, actor.organizationId, actor, { action: 'fee_plan.created', entityType: 'fee_plan', entityId: p.id, diff: { name: [null, req.body.name], version: [null, req.body.version] } });
@@ -102,6 +106,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'fees', 'write');
     const before = await planDto(actor, req.params.id);
     await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       await tx.updateTable('fee_plan').set({ ...(req.body.name ? { name: req.body.name } : {}), ...(req.body.lineText ? { line_text: req.body.lineText } : {}), updated_at: new Date() }).where('id', '=', before.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'fee_plan.updated', entityType: 'fee_plan', entityId: before.id, diff: { name: [before.name, req.body.name ?? before.name], lineText: [before.lineText, req.body.lineText ?? before.lineText] } });
     });
@@ -127,6 +132,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
         throw new Problem(409, 'billed-period', `Bis ${billed.last.split('-').reverse().join('.')} ist bereits abgerechnet. Ein neuer Preis gilt frühestens ab dem Tag danach.`);
       }
       await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
         await insertVersion(tx, actor, p.id, req.body);
         await audit(tx, actor.organizationId, actor, { action: 'fee_plan.version_added', entityType: 'fee_plan', entityId: p.id, diff: { version: [p.current, req.body] } });
       });
@@ -140,6 +146,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'fees', 'write');
     const p = await planDto(actor, req.params.id);
     await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       await tx.updateTable('fee_plan').set({ status: p.status === 'active' ? 'retired' : 'active', updated_at: new Date() }).where('id', '=', p.id).execute();
       await audit(tx, actor.organizationId, actor, { action: p.status === 'active' ? 'fee_plan.retired' : 'fee_plan.reactivated', entityType: 'fee_plan', entityId: p.id });
     });
@@ -153,6 +160,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     const used = await db.selectFrom('fee_assignment').select('id').where('fee_plan_id', '=', p.id).executeTakeFirst();
     if (used) throw new Problem(409, 'plan-in-use', 'Der Beitrag ist Mitgliedern zugeordnet. Lege ihn still, statt ihn zu löschen.');
     await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       await tx.deleteFrom('fee_plan_version').where('fee_plan_id', '=', p.id).execute();
       await tx.deleteFrom('fee_plan').where('id', '=', p.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'fee_plan.deleted', entityType: 'fee_plan', entityId: p.id, diff: { name: [p.name, null] } });
@@ -190,6 +198,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'fees', 'write');
     const { row } = await loadMemberRow(db, actor, req.params.id, 'write', 'fees');
     await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       const before = await tx.selectFrom('member').select('payment_method').where('id', '=', row.id).forUpdate().executeTakeFirstOrThrow();
       await tx.updateTable('member').set({ payment_method: req.body.paymentMethod, updated_at: new Date() }).where('id', '=', row.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'member.payment_method', entityType: 'member', entityId: row.id, diff: { paymentMethod: [before.payment_method, req.body.paymentMethod] } });
@@ -207,6 +216,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     const p = await planDto(actor, b.feePlanId);
     if (p.status !== 'active') throw new Problem(409, 'plan-retired', 'Der Beitrag ist stillgelegt.');
     const id = await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       const a = await tx
         .insertInto('fee_assignment')
         .values({ organization_id: actor.organizationId, member_id: row.id, fee_plan_id: p.id, is_main: b.isMain, valid_from: b.validFrom, valid_to: b.validTo ?? null, first_period_start: b.firstPeriodStart ?? null, override_cents: b.overrideCents ?? null, override_reason: b.overrideReason ?? null })
@@ -229,12 +239,13 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!a) throw notFound('Beitragszuordnung');
       await loadMemberRow(db, actor, a.member_id, 'write', 'fees');
       if (req.body.validTo && req.body.validTo < a.valid_from) throw new Problem(400, 'validation', 'Das Ende liegt vor dem Beginn.', undefined, { errors: [{ field: 'validTo', message: 'Liegt vor dem Beginn.' }] });
-      // Ending before an already billed day would leave a billed period outside the assignment.
-      const billed = await db.selectFrom('assessment').select(sql<string>`max(period_end)`.as('last')).where('assignment_id', '=', a.id).where('status', '<>', 'cancelled').executeTakeFirst();
-      if (req.body.validTo && billed?.last && req.body.validTo < billed.last) {
-        throw new Problem(409, 'billed-period', `Bis ${billed.last.split('-').reverse().join('.')} ist bereits abgerechnet. Storniere die Rechnung, um früher zu beenden.`);
-      }
       await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
+        // Ending before an already billed day would leave a billed period outside the assignment (checked under the fee lock).
+        const billed = await tx.selectFrom('assessment').select(sql<string>`max(period_end)`.as('last')).where('assignment_id', '=', a.id).where('status', '<>', 'cancelled').executeTakeFirst();
+        if (req.body.validTo && billed?.last && req.body.validTo < billed.last) {
+          throw new Problem(409, 'billed-period', `Bis ${billed.last.split('-').reverse().join('.')} ist bereits abgerechnet. Storniere die Rechnung, um früher zu beenden.`);
+        }
         await tx.updateTable('fee_assignment').set({ valid_to: req.body.validTo }).where('id', '=', a.id).execute();
         await audit(tx, actor.organizationId, actor, { action: 'member.fee_ended', entityType: 'member', entityId: a.member_id, diff: { validTo: [a.valid_to, req.body.validTo] } });
       });
@@ -341,8 +352,9 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/fee-runs', { schema: { tags, summary: 'Vorschau eines Beitragslaufs erstellen (bucht noch nichts)', body: feeRunCreate, response: { 201: feeRun } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'fees', 'write');
-    requirePermission(actor, 'invoices', 'write');
+    // A run bills across groups and households: only for club-wide fee and invoice rights (no partial scopes to combine).
+    requireClubWide(actor, 'fees', 'write');
+    requireClubWide(actor, 'invoices', 'write');
     const today = await orgToday(db, actor.organizationId);
     const org = await db.selectFrom('organization').select('payment_terms_days').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
     const issueDate = req.body.issueDate ?? today;
@@ -351,6 +363,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     const members = await computePreview(actor, req.body.until, req.body.groupId ?? null);
     const households = await previewHouseholds(db, actor.organizationId, members, issueDate);
     const r = await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
       const r = await tx
         .insertInto('fee_run')
         .values({ organization_id: actor.organizationId, until: req.body.until, issue_date: issueDate, due_date: dueDate, group_id: req.body.groupId ?? null, preview: JSON.stringify({ members, households }), input_hash: members.map((m) => m.hash).join(','), created_by: actor.userId })
@@ -374,11 +387,12 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { tags, summary: 'Vorschau buchen: Abrechnungen und Rechnungen erstellen. Scheitert, wenn sich Daten seit der Vorschau geändert haben.', params: idParam, body: feeRunPost, response: { 200: feeRun } } },
     async (req) => {
       const actor = requireActor(req);
-      requirePermission(actor, 'fees', 'write');
-      requirePermission(actor, 'invoices', 'write');
+      requireClubWide(actor, 'fees', 'write');
+      requireClubWide(actor, 'invoices', 'write');
       const exclude = new Set(req.body.excludeLineKeys);
       // shortcut: the whole run posts in one transaction; move to chunked background jobs above ~2,000 members.
       await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
         const run = await tx.selectFrom('fee_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!run) throw notFound('Beitragslauf');
         if (run.status !== 'preview') throw new Problem(409, 'not-preview', 'Dieser Lauf ist bereits gebucht oder verworfen.');
@@ -464,6 +478,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
       if (scopeOf(actor, 'fees', 'write') !== null || scopeOf(actor, 'invoices', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Einen Beitragslauf aufheben dürfen nur Zugänge für den ganzen Verein.', { permission: 'fees:write (ganzer Verein)' });
       const today = await orgToday(db, actor.organizationId);
       await db.transaction().execute(async (tx) => {
+        await lockFees(tx, actor.organizationId);
         const run = await tx.selectFrom('fee_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!run) throw notFound('Beitragslauf');
         if (run.status === 'cancelled') throw new Problem(409, 'already-cancelled', 'Der Lauf ist bereits aufgehoben.');
