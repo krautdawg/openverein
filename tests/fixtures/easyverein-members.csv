@@ -1,0 +1,5 @@
+﻿Mitgliedsnummer;Vorname;Nachname;Geburtsdatum;E-Mail (privat);Straße;PLZ;Ort;Eintrittsdatum;Austrittsdatum;Gruppen;IBAN;BIC;Kontoinhaber;Mandatsreferenz;Datum des SEPA-Mandats;Lieblingsfarbe
+1001;Anna;Becker;02.03.1980;anna@example.org;Lindenallee 1;12345;Musterstadt;01.04.2015;;Fußball, Vorstand;DE02120300000000202051;BYLADEM1001;Anna Becker;M-1001;01.04.2015;blau
+1002;Bernd;Braun;1975-07-14;bernd@example.org;Ringstr. 2;12345;Musterstadt;2018-01-01;31.12.2023;Tennis;;;;;;grün
+1003;Clara;;;;;;;01.01.2020;;;;;;;;rot
+1004;Dora;Dachs;30.02.1990;dora@example;Weg 3;12345;Musterstadt;01.01.2021;;Fußball;DE00123;;;;;gelb

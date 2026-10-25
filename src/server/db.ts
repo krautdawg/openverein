@@ -112,6 +112,7 @@ export interface PersonTable {
   status: Generated<'active' | 'archived'>;
   created_at: Timestamp;
   updated_at: Timestamp;
+  import_run_id: Generated<string | null>;
 }
 
 export interface MemberTable {
@@ -128,6 +129,7 @@ export interface MemberTable {
   payment_method: Generated<PaymentMethod>;
   created_at: Timestamp;
   updated_at: Timestamp;
+  import_run_id: Generated<string | null>;
 }
 
 export interface ClubGroupTable {
@@ -143,6 +145,7 @@ export interface ClubGroupTable {
   archived_at: Date | null;
   created_at: Timestamp;
   updated_at: Timestamp;
+  import_run_id: Generated<string | null>;
 }
 
 export interface GroupMembershipTable {
@@ -153,6 +156,7 @@ export interface GroupMembershipTable {
   valid_from: string;
   valid_to: string | null;
   created_at: Timestamp;
+  import_run_id: Generated<string | null>;
 }
 
 export interface RoleTable {
@@ -370,6 +374,7 @@ export interface SepaMandateTable {
   revoke_reason: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
+  import_run_id: Generated<string | null>;
 }
 
 export interface CollectionRunTable {
@@ -672,6 +677,19 @@ export interface ApplicationTable {
   created_at: Generated<Date>;
 }
 
+export interface ImportRunTable {
+  id: Generated<string>;
+  organization_id: string;
+  kind: Generated<'members'>;
+  file_name: string | null;
+  file_sha256: string;
+  preset: string | null;
+  counts: Generated<unknown>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  rolled_back_at: Date | null;
+}
+
 export interface SuppressionTable {
   id: Generated<string>;
   organization_id: string;
@@ -725,6 +743,7 @@ export interface Database {
   change_request: ChangeRequestTable;
   application_form: ApplicationFormTable;
   application: ApplicationTable;
+  import_run: ImportRunTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;
