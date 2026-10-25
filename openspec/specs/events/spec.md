@@ -112,3 +112,10 @@ The system SHALL invoice a confirmed participant the event's reduced fee when th
 - **WHEN** a 12-year-old and an adult confirm an event of 30 € with 10 € for children up to 13
 - **THEN** the child is invoiced 10 € and the adult 30 €
 
+### Requirement: Attendance without connection
+The system SHALL keep attendance marks made without a connection on the device and send them when the connection returns, without losing a mark silently.
+
+#### Scenario: Hall without signal
+- **WHEN** a trainer marks a member present while offline
+- **THEN** the mark shows at once with a waiting notice, and it is stored on the server after the connection returns
+
