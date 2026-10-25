@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
-import { useSearchParams } from 'react-router';
+import { NavLink, useSearchParams } from 'react-router';
 import { PageHead } from '../components/PageHead.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { useTitle } from '../lib/useTitle.ts';
@@ -8,6 +8,16 @@ import { useTitle } from '../lib/useTitle.ts';
 type Gender = 'female' | 'male' | 'diverse' | 'unknown';
 interface Row { groupId: string | null; name: string; counts: Record<string, Record<Gender, number>>; noBirthDate: number; total: number }
 interface Census { year: number; date: string; brackets: string[]; rows: Row[] }
+
+/** Shared tabs of the member reports. */
+export function ReportsNav() {
+  return (
+    <nav className="subnav" aria-label="Auswertungen">
+      <NavLink to="/mitglieder/bestandserhebung" end>Bestandserhebung</NavLink>
+      <NavLink to="/mitglieder/ehrungen" end>Ehrungen</NavLink>
+    </nav>
+  );
+}
 
 const SHORT: Record<Gender, string> = { female: 'w', male: 'm', diverse: 'd', unknown: 'o.A.' };
 
@@ -24,12 +34,13 @@ export function Census() {
       <PageHead
         title="Bestandserhebung"
         intro={`Mitglieder am 1. Januar ${year} nach Altersgruppe und Geschlecht, für die Meldung an Landessportbund und Fachverbände. Das Alter ist ${year} minus Geburtsjahr.`}
-        actions={<a className="btn" href={`/api/v1/reports/census.csv?year=${year}`} download><Download size={16} aria-hidden /> CSV</a>}
       />
+      <ReportsNav />
       <div className="toolbar">
         <select className="select" aria-label="Jahr" value={year} onChange={(e) => setParams({ jahr: e.target.value }, { replace: true })}>
           {[thisYear + 1, thisYear, thisYear - 1, thisYear - 2].map((y) => <option key={y} value={y}>Stichtag 1.1.{y}</option>)}
         </select>
+        <a className="btn" href={`/api/v1/reports/census.csv?year=${year}`} download><Download size={16} aria-hidden /> CSV</a>
       </div>
       {census.error && <div className="alert alert-error" role="alert">{census.error instanceof ApiError ? [census.error.problem.title, census.error.problem.detail].filter(Boolean).join(' ') : 'Nicht verfügbar.'}</div>}
       {census.data && (

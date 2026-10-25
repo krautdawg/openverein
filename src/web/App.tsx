@@ -23,6 +23,7 @@ import { Households } from './pages/Households.tsx';
 import { CashBookPage, Receipts } from './pages/Receipts.tsx';
 import { Duplicates } from './pages/Duplicates.tsx';
 import { Census } from './pages/Census.tsx';
+import { HonoursPage } from './pages/Honours.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
@@ -88,6 +89,7 @@ function AdminApp() {
         <Route path="/mitglieder/haushalte" element={<Households me={me.data} />} />
         <Route path="/mitglieder/dubletten" element={<Duplicates me={me.data} />} />
         <Route path="/mitglieder/bestandserhebung" element={<Census />} />
+        <Route path="/mitglieder/ehrungen" element={<HonoursPage me={me.data} />} />
         <Route path="/mitglieder/:id" element={<Members me={me.data} />} />
         <Route path="/gruppen" element={<Groups me={me.data} />} />
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
