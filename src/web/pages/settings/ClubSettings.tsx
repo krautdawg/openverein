@@ -61,6 +61,8 @@ export function ClubSettings({ me }: { me: Me }) {
             </div>
             <p className="meta">Standard sind 14 Tage. Eine kürzere Frist nur, wenn sie im Mandat vereinbart ist.</p>
           </dd>
+          <dt>Verwendungszweck</dt>
+          <dd>{edit('Verwendungszweck der Lastschrift', 'remittanceTemplate')}<p className="meta">Bis 140 Zeichen. Platzhalter: {'{{rechnungsnummer}}'}, {'{{mitgliedsnummer}}'}, {'{{zeitraum}}'}, {'{{verein}}'}.</p></dd>
         </dl>
       </section>
       <section className="section" aria-labelledby="einvoice">

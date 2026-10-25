@@ -1,0 +1,3 @@
+- [x] setting and validation
+- [x] fill on debit runs
+- [x] settings field, test

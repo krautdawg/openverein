@@ -12,7 +12,8 @@ import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
 import { type Actor, can, requirePermission, requireStepUp, restrictedFields, scopeOf } from '../policy.ts';
 import { isValidCreditorId } from '../../shared/iban.ts';
 import { addBusinessDays, isTargetDay, pain001, pain008, splitIntoFiles } from '../sepa/pain.ts';
-import { addDays } from '../../shared/dates.ts';
+import { addDays, formatDate } from '../../shared/dates.ts';
+import { fillRemittance } from '../../shared/organization.ts';
 import { validateSepa } from '../sepa/validate.ts';
 import type { Selectable } from 'kysely';
 
@@ -21,6 +22,14 @@ CONSTRAINT_MESSAGES.collection_item_invoice_live = 'Mindestens eine Rechnung ist
 
 const idParam = z.object({ id: z.uuid() });
 const tags = ['sepa'];
+
+/** The debit's Verwendungszweck from the club's template: member number and fee period come from the invoice. */
+async function remittanceFor(tx: Db, org: { name: string; remittance_template: string }, c: Candidate) {
+  const inv = await tx.selectFrom('invoice').leftJoin('member', 'member.id', 'invoice.member_id').select(['invoice.id', 'member.membership_number']).where('invoice.id', '=', c.invoiceId).executeTakeFirstOrThrow();
+  const p = await tx.selectFrom('invoice_line').innerJoin('assessment', 'assessment.id', 'invoice_line.assessment_id').select([sql<string | null>`min(assessment.period_start)::text`.as('from'), sql<string | null>`max(assessment.period_end)::text`.as('to')]).where('invoice_line.invoice_id', '=', inv.id).executeTakeFirst();
+  const zeitraum = p?.from && p.to ? `${formatDate(p.from)}–${formatDate(p.to)}` : '';
+  return fillRemittance(org.remittance_template, { rechnungsnummer: c.number, mitgliedsnummer: inv.membership_number ?? '', zeitraum, verein: org.name });
+}
 
 export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -221,7 +230,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
       if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Die SEPA-Datei enthält IBANs, die Du nicht sehen darfst.', { permission: 'members.field.iban' });
       const today = await orgToday(db, actor.organizationId);
       const { kind, bankAccountId, collectionDate, invoiceIds } = req.body;
-      const org = await db.selectFrom('organization').select(['name', 'creditor_id']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+      const org = await db.selectFrom('organization').select(['name', 'creditor_id', 'remittance_template']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
       const account = await db.selectFrom('bank_account').selectAll().where('id', '=', bankAccountId).where('organization_id', '=', actor.organizationId).where('archived_at', 'is', null).executeTakeFirst();
       if (!account) throw notFound('Bankkonto');
       const field = (message: string) => new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', message, { errors: [{ field: 'collectionDate', message }] });
@@ -267,7 +276,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
             .executeTakeFirstOrThrow();
           // The partial unique index refuses a second live item for the same invoice (double-debit guard).
           await tx.insertInto('collection_item_invoice').values({ organization_id: actor.organizationId, item_id: item.id, invoice_id: c.invoiceId, amount_cents: amount }).execute();
-          items.push({ itemId: item.id, e2e, amountCents: amount, mandate: m, remittance: `${kind === 'debit' ? 'Lastschrift' : 'Erstattung'} ${c.number} ${org.name}`, name: c.recipientName });
+          items.push({ itemId: item.id, e2e, amountCents: amount, mandate: m, remittance: kind === 'debit' ? await remittanceFor(tx, org, c) : `Erstattung ${c.number} ${org.name}`, name: c.recipientName });
         }
 
         // Files: grouped by sequence type, split by 999 items and the bank's order limit.

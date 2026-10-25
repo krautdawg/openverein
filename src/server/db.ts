@@ -61,6 +61,7 @@ export interface OrganizationTable {
   work_hours_rate_cents: number | null;
   work_hours_age_from: number | null;
   work_hours_age_to: number | null;
+  remittance_template: Generated<string>;
 }
 
 export interface AppUserTable {
