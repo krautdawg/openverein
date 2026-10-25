@@ -60,6 +60,12 @@ export async function processJobs(db: Db) {
   }
 }
 
+/** Finished jobs older than 90 days go (their result files expire on their own). */
+export async function pruneJobs(db: Db) {
+  const r = await db.deleteFrom('job').where('status', 'in', ['done', 'failed']).where('finished_at', '<', new Date(Date.now() - 90 * 86_400_000)).executeTakeFirst();
+  return Number(r.numDeletedRows);
+}
+
 /** Background loop every 2 seconds, in the web process (one process per install). */
 export function startJobWorker(db: Db, log: (err: unknown) => void) {
   let running = false;

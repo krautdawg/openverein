@@ -75,6 +75,12 @@ export async function processWebhooks(db: Db) {
   }
 }
 
+/** Delivered and failed webhook deliveries older than 30 days go; the receiver has had its chance. */
+export async function pruneWebhookDeliveries(db: Db) {
+  const r = await db.deleteFrom('webhook_delivery').where('status', 'in', ['sent', 'failed']).where('occurred_at', '<', new Date(Date.now() - 30 * 86_400_000)).executeTakeFirst();
+  return Number(r.numDeletedRows);
+}
+
 export function startWebhookWorker(db: Db, log: (err: unknown) => void) {
   let running = false;
   const tick = async () => {
