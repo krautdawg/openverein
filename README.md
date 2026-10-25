@@ -53,6 +53,7 @@ Then open http://localhost:3300.
 ## For the club
 
 - [Handbuch für die Kasse](docs/handbuch-kasse.md): a club year from fees to the tax adviser, in German.
+- [Handbuch für Vorstand und Verwaltung](docs/handbuch-verwaltung.md): members, intake, events, mail, portal and privacy, in German.
 - [Verfahrensdokumentation (Vorlage)](docs/verfahrensdokumentation.md): GoBD procedural documentation template to fill in.
 
 ## Run it on a server
