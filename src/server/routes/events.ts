@@ -106,7 +106,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/calendars', { schema: { tags, summary: 'Kalender', response: { 200: z.array(calendar) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'events', 'read');
-    return (await visibleCalendars(actor)).map((c) => ({ id: c.id, name: c.name, color: c.color, groupIds: c.group_ids, hasFeed: !!c.feed_token_hash }));
+    return (await visibleCalendars(actor)).map((c) => ({ id: c.id, name: c.name, color: c.color, groupIds: c.group_ids, hasFeed: !!c.feed_token_hash, public: c.public, publicOrigins: c.public_origins }));
   });
 
   app.post('/calendars', { schema: { tags, summary: 'Kalender anlegen', body: calendarInput, response: { 201: calendar } } }, async (req, reply) => {
@@ -119,7 +119,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       return c;
     });
     reply.status(201);
-    return { id: c.id, name: c.name, color: c.color, groupIds: c.group_ids, hasFeed: false };
+    return { id: c.id, name: c.name, color: c.color, groupIds: c.group_ids, hasFeed: false, public: c.public, publicOrigins: c.public_origins };
   });
 
   app.patch('/calendars/:id', { schema: { tags, summary: 'Kalender ändern', params: idParam, body: calendarInput.partial(), response: { 200: calendar } } }, async (req) => {
@@ -129,16 +129,18 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     const c = await db.transaction().execute(async (tx) => {
       const c = await tx
         .updateTable('calendar')
-        .set({ ...(req.body.name ? { name: req.body.name } : {}), ...(req.body.color ? { color: req.body.color } : {}), ...(req.body.groupIds !== undefined ? { group_ids: req.body.groupIds ?? null } : {}) })
+        .set({ ...(req.body.name ? { name: req.body.name } : {}), ...(req.body.color ? { color: req.body.color } : {}), ...(req.body.groupIds !== undefined ? { group_ids: req.body.groupIds ?? null } : {}), ...(req.body.public !== undefined ? { public: req.body.public } : {}), ...(req.body.publicOrigins ? { public_origins: req.body.publicOrigins.map((o) => o.toLowerCase()) } : {}) })
         .where('id', '=', req.params.id)
         .where('organization_id', '=', actor.organizationId)
         .returningAll()
         .executeTakeFirst();
       if (!c) throw notFound('Kalender');
-      await audit(tx, actor.organizationId, actor, { action: 'calendar.updated', entityType: 'calendar', entityId: c.id });
+      // A calendar limited to groups (e.g. the board) is not for the public.
+      if (c.public && c.group_ids) throw new Problem(409, 'not-public', 'Ein Kalender nur für bestimmte Gruppen kann nicht öffentlich sein.');
+      await audit(tx, actor.organizationId, actor, { action: 'calendar.updated', entityType: 'calendar', entityId: c.id, diff: { public: [null, req.body.public ?? null], publicOrigins: [null, req.body.publicOrigins ?? null] } });
       return c;
     });
-    return { id: c.id, name: c.name, color: c.color, groupIds: c.group_ids, hasFeed: !!c.feed_token_hash };
+    return { id: c.id, name: c.name, color: c.color, groupIds: c.group_ids, hasFeed: !!c.feed_token_hash, public: c.public, publicOrigins: c.public_origins };
   });
 
   app.post('/calendars/:id/feed', { schema: { tags, summary: 'ICS-Abo-Link erzeugen; ein neuer Link macht den alten ungültig', params: idParam, body: z.object({}).optional(), response: { 200: z.object({ path: z.string() }) } } }, async (req) => {
@@ -152,6 +154,20 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       await audit(tx, actor.organizationId, actor, { action: 'calendar.feed_rotated', entityType: 'calendar', entityId: req.params.id });
     });
     return { path: `/api/v1/ics/${token}.ics` };
+  });
+
+  app.get('/public/calendars/:id/events', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } }, schema: { tags, summary: 'Öffentlicher Kalender für die Website: Termine der nächsten Wochen (nur wenn der Kalender öffentlich ist)', security: [], params: idParam, querystring: z.object({ days: z.coerce.number().int().min(1).max(365).default(90) }), response: { 200: z.object({ calendar: z.string(), club: z.string(), events: z.array(z.object({ title: z.string(), date: z.string(), startsAt: z.string(), endsAt: z.string(), allDay: z.boolean(), location: z.string().nullable() })) }) } } }, async (req) => {
+    const cal = await db.selectFrom('calendar').innerJoin('organization', 'organization.id', 'calendar.organization_id').select(['calendar.id', 'calendar.name', 'calendar.organization_id', 'organization.name as club']).where('calendar.id', '=', req.params.id).where('calendar.public', '=', true).executeTakeFirst();
+    if (!cal) throw notFound('Kalender');
+    const from = (await localNow(db, cal.organization_id)).now.slice(0, 10);
+    const to = addDays(from, req.query.days);
+    const events = await db.selectFrom('event').select(['title', 'location', 'starts_at', 'ends_at', 'all_day', 'rrule', 'exdates']).where('calendar_id', '=', cal.id)
+      .where(sql<boolean>`starts_at::date <= ${to}::date`).where((eb) => eb.or([eb('rrule', 'is not', null), eb(sql`ends_at::date`, '>=', from)])).execute();
+    const out = events.flatMap((e) => (e.rrule ? occurrences(datePart(e.starts_at), e.rrule, from, to, e.exdates) : [datePart(e.starts_at)]).map((d) => ({
+      // Only what a passer-by may see: no description, no participants.
+      title: e.title, date: d, startsAt: `${d}T${e.starts_at.slice(11, 16)}`, endsAt: `${addDays(d, Math.round((Date.parse(e.ends_at.slice(0, 10)) - Date.parse(e.starts_at.slice(0, 10))) / 86_400_000))}T${e.ends_at.slice(11, 16)}`, allDay: e.all_day, location: e.location,
+    })));
+    return { calendar: cal.name, club: cal.club, events: out.sort((a, b) => a.startsAt.localeCompare(b.startsAt)).slice(0, 200) };
   });
 
   app.get('/ics/:token', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } }, schema: { tags, summary: 'Kalender als ICS-Abo (öffentlich über den geheimen Link)', security: [], params: z.object({ token: z.string().max(80) }) } }, async (req, reply) => {

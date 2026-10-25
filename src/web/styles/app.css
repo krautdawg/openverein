@@ -696,3 +696,11 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 .budget .c-diff { width: 140px; }
 .budget .c-bar { width: 160px; }
 @media (max-width: 600px) { .budget .c-plan { width: 120px; } .budget .c-ist { width: 96px; } .budget col.hide-sm { width: 0; } }
+
+/* Website widget: plain, inherits nothing from the admin shell, readable inside a foreign page. */
+.widget { padding: var(--s-4); min-height: 100vh; background: var(--surface); }
+.widget-title { font-size: var(--text-xl); margin-bottom: var(--s-3); }
+.widget-list { list-style: none; margin: 0; padding: 0; }
+.widget-list li { display: grid; grid-template-columns: 8.5rem 1fr; gap: var(--s-3); padding: var(--s-2) 0; border-top: 1px solid var(--line); }
+.widget-date { color: var(--ink-2); font-size: var(--text-sm); }
+.widget-foot { margin-top: var(--s-3); }

@@ -9,8 +9,12 @@ export const calendarInput = z.object({
   name: z.string().trim().min(1, 'Pflichtfeld.').max(80),
   color: z.string().max(20).default('blau'),
   groupIds: z.array(z.uuid()).min(1).max(100).nullish(),
+  /** shown on the club website (read-only widget) */
+  public: z.boolean().optional(),
+  /** websites allowed to embed the widget, e.g. https://www.tsv-musterstadt.de */
+  publicOrigins: z.array(z.string().trim().regex(/^https:\/\/[a-z0-9.-]+(:\d+)?$/i, 'Nur Adressen wie https://www.mein-verein.de.')).max(10).optional(),
 });
-export const calendar = z.object({ id: z.uuid(), name: z.string(), color: z.string(), groupIds: z.array(z.uuid()).nullable(), hasFeed: z.boolean() });
+export const calendar = z.object({ id: z.uuid(), name: z.string(), color: z.string(), groupIds: z.array(z.uuid()).nullable(), hasFeed: z.boolean(), public: z.boolean(), publicOrigins: z.array(z.string()) });
 export type Calendar = z.infer<typeof calendar>;
 
 export const recurrenceInput = z.object({
