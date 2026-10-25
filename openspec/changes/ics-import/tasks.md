@@ -1,0 +1,3 @@
+- [x] parser with unit tests
+- [x] route, migration
+- [x] UI, e2e

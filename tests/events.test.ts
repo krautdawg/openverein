@@ -152,4 +152,16 @@ describe('events', () => {
     const internal = (await admin.post('/calendars', { name: 'Intern', groupIds: [board] })).body.id;
     expect((await admin.patch(`/calendars/${internal}`, { public: true })).status).toBe(409);
   });
+
+  it('imports an ICS file once, into a writable calendar only', async () => {
+    const cal = (await admin.post('/calendars', { name: 'Hallenplan' })).body.id;
+    const file = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:t1@example\r\nDTSTART;TZID=Europe/Berlin:20261103T180000\r\nDTEND;TZID=Europe/Berlin:20261103T193000\r\nRRULE:FREQ=WEEKLY;BYDAY=TU\r\nSUMMARY:Training\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:t2@example\r\nDTSTART;VALUE=DATE:20261205\r\nSUMMARY:Weihnachtsfeier\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+    const r = await admin.post(`/calendars/${cal}/import`, { content: file });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ imported: 2, duplicates: 0 });
+    expect((await admin.post(`/calendars/${cal}/import`, { content: file })).body).toMatchObject({ imported: 0, duplicates: 2 });
+    const occ = (await admin.get('/events?from=2026-11-01&to=2026-11-30')).body as { title: string; date: string }[];
+    expect(occ.filter((o) => o.title === 'Training').length).toBe(4);
+    expect((await admin.post(`/calendars/${cal}/import`, { content: 'kein Kalender' })).status).toBe(400);
+  });
 });

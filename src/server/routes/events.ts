@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { parseIcs } from '../events/icsImport.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql, type Selectable } from 'kysely';
 import { z } from 'zod';
@@ -250,6 +251,30 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     }
     if (endsAt < startsAt) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'endsAt', message: 'Das Ende liegt vor dem Beginn.' }] });
   }
+
+  app.post('/calendars/:id/import', { schema: { tags, summary: 'Termine aus einer ICS-Datei übernehmen (z. B. aus Google- oder Outlook-Kalender); schon übernommene werden übersprungen', params: idParam, body: z.object({ content: z.string().min(1).max(2_000_000) }), response: { 200: z.object({ imported: z.number(), duplicates: z.number(), notes: z.array(z.object({ title: z.string(), note: z.string() })) }) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'events', 'write');
+    const cal = await writableCalendar(actor, req.params.id);
+    const { timeZone } = await localNow(db, actor.organizationId);
+    const { events, skipped } = parseIcs(req.body.content, timeZone);
+    if (!events.length && !skipped.length) throw new Problem(400, 'validation', 'In der Datei steht kein Termin.', 'Erwartet wird eine ICS-Datei (BEGIN:VCALENDAR … BEGIN:VEVENT).');
+    if (events.length > 2000) throw new Problem(400, 'validation', 'Höchstens 2.000 Termine auf einmal.');
+    const notes = skipped.map((s) => ({ title: s.title, note: s.reason }));
+    let imported = 0;
+    let duplicates = 0;
+    await db.transaction().execute(async (tx) => {
+      for (const e of events) {
+        const r = await tx.insertInto('event').values({ organization_id: actor.organizationId, calendar_id: cal.id, title: e.title, description: e.description, location: e.location, starts_at: e.startsAt, ends_at: e.endsAt, all_day: e.allDay, rrule: e.rrule, exdates: e.exdates, rsvp: false, import_uid: e.uid, created_by: actor.userId })
+          .onConflict((oc) => oc.columns(['calendar_id', 'import_uid']).where('import_uid', 'is not', null).doNothing()).returning('id').executeTakeFirst();
+        if (r) imported++;
+        else duplicates++;
+        if (r && e.note) notes.push({ title: e.title, note: e.note });
+      }
+      await audit(tx, actor.organizationId, actor, { action: 'event.imported', entityType: 'calendar', entityId: cal.id, diff: { imported: [null, imported], duplicates: [null, duplicates] } });
+    });
+    return { imported, duplicates, notes };
+  });
 
   app.post('/events', { schema: { tags, summary: 'Termin oder Serie anlegen', body: eventInput, response: { 201: occurrenceDetail } } }, async (req, reply) => {
     const actor = requireActor(req);
