@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
@@ -30,6 +30,12 @@ export function Duplicates({ me }: { me: Me }) {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const threshold = Number(params.get('ab') ?? 80);
+  // The slider moves freely; the list follows once it rests.
+  const [slider, setSlider] = useState(threshold);
+  useEffect(() => {
+    const t = setTimeout(() => slider !== threshold && setParams({ ab: String(slider) }, { replace: true }), 300);
+    return () => clearTimeout(t);
+  }, [slider, threshold, setParams]);
   const list = useQuery({ queryKey: ['duplicates', threshold], queryFn: () => api<Pair[]>(`/members/duplicates?threshold=${threshold}`) });
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
   const canWrite = me.permissions.members === 'write';
@@ -51,8 +57,8 @@ export function Duplicates({ me }: { me: Me }) {
       <p style={{ marginBottom: 'var(--s-4)' }}><Link to="/mitglieder">← Mitglieder</Link></p>
       <PageHead title="Dubletten" intro="Personen, die vermutlich doppelt erfasst sind. Übereinstimmungen sind markiert. Archiviert wird nur, wer keine Rechnungen, Mandate oder Spenden hat." />
       <div className="toolbar">
-        <label htmlFor="threshold">Ab {threshold} % Übereinstimmung</label>
-        <input id="threshold" type="range" min={60} max={100} step={5} value={threshold} onChange={(e) => setParams({ ab: e.target.value })} style={{ width: 200 }} />
+        <label htmlFor="threshold">Ab {slider} % Übereinstimmung</label>
+        <input id="threshold" type="range" min={60} max={100} step={5} value={slider} onChange={(e) => setSlider(Number(e.target.value))} style={{ width: 200 }} />
       </div>
       {message && <div className={`alert ${message.ok ? 'alert-ok' : 'alert-error'}`} role={message.ok ? 'status' : 'alert'} style={{ marginBottom: 'var(--s-4)' }}>{message.text}</div>}
       {list.error && <div className="alert alert-error" role="alert">{problemText(list.error)}</div>}

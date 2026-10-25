@@ -1,13 +1,15 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { client, reset, setupClub, testApp } from './helpers.ts';
+import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
 
 let admin: ReturnType<typeof client>;
+let cookie: string;
 beforeEach(async () => {
   await reset(ctx.db);
-  admin = client(ctx.app, { cookie: (await setupClub(ctx.app)).cookie });
+  cookie = (await setupClub(ctx.app)).cookie;
+  admin = client(ctx.app, { cookie });
 });
 
 describe('duplicates', () => {
@@ -39,5 +41,30 @@ describe('duplicates', () => {
     expect((await admin.get('/members/duplicates?threshold=60')).body).toHaveLength(1);
     expect((await admin.post('/members/duplicates/dismiss', { personA: b.personId, personB: a.personId })).status).toBe(204);
     expect((await admin.get('/members/duplicates?threshold=60')).body).toHaveLength(0);
+  });
+
+  it('hides restricted fields, archives an applicant as rejected, ends groups, drops unbilled fees, and refuses crossed resolves', async () => {
+    const plan = (await admin.post('/fee-plans', { name: 'Erwachsene', version: { validFrom: '2020-01-01', amountCents: 12000, intervalMonths: 12 } })).body.id;
+    const group = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN' })).body.id;
+    const a = (await admin.post('/members', { firstName: 'Paul', lastName: 'Paar', birthDate: '1980-01-01', email: 'pp@example.org', joinDate: '2015-01-01' })).body;
+    const b = (await admin.post('/members', { firstName: 'Paul', lastName: 'Paar', birthDate: '1980-01-01', email: 'pp@example.org', joinDate: '2024-01-01', groupIds: [group] })).body;
+    await admin.post(`/members/${b.id}/fee-assignments`, { feePlanId: plan, validFrom: '2024-01-01' });
+    const applicant = (await admin.post('/members', { firstName: 'Paul', lastName: 'Paar', birthDate: '1980-01-01', email: 'pp@example.org' })).body;
+    expect(applicant.status).toBe('applicant');
+
+    const adviser = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Steuerberatung', null) });
+    const seen = (await adviser.get('/members/duplicates?threshold=60')).body as { matches: string[]; a: { email: string | null; birthDate: string | null } }[];
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((p) => p.a.email === null && p.a.birthDate === null && !p.matches.includes('email') && !p.matches.includes('birthDate'))).toBe(true);
+
+    expect((await admin.post('/members/duplicates/resolve', { keepPersonId: a.personId, archivePersonId: applicant.personId })).status).toBe(204);
+    expect((await admin.get(`/members/${applicant.id}`)).body.status).toBe('rejected');
+
+    expect((await admin.post('/members/duplicates/resolve', { keepPersonId: a.personId, archivePersonId: b.personId })).status).toBe(204);
+    expect(await ctx.db.selectFrom('fee_assignment').select('id').where('member_id', '=', b.id).execute()).toHaveLength(0);
+    const gm = await ctx.db.selectFrom('group_membership').select('valid_to').where('member_id', '=', b.id).execute();
+    expect(gm.every((g) => g.valid_to !== null)).toBe(true);
+    // The opposite click on the same pair is refused.
+    expect((await admin.post('/members/duplicates/resolve', { keepPersonId: b.personId, archivePersonId: a.personId })).status).toBe(409);
   });
 });
