@@ -1,0 +1,3 @@
+- [x] table, routes, GDPR
+- [x] member sheet section
+- [x] tests, e2e

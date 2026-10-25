@@ -341,4 +341,26 @@ describe('review fixes', () => {
     w = (await admin.get(`/members/${m}`)).body.warnings;
     expect(w).toContain('Keine Zahlungsart hinterlegt.');
   });
+
+  it('keeps a contact log with private entries, restricted like the member note', async () => {
+    const m = (await admin.post('/members', { firstName: 'Sven', lastName: 'Sponsor', joinDate: '2024-01-01' })).body.id;
+    expect((await admin.post(`/members/${m}/contacts`, { kind: 'call', occurredOn: '2099-01-01', text: 'Zukunft' })).status).toBe(400);
+    const shared = await admin.post(`/members/${m}/contacts`, { kind: 'call', occurredOn: '2026-10-01', text: 'Sponsoring 2027 besprochen' });
+    expect(shared.status, JSON.stringify(shared.body)).toBe(201);
+    await admin.post(`/members/${m}/contacts`, { kind: 'meeting', occurredOn: '2026-10-02', text: 'Nur für mich', private: true });
+    expect((await admin.get(`/members/${m}/contacts`)).body).toHaveLength(2);
+    const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Abteilungsleitung') });
+    const seen = (await lead.get(`/members/${m}/contacts`)).body as { text: string; mine: boolean }[];
+    expect(seen.map((e) => e.text)).toEqual(['Sponsoring 2027 besprochen']);
+    expect((await lead.del(`/members/${m}/contacts/${shared.body.id}`)).status).toBe(404);
+    const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Trainer:in') });
+    expect((await trainer.get(`/members/${m}/contacts`)).status).toBe(403);
+    expect((await admin.del(`/members/${m}/contacts/${shared.body.id}`)).status).toBe(204);
+    // Anonymising removes the log entirely.
+    const person = (await ctx.db.selectFrom('member').select('person_id').where('id', '=', m).executeTakeFirstOrThrow()).person_id;
+    const { anonymise } = await import('../src/server/gdpr/service.ts');
+    const org = (await ctx.db.selectFrom('member').select('organization_id').where('id', '=', m).executeTakeFirstOrThrow()).organization_id;
+    await ctx.db.transaction().execute((tx) => anonymise(tx, org, person));
+    expect(await ctx.db.selectFrom('contact_log').select('id').where('person_id', '=', person).execute()).toHaveLength(0);
+  });
 });
