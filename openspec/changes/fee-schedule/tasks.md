@@ -1,0 +1,3 @@
+- [x] schedule settings and API
+- [x] scheduler in the hourly refresh, mail
+- [x] UI, tests, e2e

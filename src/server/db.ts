@@ -65,6 +65,10 @@ export interface OrganizationTable {
   portal_features: Generated<unknown>;
   invoice_cover_template: string | null;
   invoice_closing_template: string | null;
+  fee_schedule_day: number | null;
+  fee_schedule_lead_days: Generated<number>;
+  fee_schedule_user_id: string | null;
+  fee_schedule_last_run: string | null;
 }
 
 export interface AppUserTable {

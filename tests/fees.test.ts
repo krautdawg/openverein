@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { runFeeSchedules } from '../src/server/routes/fees.ts';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
@@ -306,5 +307,24 @@ describe('review fixes', () => {
     const own = await admin.post('/invoices', { memberId, closingText: 'Danke!', lines: [{ text: 'x', unitCents: 100 }] });
     await admin.post(`/invoices/${own.body.id}/issue`, {});
     expect((await admin.get(`/invoices/${own.body.id}`)).body.closingText).toBe('Danke!');
+  });
+
+  it('creates the scheduled preview once a month with the rights of the person who set it up', async () => {
+    await setup({ join: '2026-01-01' });
+    const tennis = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN', kind: 'division' })).body.id;
+    const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Kassenwart', [tennis]) });
+    expect((await lead.put('/fee-schedule', { day: 1, leadDays: 30 })).status).toBe(403);
+    const s = await admin.put('/fee-schedule', { day: 1, leadDays: 30 });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    expect(s.body.setBy).toBeTruthy();
+    expect(await runFeeSchedules(ctx.db)).toBe(1);
+    expect(await runFeeSchedules(ctx.db)).toBe(0);
+    const runs = (await admin.get('/fee-runs')).body;
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('preview');
+    expect((await admin.get('/fee-schedule')).body.lastRunOn).toBeTruthy();
+    // Switched off: nothing more.
+    await admin.put('/fee-schedule', { day: null, leadDays: 30 });
+    expect((await admin.get('/fee-schedule')).body).toMatchObject({ day: null, setBy: null });
   });
 });
