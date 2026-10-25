@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# ovctl: install, back up, restore, update and check an OpenVerein server (Docker Compose in deploy/).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY="$ROOT/deploy"
+ENV_FILE="$DEPLOY/.env"
+BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
+BACKUP_KEEP="${BACKUP_KEEP:-14}"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'Fehler: %s\n' "$*" >&2; exit 1; }
+dc() { docker compose --project-directory "$DEPLOY" -f "$DEPLOY/compose.yml" --env-file "$ENV_FILE" "$@"; }
+need_env() { [ -f "$ENV_FILE" ] || die "deploy/.env fehlt. Zuerst: ./ovctl install"; }
+env_get() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-; }
+
+usage() {
+  cat <<'USAGE'
+ovctl install                 Einrichten: fragt Domain und Mailserver, erzeugt Schlüssel, startet alles
+ovctl backup                  Datenbank und Dateien sichern (nach backups/, behält die letzten 14)
+ovctl restore <ordner>        Eine Sicherung zurückspielen (vorher wird der jetzige Stand gesichert)
+ovctl update                  Sichern, neue Version holen, neu starten
+ovctl doctor                  Zustand prüfen: Dienste, Erreichbarkeit, Speicher, letzte Sicherung, Zertifikat
+ovctl logs                    Server-Log ansehen
+USAGE
+}
+
+cmd_install() {
+  command -v docker >/dev/null || die "Docker ist nicht installiert."
+  command -v openssl >/dev/null || die "openssl fehlt."
+  [ -f "$ENV_FILE" ] && die "deploy/.env gibt es schon. Diese Installation läuft bereits; ./ovctl doctor prüft sie."
+  local domain="${DOMAIN:-}" smtp="${SMTP_URL:-}" from="${MAIL_FROM:-}"
+  [ -n "$domain" ] || read -rp "Domain (z. B. verein.example.org): " domain
+  [ -n "$smtp" ] || read -rp "Mailserver (smtp://benutzer:passwort@host:587): " smtp
+  [ -n "$from" ] || read -rp "Absender (z. B. TSV Musterstadt <vorstand@example.org>): " from
+  [ -n "$domain" ] && [ -n "$smtp" ] && [ -n "$from" ] || die "Domain, Mailserver und Absender werden gebraucht."
+  umask 077
+  {
+    say "# Created by ovctl install on $(date -u +%F). Keep DATA_KEY safe and separate from backups:"
+    say "# without it, bank details in a backup cannot be read."
+    say "DOMAIN=$domain"
+    say "SMTP_URL=$smtp"
+    say "MAIL_FROM=\"$from\""
+    say "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+    say "DATA_KEY=$(openssl rand -base64 32)"
+    [ -n "${HTTP_PORT:-}" ] && say "HTTP_PORT=$HTTP_PORT"
+    [ -n "${HTTPS_PORT:-}" ] && say "HTTPS_PORT=$HTTPS_PORT" && say "PUBLIC_PORT_SUFFIX=:$HTTPS_PORT"
+    [ -n "${COMPOSE_PROJECT_NAME:-}" ] && say "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME"
+  } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  dc up -d --build
+  wait_healthy
+  say ""
+  say "OpenVerein läuft: https://$domain${HTTPS_PORT:+:$HTTPS_PORT}"
+  say "Öffne die Adresse und lege Deinen Verein und Dein Admin-Konto an."
+  say "Wichtig: Bewahre DATA_KEY aus deploy/.env getrennt von den Sicherungen auf (z. B. im Passwortmanager)."
+}
+
+wait_healthy() {
+  for _ in $(seq 1 60); do
+    if dc exec -T app node -e "fetch('http://localhost:3300/api/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" 2>/dev/null; then return 0; fi
+    sleep 2
+  done
+  die "Der Server antwortet nicht. ./ovctl logs zeigt, warum."
+}
+
+cmd_backup() {
+  need_env
+  local stamp dir
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  dir="$BACKUP_DIR/openverein-$stamp"
+  mkdir -p "$dir"
+  chmod 700 "$BACKUP_DIR" "$dir"
+  say "Sichere Datenbank …"
+  dc exec -T db pg_dump -U openverein -Fc openverein > "$dir/db.dump"
+  say "Sichere Dateien …"
+  dc exec -T app tar -C /data -czf - . > "$dir/files.tar.gz"
+  (cd "$dir" && sha256sum db.dump files.tar.gz > SHA256SUMS)
+  # Old backups go: an erased person must not live on in backups for longer than needed.
+  ls -1d "$BACKUP_DIR"/openverein-* 2>/dev/null | sort | head -n -"$BACKUP_KEEP" | xargs -r rm -rf
+  say "Gesichert: $dir"
+}
+
+cmd_restore() {
+  need_env
+  local dir="${1:-}"
+  [ -n "$dir" ] && [ -d "$dir" ] || die "Gib den Sicherungsordner an, z. B. ./ovctl restore backups/openverein-20261024-0300"
+  dir="$(cd "$dir" && pwd)"
+  (cd "$dir" && sha256sum -c --quiet SHA256SUMS) || die "Die Sicherung ist beschädigt (Prüfsummen stimmen nicht)."
+  if [ "${OVCTL_YES:-}" != "1" ]; then
+    read -rp "Der jetzige Stand wird durch die Sicherung ersetzt. Zum Fortfahren 'zurückspielen' tippen: " answer
+    [ "$answer" = "zurückspielen" ] || die "Abgebrochen."
+  fi
+  say "Sichere zuerst den jetzigen Stand …"
+  cmd_backup
+  # Erasures made after the backup must survive the restore: keep the current erasure log and merge it back.
+  local erasures
+  erasures="$(mktemp)"
+  dc exec -T app sh -c 'cat /data/files/erasure-log.jsonl 2>/dev/null || true' > "$erasures"
+  dc stop app
+  say "Spiele die Datenbank zurück …"
+  dc exec -T db sh -c 'dropdb -U openverein --force openverein && createdb -U openverein openverein'
+  dc exec -T db pg_restore -U openverein -d openverein --no-owner < "$dir/db.dump"
+  say "Spiele die Dateien zurück …"
+  dc run --rm --no-deps -T --entrypoint sh app -c 'find /data -mindepth 1 -delete && tar -xzf - -C /data' < "$dir/files.tar.gz"
+  dc run --rm --no-deps -T --entrypoint sh app -c 'cat - /data/files/erasure-log.jsonl 2>/dev/null | sort -u > /tmp/e && mkdir -p /data/files && cp /tmp/e /data/files/erasure-log.jsonl' < "$erasures"
+  rm -f "$erasures"
+  dc start app
+  wait_healthy
+  say "Zurückgespielt. Personen, die nach der Sicherung gelöscht wurden, wurden beim Start erneut anonymisiert."
+}
+
+cmd_update() {
+  need_env
+  cmd_backup
+  if [ -d "$ROOT/.git" ]; then git -C "$ROOT" pull --ff-only; fi
+  dc up -d --build
+  wait_healthy
+  say "Aktualisiert."
+}
+
+cmd_doctor() {
+  need_env
+  local bad=0
+  ok() { say "  ok    $*"; }
+  warn() { say "  WARN  $*"; bad=1; }
+  say "OpenVerein doctor"
+  for s in caddy app db; do
+    if [ -n "$(dc ps --status running -q "$s" 2>/dev/null)" ]; then ok "Dienst $s läuft"; else warn "Dienst $s läuft nicht (./ovctl logs)"; fi
+  done
+  if dc exec -T app node -e "fetch('http://localhost:3300/api/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" 2>/dev/null; then ok "Server und Datenbank antworten"; else warn "Server antwortet nicht"; fi
+  [ -n "$(env_get DATA_KEY)" ] && ok "DATA_KEY gesetzt" || warn "DATA_KEY fehlt"
+  local free
+  free="$(df -Pk "$ROOT" | awk 'NR==2 {print int($4/1024/1024)}')"
+  [ "$free" -ge 2 ] && ok "Freier Speicher: ${free} GB" || warn "Nur ${free} GB frei"
+  local last
+  last="$(ls -1d "$BACKUP_DIR"/openverein-* 2>/dev/null | sort | tail -1 || true)"
+  if [ -z "$last" ]; then warn "Noch keine Sicherung (./ovctl backup, am besten täglich per cron)"
+  elif [ -n "$(find "$last" -maxdepth 0 -mmin -1500)" ]; then ok "Letzte Sicherung: $(basename "$last")"
+  else warn "Letzte Sicherung ist älter als 25 Stunden: $(basename "$last")"; fi
+  local domain port expiry
+  domain="$(env_get DOMAIN)"; port="$(env_get HTTPS_PORT)"
+  expiry="$(echo | openssl s_client -connect "localhost:${port:-443}" -servername "$domain" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2 || true)"
+  if [ -z "$expiry" ]; then warn "Kein Zertifikat abrufbar für $domain"
+  elif [ "$(( ($(date -d "$expiry" +%s) - $(date +%s)) / 86400 ))" -lt 14 ]; then warn "Zertifikat läuft bald ab: $expiry"
+  else ok "Zertifikat gültig bis $expiry"; fi
+  return "$bad"
+}
+
+case "${1:-}" in
+  install) cmd_install ;;
+  backup) cmd_backup ;;
+  restore) shift; cmd_restore "${1:-}" ;;
+  update) cmd_update ;;
+  doctor) cmd_doctor ;;
+  logs) need_env; dc logs -f --tail 200 app ;;
+  *) usage; [ -z "${1:-}" ] || exit 1 ;;
+esac

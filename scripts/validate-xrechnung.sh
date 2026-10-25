@@ -16,5 +16,6 @@ rm -rf .kosit/samples && node scripts/xrechnung-samples.ts .kosit/samples
 if command -v java >/dev/null; then
   java -jar .kosit/validator.jar -s .kosit/conf/scenarios.xml -r .kosit/conf -o .kosit/report .kosit/samples/*.xml
 else
+  # shellcheck disable=SC2046 # one argument per sample file is intended
   docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/.kosit:/k" -w /k eclipse-temurin:17-jre java -jar /k/validator.jar -s /k/conf/scenarios.xml -r /k/conf -o /k/report $(cd .kosit && ls samples/*.xml | sed 's#^#/k/#')
 fi

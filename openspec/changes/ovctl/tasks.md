@@ -1,0 +1,4 @@
+- [x] Production compose and Caddyfile
+- [x] ovctl install/backup/restore/update/doctor/logs
+- [x] Manual run: install, backup, restore, doctor
+- [x] Docs and shellcheck in CI
