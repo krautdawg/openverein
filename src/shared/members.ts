@@ -32,6 +32,7 @@ const personBase = z.object({
   lastName: optText(100),
   companyName: optText(200),
   birthDate: date.nullish(),
+  gender: z.enum(['female', 'male', 'diverse']).nullish(),
   email: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)),
   phone: optText(50),
   street: optText(200),
@@ -129,6 +130,7 @@ export const timelineEntry = z.object({ at: z.string(), action: z.string(), acto
 
 export const memberDetail = memberListItem.extend({
   birthDate: z.string().nullable().optional(),
+  gender: z.enum(['female', 'male', 'diverse']).nullable(),
   phone: z.string().nullable().optional(),
   street: z.string().nullable(),
   postalCode: z.string().nullable(),

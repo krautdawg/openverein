@@ -18,6 +18,7 @@ import { Sheet } from './Sheet.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 
 const CHANNEL = { email: 'E-Mail', letter: 'Brief', none: 'Keine Post' } as const;
+const GENDER = { female: 'weiblich', male: 'männlich', diverse: 'divers' } as const;
 
 export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: string | null; onClose: () => void; canWrite: boolean; permissions?: Record<string, string> }) {
   const qc = useQueryClient();
@@ -101,6 +102,19 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
                 <>
                   <dt>Geburtsdatum</dt>
                   <dd>{canWrite ? <InlineEdit label="Geburtsdatum" type="date" field="birthDate" value={m.birthDate} display={formatDate} onSave={(v) => patch({ birthDate: v || null })} /> : formatDate(m.birthDate)}</dd>
+                </>
+              )}
+              {m.kind === 'natural' && (
+                <>
+                  <dt>Geschlecht</dt>
+                  <dd>
+                    {canWrite ? (
+                      <select className="select" aria-label="Geschlecht" value={m.gender ?? ''} onChange={(e) => void patch({ gender: e.target.value || null }).catch((err) => setSheetError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.'))}>
+                        <option value="">keine Angabe</option>
+                        {Object.entries(GENDER).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    ) : m.gender ? GENDER[m.gender] : 'keine Angabe'}
+                  </dd>
                 </>
               )}
               <dt>Post per</dt>

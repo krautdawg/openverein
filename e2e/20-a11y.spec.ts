@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { signIn } from './helpers.ts';
 
 const ROUTES = [
-  '/', '/mitglieder', '/mitglieder/haushalte', '/mitglieder/dubletten', '/gruppen', '/termine',
+  '/', '/mitglieder', '/mitglieder/haushalte', '/mitglieder/dubletten', '/mitglieder/bestandserhebung', '/gruppen', '/termine',
   '/beitraege', '/beitraege/laeufe', '/rechnungen', '/rechnungen/mahnwesen', '/bank', '/bank/abgleich', '/bank/lastschriften',
   '/buchhaltung', '/buchhaltung/euer', '/buchhaltung/konten', '/buchhaltung/einstellungen', '/buchhaltung/export', '/buchhaltung/belege', '/buchhaltung/kassenbuch',
   '/spenden', '/spenden/bestaetigungen', '/spenden/einstellungen', '/antraege', '/kommunikation', '/dokumente',

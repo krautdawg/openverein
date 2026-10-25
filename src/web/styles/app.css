@@ -633,3 +633,10 @@ input[type='range'] { accent-color: var(--accent); }
 .job-line span { display: block; height: 100%; background: var(--accent); transition: width 300ms var(--ease); }
 @media (max-width: 860px) { .job-tray { right: var(--s-4); bottom: var(--s-4); } }
 @media (prefers-reduced-motion: reduce) { .job-line span { transition: none; } }
+
+/* Census: count with its gender split underneath. */
+.census th, .census td { padding-inline: var(--s-2); }
+.census td .census-split { display: block; white-space: nowrap; }
+/* The area name stays in view while the brackets scroll on narrow screens. */
+.census th[scope='row'], .census thead th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+.census tr[data-total] th, .census tr[data-total] td { font-weight: 600; background: var(--surface-sunk); }
