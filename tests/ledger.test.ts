@@ -134,4 +134,21 @@ describe('ledger', () => {
     const scoped = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Kassenwart', [group]) });
     expect((await scoped.get('/ledger/accounts')).status).toBe(403);
   });
+
+  it('posts a payment reversed before the first sync in its own period, and keeps cash from going negative on reversal', async () => {
+    await admin.patch('/organization', { street: 'Weg 1', postalCode: '12345', city: 'Musterstadt' });
+    const m = (await admin.post('/members', { lastName: 'Frueh', joinDate: '2024-01-01' })).body.id;
+    const inv = await admin.post('/invoices', { memberId: m, lines: [{ text: 'Beitrag', unitCents: 6000 }] });
+    await admin.post(`/invoices/${inv.body.id}/issue`, {});
+    await admin.post(`/invoices/${inv.body.id}/payments`, { amountCents: 6000, bookedOn: '2026-01-05', method: 'transfer' });
+    const alloc = (await admin.get(`/invoices/${inv.body.id}`)).body.allocations[0].id;
+    await admin.post(`/allocations/${alloc}/reverse`, {});
+    const entries = (await admin.get('/ledger/entries?from=2020-01-01&to=2030-12-31')).body as { source: string; date: string }[];
+    expect(entries.map((e) => e.source).sort()).toEqual(['allocation', 'allocation_reversal']);
+    expect(entries.find((e) => e.source === 'allocation')!.date).toBe('2026-01-05');
+
+    const income = await admin.post('/ledger/bookings', { kind: 'income', date: '2026-02-01', text: 'Kasse', moneyAccountId: acc('1000'), lines: [{ grossCents: 10000, accountId: acc('4600') }] });
+    await admin.post('/ledger/bookings', { kind: 'expense', date: '2026-02-02', text: 'Bälle', moneyAccountId: acc('1000'), lines: [{ grossCents: 8000, accountId: acc('6100') }] });
+    expect((await admin.post(`/ledger/entries/${income.body.id}/reverse`, {})).status).toBe(409);
+  });
 });

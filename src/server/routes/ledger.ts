@@ -86,8 +86,11 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/ledger/cost-centers', { schema: { tags, summary: 'Kostenstelle anlegen', body: z.object({ code: z.string().trim().regex(/^[0-9A-Za-z-]{1,12}$/, 'Bis 12 Zeichen: Buchstaben, Ziffern, Bindestrich.'), name: z.string().trim().min(1).max(120) }), response: { 201: costCenter } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
-    const c = await db.insertInto('cost_center').values({ organization_id: actor.organizationId, ...req.body }).returning(['id', 'code', 'name']).executeTakeFirstOrThrow();
-    await audit(db, actor.organizationId, actor, { action: 'ledger.cost_center_created', entityType: 'cost_center', entityId: c.id });
+    const c = await db.transaction().execute(async (tx) => {
+      const c = await tx.insertInto('cost_center').values({ organization_id: actor.organizationId, ...req.body }).returning(['id', 'code', 'name']).executeTakeFirstOrThrow();
+      await audit(tx, actor.organizationId, actor, { action: 'ledger.cost_center_created', entityType: 'cost_center', entityId: c.id });
+      return c;
+    });
     reply.status(201);
     return c;
   });
@@ -261,6 +264,13 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     if (date < original.entry_date) throw new Problem(400, 'validation', 'Das Storno kann nicht vor der Buchung liegen.');
     if (date > today) throw new Problem(400, 'validation', 'Das Storno kann nicht in der Zukunft liegen.');
     const e = await db.transaction().execute(async (tx) => {
+      // A reversal can take money out of the cash box (reversing cash income): the cash floor applies too.
+      await lockJournal(tx, actor.organizationId);
+      const settings = await tx.selectFrom('ledger_setting').select('cash_account_id').where('organization_id', '=', actor.organizationId).executeTakeFirst();
+      if (settings?.cash_account_id) {
+        const cash = await tx.selectFrom('journal_line').select(sql<number>`coalesce(sum(debit_cents - credit_cents), 0)::bigint`.as('net')).where('entry_id', '=', req.params.id).where('account_id', '=', settings.cash_account_id).executeTakeFirstOrThrow();
+        if (Number(cash.net) > 0) await assertCashNotNegative(tx, actor.organizationId, settings.cash_account_id, date, -Number(cash.net));
+      }
       const e = await reverseEntry(tx, actor.organizationId, req.params.id, date, actor.userId);
       await audit(tx, actor.organizationId, actor, { action: 'ledger.reversed', entityType: 'journal_entry', entityId: req.params.id, diff: { reversal: [null, e.number] } });
       return e;
