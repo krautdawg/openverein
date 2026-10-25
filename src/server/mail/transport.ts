@@ -8,7 +8,8 @@ export function mailer() {
   // Short timeouts: a dead relay must not hang a request (invitations) or the worker for minutes.
   const url = new URL(config.smtpUrl);
   for (const [k, v] of [['connectionTimeout', '10000'], ['greetingTimeout', '10000'], ['socketTimeout', '30000']] as const) if (!url.searchParams.has(k)) url.searchParams.set(k, v);
-  transport ??= nodemailer.createTransport(url.toString());
+  // The public demo never sends real mail: messages are rendered and logged as delivered, nothing leaves the server.
+  transport ??= config.demoMode ? nodemailer.createTransport({ jsonTransport: true }) : nodemailer.createTransport(url.toString());
   return transport;
 }
 

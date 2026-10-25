@@ -1,3 +1,4 @@
+import { MIGRATIONS_TABLE } from '../src/server/migrate.ts';
 import { sql } from 'kysely';
 import { buildApp } from '../src/server/app.ts';
 import { createDb, type Db } from '../src/server/db.ts';
@@ -17,7 +18,7 @@ export async function testApp() {
  * triggers off for this one transaction (needs a superuser, which only the test database has).
  */
 export async function reset(db: Db) {
-  const { rows } = await sql<{ tablename: string }>`select tablename from pg_tables where schemaname = 'public' and tablename <> 'schema_migration'`.execute(db);
+  const { rows } = await sql<{ tablename: string }>`select tablename from pg_tables where schemaname = 'public' and tablename <> ${MIGRATIONS_TABLE}`.execute(db);
   if (!rows.length) return;
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = replica`.execute(tx);

@@ -13,6 +13,19 @@ assertDataKey();
 await migrate(config.databaseUrl);
 const db = createDb(config.databaseUrl);
 const app = await buildApp(db, { logger: true });
+// Public demo: refuse to run demo mode on a real club (it would swallow mail and lock accounts), load the demo
+// before accepting requests, and reset it on a schedule.
+if (config.demoMode) {
+  const org = await db.selectFrom('organization').select('is_demo').executeTakeFirst();
+  if (org && !org.is_demo) {
+    app.log.fatal('DEMO_MODE=true, but this instance holds a real club. Remove DEMO_MODE to start.');
+    process.exit(1);
+  }
+  const { seedDemo } = await import('./demo/seed.ts');
+  if (!org) await seedDemo(db);
+  if (config.demoResetHours > 0) setInterval(() => void seedDemo(db, { reset: true }).then(() => app.log.info('demo reset'), (err) => app.log.error(err)), config.demoResetHours * 3_600_000).unref();
+}
+
 await app.listen({ port: config.port, host: '0.0.0.0' });
 
 // Date-driven status changes (future → active, resigned → former, mandate expiry). Hourly is enough: dates, not times, matter.
@@ -26,3 +39,4 @@ const refresh = () =>
 await refresh();
 setInterval(refresh, 60 * 60 * 1000).unref();
 startMailWorker(db, config.publicUrl, (err) => app.log.error(err));
+

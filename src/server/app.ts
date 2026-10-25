@@ -67,6 +67,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
 
+  const DEMO_LOCKED = /^\/api\/v1\/(users|roles|api-tokens|files|mail\/test|mail\/resume|imports\/members|bank-accounts\/:id\/imports)(\/|$)/;
   const isApi = (url: string) => {
     const path = url.split('?')[0]!;
     return path === '/api' || path.startsWith('/api/');
@@ -86,6 +87,11 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       const origin = req.headers.origin;
       // Bearer-token clients carry no ambient credentials, so the origin check only guards cookies.
       if (origin && new URL(origin).host !== req.headers.host) throw new Problem(403, 'cross-origin', 'Anfragen von fremden Seiten werden abgelehnt.');
+    }
+    // The public demo stays usable for everyone: nobody may lock others out, mint keys, or host files there.
+    // Matched against the route pattern, not the raw URL, so percent-encoded paths cannot slip past.
+    if (config.demoMode && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && DEMO_LOCKED.test(req.routeOptions.url ?? req.url)) {
+      throw new Problem(403, 'demo', 'In der Demo ist das gesperrt.', 'Zugänge, Rollen, API-Schlüssel, Uploads, Importe und Mailserver-Einstellungen lassen sich in der öffentlichen Demo nicht ändern.');
     }
     req.actor = await actorFromRequest(db, req, reply);
   });

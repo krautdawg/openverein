@@ -115,13 +115,16 @@ function PortalLogin() {
   const [code, setCode] = useState(fromLink.get('code') ?? '');
   const [error, setError] = useState<ApiError>();
   const [busy, setBusy] = useState(false);
+  const [demo, setDemo] = useState(false);
 
   async function requestCode(e: FormEvent) {
     e.preventDefault();
     setError(undefined);
     setBusy(true);
     try {
-      await api('/portal/auth/request-code', { method: 'POST', body: { email } });
+      const r = await api<{ demoCode?: string }>('/portal/auth/request-code', { method: 'POST', body: { email } });
+      if (r.demoCode) setCode(r.demoCode);
+      setDemo(!!r.demoCode);
       setStep('code');
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);
@@ -157,7 +160,7 @@ function PortalLogin() {
         </>
       ) : (
         <>
-          <p>Wenn {email} beim Verein hinterlegt ist, ist jetzt ein sechsstelliger Code unterwegs. Er gilt 10 Minuten.</p>
+          <p>{demo ? 'Demo: Statt einer E-Mail steht der Code schon im Feld.' : `Wenn ${email} beim Verein hinterlegt ist, ist jetzt ein sechsstelliger Code unterwegs. Er gilt 10 Minuten.`}</p>
           <form className="form" onSubmit={verify} noValidate>
             {error && !error.problem.errors && <div className="alert alert-error" role="alert">{error.problem.title} {error.problem.detail}</div>}
             <Field label="Code" name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} error={error?.fieldError('code')} required />

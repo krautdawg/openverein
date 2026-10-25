@@ -8,6 +8,8 @@ export const config = {
   // Empty = trust no proxy, so clients cannot pick their own rate-limit key.
   trustProxy: (env.TRUST_PROXY ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   demoMode: env.DEMO_MODE === 'true',
+  // Hours between demo resets; 0 = never. Capped at 24 days (setInterval's limit).
+  demoResetHours: Math.min(Math.max(Number(env.DEMO_RESET_HOURS ?? 24) || 0, 0), 24 * 24),
   // Public address of this installation, used in links inside e-mails.
   publicUrl: (env.PUBLIC_URL ?? `http://localhost:${env.PORT ?? 3300}`).replace(/\/$/, ''),
   // Uploaded files, stored by SHA-256 (content-addressed). Mount a volume here in production.

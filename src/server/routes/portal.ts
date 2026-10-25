@@ -110,6 +110,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       const member = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select('member.id').where('member.organization_id', '=', org.id).where(sql<boolean>`lower(person.email) = ${email}`).where('member.status', 'in', [...CURRENT]).executeTakeFirst();
       // At most three codes per address and hour, so the endpoint cannot be used to flood an inbox.
       const recent = await db.selectFrom('login_code').select(sql<number>`count(*)::int`.as('n')).where('email_hash', '=', emailKey(email)).where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
+      // The public demo sends no mail, so it shows the code right away (demo members only exist there).
+      if (config.demoMode && member) return { ok: true, demoCode: await issueLoginCode(db, org.id, email, null) };
       if (member && recent.n < 3) {
         // Not awaited: the answer must take as long for members as for unknown addresses.
         void issueLoginCode(db, org.id, email, null)

@@ -137,7 +137,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     };
     const raw = f.cursor ? Buffer.from(f.cursor, 'base64url').toString() : '0';
     const offset = /^\d{1,9}$/.test(raw) ? Number(raw) : 0;
-    const rows = await filtered().select(listColumns).orderBy(sql`invoice.status = 'draft'`, 'desc').orderBy('invoice.issue_date', sql`desc nulls first`).orderBy('invoice.number', 'desc').limit(f.limit).offset(offset).execute();
+    const rows = await filtered().select(listColumns).orderBy(sql`invoice.status = 'draft'`, 'desc').orderBy('invoice.issue_date', (ob) => ob.desc().nullsFirst()).orderBy('invoice.number', 'desc').limit(f.limit).offset(offset).execute();
     const agg = await filtered()
       // Sums count receivables only: cancelled originals, cancellation documents and credit notes would distort them.
       .select([

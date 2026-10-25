@@ -34,15 +34,15 @@ export function Login() {
     <AuthLayout>
       <h1>Anmelden</h1>
       <p>Schön, dass Du da bist.</p>
-      {cfg?.demo && (
+      {cfg?.demoLogin && (
         <div className="alert alert-warn" style={{ marginBottom: 'var(--s-5)' }}>
-          Demo-Zugang: <strong>demo@openverein.org</strong> mit Passwort <strong>demo-verein-2026</strong>
+          Demo-Zugang: <strong>{cfg.demoLogin.email}</strong> mit Passwort <strong>{cfg.demoLogin.password}</strong>. Alle Daten sind erfunden und werden regelmäßig zurückgesetzt.
         </div>
       )}
       <form className="form" onSubmit={submit} noValidate>
         {error && <div className="alert alert-error" role="alert">{error}</div>}
-        <Field label="E-Mail" name="email" type="email" autoComplete="username" required defaultValue={cfg?.demo ? 'demo@openverein.org' : undefined} />
-        <Field label="Passwort" name="password" type="password" autoComplete="current-password" required defaultValue={cfg?.demo ? 'demo-verein-2026' : undefined} />
+        <Field label="E-Mail" name="email" type="email" autoComplete="username" required defaultValue={cfg?.demoLogin?.email} />
+        <Field label="Passwort" name="password" type="password" autoComplete="current-password" required defaultValue={cfg?.demoLogin?.password} />
         <button className="btn btn-primary btn-block" aria-busy={busy} disabled={busy}>Anmelden</button>
       </form>
     </AuthLayout>
