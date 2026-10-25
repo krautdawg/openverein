@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { Download, Plus, Search } from 'lucide-react';
+import { Download, Plus, Search, SlidersHorizontal } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
 import { displayName, type MemberDetail, type MemberListItem } from '../../shared/members.ts';
 import { CustomInputs, readCustom, useCustomFields } from '../components/CustomFields.tsx';
+import { activeFacets, facetQuery, FilterSheet, ViewPicker } from '../components/MemberFilters.tsx';
 import { Field } from '../components/Field.tsx';
 import { GroupBadge } from '../components/GroupBadge.tsx';
 import { MemberSheet } from '../components/MemberSheet.tsx';
@@ -38,6 +39,8 @@ export function Members({ me }: { me: Me }) {
   const [search, setSearch] = useState(q);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(params.get('neu') === '1');
+  const [filtering, setFiltering] = useState(false);
+  const facets = activeFacets(params);
   const searchRef = useRef<HTMLInputElement>(null);
   const { data: groups } = useGroups();
 
@@ -71,8 +74,9 @@ export function Members({ me }: { me: Me }) {
     const v = VIEWS.find((x) => x.key === view) ?? VIEWS[0];
     for (const [k, val] of Object.entries(v.params)) p.set(k, val);
     if (groupId) p.set('groupId', groupId);
+    facetQuery(params, p);
     return p.toString();
-  }, [q, view, groupId]);
+  }, [q, view, groupId, params]);
 
   const list = useInfiniteQuery({
     queryKey: ['members', query],
@@ -134,7 +138,10 @@ export function Members({ me }: { me: Me }) {
           <option value="">Alle Gruppen</option>
           {groups?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
         </select>
+        <button className="btn" aria-haspopup="dialog" onClick={() => setFiltering(true)}><SlidersHorizontal size={16} aria-hidden /> Filter{facets ? ` (${facets})` : ''}</button>
+        <ViewPicker onApply={(p) => { setSearch(new URLSearchParams(p).get('q') ?? ''); setParams(new URLSearchParams(p), { replace: true }); setSelected(new Set()); }} />
       </div>
+      {filtering && <FilterSheet me={me} params={params} onApply={(next) => { setParams(next, { replace: true }); setSelected(new Set()); }} onClose={() => setFiltering(false)} />}
 
       {selected.size > 0 && <BulkBar ids={[...selected]} onDone={() => { setSelected(new Set()); void list.refetch(); }} />}
 
@@ -142,7 +149,7 @@ export function Members({ me }: { me: Me }) {
       {list.data && rows.length === 0 ? (
         <div className="table-wrap">
           <div className="empty-state">
-            {q || groupId || view !== 'current' ? (
+            {q || groupId || view !== 'current' || facets > 0 ? (
               <>
                 <h3>Niemand gefunden.</h3>
                 <p>Keine Treffer für diese Suche oder diesen Filter. Ehemalige Mitglieder findest Du unter „Ehemalige“.</p>

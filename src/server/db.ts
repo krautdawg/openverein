@@ -878,6 +878,7 @@ export interface Database {
   erasure_log: ErasureLogTable;
   idempotency_key: IdempotencyKeyTable;
   duplicate_dismissal: DuplicateDismissalTable;
+  saved_view: SavedViewTable;
   household: HouseholdTable;
   household_rule: HouseholdRuleTable;
   receipt: ReceiptTable;
@@ -986,6 +987,16 @@ export interface DuplicateDismissalTable {
   person_b: string;
   dismissed_by: string | null;
   dismissed_at: Generated<Date>;
+}
+
+export interface SavedViewTable {
+  id: Generated<string>;
+  organization_id: string;
+  owner_id: string;
+  name: string;
+  params: string;
+  shared_role_id: string | null;
+  created_at: Generated<Date>;
 }
 
 export interface IdempotencyKeyTable {

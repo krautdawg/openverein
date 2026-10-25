@@ -17,6 +17,6 @@ export default defineConfig({
     url: `http://localhost:${port}/api/v1/health`,
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { PORT: String(port), DATABASE_URL: dbUrl, E2E_DATABASE_URL: dbUrl, SMTP_URL: 'smtp://localhost:11025' },
+    env: { PORT: String(port), DATABASE_URL: dbUrl, E2E_DATABASE_URL: dbUrl, SMTP_URL: 'smtp://localhost:11025', RATE_LIMIT_PER_MINUTE: '100000' },
   },
 });

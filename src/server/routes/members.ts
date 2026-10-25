@@ -76,6 +76,20 @@ const listFilter = (q: z.infer<typeof memberListQuery>, actor: Actor, today: str
         and gm.valid_from <= ${today}::date and (gm.valid_to is null or gm.valid_to >= ${today}::date))`,
     );
   }
+  // Facets combine with AND; ages are completed years on today's date (members without birth date drop out).
+  if (q.paymentMethod) query = query.where('member.payment_method', '=', q.paymentMethod);
+  if (q.ageFrom !== undefined) query = query.where(sql<boolean>`person.birth_date <= (${today}::date - make_interval(years => ${q.ageFrom}))`);
+  if (q.ageTo !== undefined) query = query.where(sql<boolean>`person.birth_date > (${today}::date - make_interval(years => ${q.ageTo + 1}))`);
+  if (q.joinFrom) query = query.where('member.join_date', '>=', q.joinFrom);
+  if (q.joinTo) query = query.where('member.join_date', '<=', q.joinTo);
+  if (q.exitFrom) query = query.where('member.exit_date', '>=', q.exitFrom);
+  if (q.exitTo) query = query.where('member.exit_date', '<=', q.exitTo);
+  if (q.mandate) {
+    const has = sql<boolean>`exists (select 1 from sepa_mandate s where s.person_id = person.id and s.status = 'active')`;
+    query = query.where(q.mandate === 'active' ? has : sql<boolean>`not ${has}`);
+  }
+  if (q.household) query = query.where('member.household_id', q.household === 'yes' ? 'is not' : 'is', null);
+  if (q.openBalance) query = query.where(sql<boolean>`exists (select 1 from invoice i where (i.member_id = member.id or i.recipient_person_id = person.id) and i.status in ('open', 'partially_paid'))`);
   if (q.cf) {
     const [id, value] = [q.cf.slice(0, 36), q.cf.slice(37)];
     const like = `%${value.replace(/[%_\\]/g, (c) => '\\' + c)}%`;

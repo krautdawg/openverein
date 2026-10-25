@@ -31,6 +31,7 @@ import { customFieldRoutes } from './routes/customFields.ts';
 import { householdRoutes } from './routes/households.ts';
 import { receiptRoutes } from './routes/receipts.ts';
 import { duplicateRoutes } from './routes/duplicates.ts';
+import { viewRoutes } from './routes/views.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -61,7 +62,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: 600,
+    max: config.rateLimitPerMinute,
     timeWindow: '1 minute',
     errorResponseBuilder: (_req, ctx) => new Problem(429, 'rate-limited', 'Zu viele Anfragen. Bitte warte einen Moment.', `Wieder möglich in ${Math.ceil(ctx.ttl / 1000)} Sekunden.`),
   });
@@ -134,6 +135,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(householdRoutes);
       await api.register(receiptRoutes);
       await api.register(duplicateRoutes);
+      await api.register(viewRoutes);
     },
     { prefix: '/api/v1' },
   );
