@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { signIn } from './helpers.ts';
 
 test('general assembly: agenda, invitation, attendance, vote, close and minutes', async ({ page }) => {
   await signIn(page);
+  // Self-contained: at least one member to mark present.
+  await page.request.post('/api/v1/members', { headers: { 'idempotency-key': randomUUID() }, data: { firstName: 'Vera', lastName: 'Versammlung', joinDate: '2020-01-01' } });
   const day = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
   await page.goto('/versammlungen');
   await page.getByRole('button', { name: 'Versammlung anlegen' }).click();
@@ -38,6 +41,7 @@ test('general assembly: agenda, invitation, attendance, vote, close and minutes'
 
 test('board meeting: invited group and its attendance list', async ({ page }) => {
   await signIn(page);
+  await page.request.post('/api/v1/groups', { headers: { 'idempotency-key': randomUUID() }, data: { name: `Vorstand ${Date.now()}`, shortCode: `V${Date.now() % 100000}`, kind: 'board' } });
   const day = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
   await page.goto('/versammlungen');
   await page.getByRole('button', { name: 'Versammlung anlegen' }).click();

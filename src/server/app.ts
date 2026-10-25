@@ -41,6 +41,7 @@ import { articleRoutes } from './routes/articles.ts';
 import { allowanceRoutes } from './routes/allowances.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { budgetRoutes } from './routes/budget.ts';
+import { pollRoutes } from './routes/polls.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -154,6 +155,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(allowanceRoutes);
       await api.register(webhookRoutes);
       await api.register(budgetRoutes);
+      await api.register(pollRoutes);
     },
     { prefix: '/api/v1' },
   );

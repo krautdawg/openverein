@@ -918,6 +918,27 @@ export interface Database {
   webhook: WebhookTable;
   webhook_delivery: WebhookDeliveryTable;
   budget_line: BudgetLineTable;
+  poll: PollTable;
+  poll_vote: PollVoteTable;
+}
+
+export interface PollTable {
+  id: Generated<string>;
+  organization_id: string;
+  question: string;
+  description: string | null;
+  options: string[];
+  multiple: Generated<boolean>;
+  group_id: string | null;
+  closes_on: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+export interface PollVoteTable {
+  poll_id: string;
+  member_id: string;
+  choices: number[];
+  voted_at: Generated<Date>;
 }
 
 export interface BudgetLineTable {
