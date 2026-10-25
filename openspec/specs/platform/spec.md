@@ -172,3 +172,10 @@ The system SHALL provide `ovctl backup` and `ovctl restore`, where restore verif
 - **WHEN** an operator restores a backup taken before a member was added
 - **THEN** the member is gone, the erasure log still holds the newer entries, and the server answers its health check
 
+### Requirement: Wrong data key stops the server
+The system SHALL refuse to start when DATA_KEY differs from the key the database was first started with.
+
+#### Scenario: Restore on a new server with a fresh key
+- **WHEN** a backup is restored on a server whose deploy/.env has a newly generated DATA_KEY
+- **THEN** the app does not start and says that DATA_KEY does not match this database
+
