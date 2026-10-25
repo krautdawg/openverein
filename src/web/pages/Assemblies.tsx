@@ -10,6 +10,7 @@ import { Field } from '../components/Field.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
+import { useGroups } from '../lib/hooks.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 type Summary = { id: string; title: string; heldOn: string; invitedAt: string | null; closedAt: string | null };
@@ -43,17 +44,25 @@ export function Assemblies({ me }: { me: Me }) {
   );
 }
 
+const AGENDA = {
+  general: [{ title: 'Begrüßung und Feststellung der Beschlussfähigkeit', isVote: false }, { title: 'Bericht des Vorstands', isVote: false }, { title: 'Bericht der Kassenprüfung', isVote: false }, { title: 'Entlastung des Vorstands', isVote: true }, { title: 'Verschiedenes', isVote: false }],
+  board: [{ title: 'Protokoll der letzten Sitzung', isVote: true }, { title: 'Berichte aus den Abteilungen', isVote: false }, { title: 'Finanzen', isVote: false }, { title: 'Beschlüsse', isVote: true }, { title: 'Verschiedenes', isVote: false }],
+};
+
 function CreateAssembly({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [items, setItems] = useState([{ title: 'Begrüßung und Feststellung der Beschlussfähigkeit', isVote: false }, { title: 'Bericht des Vorstands', isVote: false }, { title: 'Bericht der Kassenprüfung', isVote: false }, { title: 'Entlastung des Vorstands', isVote: true }, { title: 'Verschiedenes', isVote: false }]);
+  const groups = useGroups();
+  const [kind, setKind] = useState<'general' | 'board'>('general');
+  const [items, setItems] = useState(AGENDA.general);
+  const switchKind = (k: 'general' | 'board') => { setKind(k); setItems(AGENDA[k]); };
   const [error, setError] = useState<ApiError>();
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     setError(undefined);
     try {
-      const a = await api<Assembly>('/assemblies', { method: 'POST', body: { title: f.get('title'), heldOn: f.get('heldOn'), startsAt: f.get('startsAt'), place: f.get('place'), noticeDays: Number(f.get('noticeDays')), items: items.filter((i) => i.title.trim()) } });
+      const a = await api<Assembly>('/assemblies', { method: 'POST', body: { kind, groupId: kind === 'board' ? f.get('groupId') : null, title: f.get('title'), heldOn: f.get('heldOn'), startsAt: f.get('startsAt'), place: f.get('place'), noticeDays: Number(f.get('noticeDays')), items: items.filter((i) => i.title.trim()) } });
       await qc.invalidateQueries({ queryKey: ['assemblies'] });
       navigate(`/versammlungen/${a.id}`);
     } catch (err) {
@@ -65,13 +74,25 @@ function CreateAssembly({ onClose }: { onClose: () => void }) {
     <Sheet title="Versammlung anlegen" open onClose={onClose}>
       <form className="form" noValidate onSubmit={(e) => void submit(e)}>
         {error && <div className="alert alert-error" role="alert">{problemText(error)}</div>}
-        <Field label="Titel" name="title" defaultValue={`Ordentliche Mitgliederversammlung ${new Date().getFullYear()}`} error={error?.fieldError('title')} />
+        <div className="segmented" role="group" aria-label="Art" style={{ alignSelf: 'flex-start' }}>
+          <button type="button" aria-pressed={kind === 'general'} onClick={() => switchKind('general')}>Mitgliederversammlung</button>
+          <button type="button" aria-pressed={kind === 'board'} onClick={() => switchKind('board')}>Vorstandssitzung</button>
+        </div>
+        {kind === 'board' && (
+          <div className="field">
+            <label htmlFor="as-group">Eingeladen wird</label>
+            <select id="as-group" name="groupId" className="select" defaultValue={groups.data?.find((g) => g.kind === 'board')?.id ?? ''} key={groups.data?.length}>
+              {groups.data?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          </div>
+        )}
+        <Field key={kind} label="Titel" name="title" defaultValue={kind === 'board' ? 'Vorstandssitzung' : `Ordentliche Mitgliederversammlung ${new Date().getFullYear()}`} error={error?.fieldError('title')} />
         <div className="form-row">
           <Field label="Datum" name="heldOn" type="date" error={error?.fieldError('heldOn')} />
           <Field label="Beginn" name="startsAt" type="time" defaultValue="19:00" error={error?.fieldError('startsAt')} />
         </div>
         <Field label="Ort" name="place" placeholder="z. B. Vereinsheim, Am Sportplatz 1" error={error?.fieldError('place')} />
-        <Field label="Einladungsfrist laut Satzung (Tage)" name="noticeDays" type="number" min={0} max={120} defaultValue={14} />
+        <Field key={`n-${kind}`} label="Einladungsfrist laut Satzung (Tage)" name="noticeDays" type="number" min={0} max={120} defaultValue={kind === 'board' ? 7 : 14} />
         <fieldset className="agenda">
           <legend>Tagesordnung</legend>
           <ol>
@@ -91,11 +112,11 @@ function CreateAssembly({ onClose }: { onClose: () => void }) {
 }
 
 /** All current members, page by page (the list API pages at 200). */
-async function allMembers() {
+async function allMembers(groupId: string | null) {
   const out: MemberListItem[] = [];
   let cursor: string | null = '';
   while (cursor !== null) {
-    const r: { items: MemberListItem[]; nextCursor: string | null } = await api(`/members?limit=200${cursor ? `&cursor=${cursor}` : ''}`);
+    const r: { items: MemberListItem[]; nextCursor: string | null } = await api(`/members?limit=200${groupId ? `&groupId=${groupId}` : ''}${cursor ? `&cursor=${cursor}` : ''}`);
     out.push(...r.items);
     cursor = r.nextCursor;
   }
@@ -124,7 +145,7 @@ export function AssemblyPage({ me }: { me: Me }) {
   const d = a.data;
   return (
     <div className="page">
-      <PageHead title={d.title} intro={`${formatDate(d.heldOn)}, ${d.startsAt} Uhr · ${d.place}`} actions={<a className="btn" href={`/api/v1/assemblies/${d.id}/minutes.pdf`} download>Protokoll (PDF)</a>} />
+      <PageHead title={d.title} intro={`${d.kind === 'board' ? 'Vorstandssitzung · ' : ''}${formatDate(d.heldOn)}, ${d.startsAt} Uhr · ${d.place}`} actions={<a className="btn" href={`/api/v1/assemblies/${d.id}/minutes.pdf`} download>Protokoll (PDF)</a>} />
       {error && <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-4)' }}>{error}</div>}
 
       <section className="section" aria-labelledby="as-invite" style={{ marginTop: 0 }}>
@@ -133,7 +154,7 @@ export function AssemblyPage({ me }: { me: Me }) {
           <p>Verschickt am {formatDate(d.invitedAt.slice(0, 10))}{d.messageId && <> (<Link to={`/kommunikation/${d.messageId}`}>Zustellung</Link>)</>}.</p>
         ) : (
           <>
-            <p className="muted" style={{ marginBottom: 'var(--s-3)', maxWidth: '72ch' }}>Frist {d.noticeDays} Tage: spätestens am {formatDate(d.inviteBy)} einladen. Die E-Mail geht mit der Tagesordnung an alle aktuellen Mitglieder; danach stehen Termin und Tagesordnung fest.</p>
+            <p className="muted" style={{ marginBottom: 'var(--s-3)', maxWidth: '72ch' }}>Frist {d.noticeDays} Tage: spätestens am {formatDate(d.inviteBy)} einladen. Die E-Mail geht mit der Tagesordnung an {d.kind === 'board' ? 'die eingeladene Gruppe' : 'alle aktuellen Mitglieder'}; danach stehen Termin und Tagesordnung fest.</p>
             {canWrite && <button className="btn btn-primary" onClick={() => void run(async () => { const r = await api<{ sent: number; letters: { name: string; reason: string }[] }>(`/assemblies/${d.id}/invite`, { method: 'POST' }); setLetters(r.letters); await a.refetch(); })}>Einladung verschicken</button>}
           </>
         )}
@@ -203,7 +224,7 @@ function AgendaItem({ assemblyId, item, editable, onSaved }: { assemblyId: strin
 }
 
 function Attendance({ assembly, editable, onSaved }: { assembly: Assembly; editable: boolean; onSaved: (a: Assembly) => void }) {
-  const members = useQuery({ queryKey: ['members-all'], queryFn: allMembers, enabled: editable });
+  const members = useQuery({ queryKey: ['members-all', assembly.groupId], queryFn: () => allMembers(assembly.groupId), enabled: editable });
   const [present, setPresent] = useState<Set<string>>(() => new Set(assembly.attendees));
   const [q, setQ] = useState('');
   const [state, setState] = useState<string>();

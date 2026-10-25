@@ -29,9 +29,11 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     const a = await load(organizationId, id);
     const items = await db.selectFrom('assembly_item').selectAll().where('assembly_id', '=', id).orderBy('position').execute();
     const attendees = (await db.selectFrom('assembly_attendance').select('member_id').where('assembly_id', '=', id).execute()).map((r) => r.member_id);
-    const eligible = await db.selectFrom('member').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', organizationId).where('join_date', '<=', a.held_on).where((eb) => eb.or([eb('exit_date', 'is', null), eb('exit_date', '>=', a.held_on)])).executeTakeFirstOrThrow();
+    let eq = db.selectFrom('member').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', organizationId).where('join_date', '<=', a.held_on).where((eb) => eb.or([eb('exit_date', 'is', null), eb('exit_date', '>=', a.held_on)]));
+    if (a.group_id) eq = eq.where(sql<boolean>`exists (select 1 from group_membership gm where gm.member_id = member.id and gm.group_id = ${a.group_id} and gm.valid_from <= ${a.held_on}::date and (gm.valid_to is null or gm.valid_to >= ${a.held_on}::date))`);
+    const eligible = await eq.executeTakeFirstOrThrow();
     return {
-      id: a.id, title: a.title, heldOn: a.held_on, startsAt: a.starts_at, place: a.place, noticeDays: a.notice_days, inviteBy: addDays(a.held_on, -a.notice_days),
+      id: a.id, kind: a.kind, groupId: a.group_id, title: a.title, heldOn: a.held_on, startsAt: a.starts_at, place: a.place, noticeDays: a.notice_days, inviteBy: addDays(a.held_on, -a.notice_days),
       chair: a.chair, minutesBy: a.minutes_by, invitedAt: a.invited_at?.toISOString() ?? null, messageId: a.message_id, closedAt: a.closed_at?.toISOString() ?? null,
       items: items.map((i) => ({ id: i.id, position: i.position, title: i.title, description: i.description, isVote: i.is_vote, votesYes: i.votes_yes, votesNo: i.votes_no, votesAbstain: i.votes_abstain, outcome: i.outcome })),
       attendees, eligible: eligible.n,
@@ -42,6 +44,13 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     await tx.deleteFrom('assembly_item').where('assembly_id', '=', id).execute();
     await tx.insertInto('assembly_item').values(items.map((it, i) => ({ assembly_id: id, position: i + 1, title: it.title, description: it.description ?? null, is_vote: it.isVote }))).execute();
   };
+  /** A board meeting needs its group, from this club. */
+  async function checkGroup(actor: Actor, b: z.infer<typeof assemblyInput>) {
+    if (b.kind !== 'board') return;
+    if (!b.groupId) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'groupId', message: 'Wer wird eingeladen?' }] });
+    if (!(await db.selectFrom('club_group').select('id').where('id', '=', b.groupId).where('organization_id', '=', actor.organizationId).executeTakeFirst())) throw notFound('Gruppe');
+  }
+
   /** The board runs assemblies: club-wide member write access. */
   const board = (actor: Actor) => requireClubWide(actor, 'members', 'write');
 
@@ -62,8 +71,9 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     board(actor);
     const b = req.body;
+    await checkGroup(actor, b);
     const id = await db.transaction().execute(async (tx) => {
-      const a = await tx.insertInto('assembly').values({ organization_id: actor.organizationId, title: b.title, held_on: b.heldOn, starts_at: b.startsAt, place: b.place, notice_days: b.noticeDays }).returning('id').executeTakeFirstOrThrow();
+      const a = await tx.insertInto('assembly').values({ organization_id: actor.organizationId, kind: b.kind, group_id: b.kind === 'board' ? b.groupId! : null, title: b.title, held_on: b.heldOn, starts_at: b.startsAt, place: b.place, notice_days: b.noticeDays }).returning('id').executeTakeFirstOrThrow();
       await writeItems(tx, a.id, b.items);
       await audit(tx, actor.organizationId, actor, { action: 'assembly.created', entityType: 'assembly', entityId: a.id, diff: { title: [null, b.title], heldOn: [null, b.heldOn] } });
       return a.id;
@@ -79,15 +89,16 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     // Members were invited with this agenda; a changed one needs a new assembly or a supplementary invitation.
     if (a.invited_at) throw new Problem(409, 'invited', 'Die Einladung ist schon verschickt.', 'Tagesordnung und Termin stehen fest.');
     const b = req.body;
+    await checkGroup(actor, b);
     await db.transaction().execute(async (tx) => {
-      await tx.updateTable('assembly').set({ title: b.title, held_on: b.heldOn, starts_at: b.startsAt, place: b.place, notice_days: b.noticeDays }).where('id', '=', a.id).execute();
+      await tx.updateTable('assembly').set({ kind: b.kind, group_id: b.kind === 'board' ? b.groupId! : null, title: b.title, held_on: b.heldOn, starts_at: b.startsAt, place: b.place, notice_days: b.noticeDays }).where('id', '=', a.id).execute();
       await writeItems(tx, a.id, b.items);
       await audit(tx, actor.organizationId, actor, { action: 'assembly.updated', entityType: 'assembly', entityId: a.id, diff: { title: [a.title, b.title], heldOn: [a.held_on, b.heldOn] } });
     });
     return detail(actor.organizationId, a.id);
   });
 
-  app.post('/assemblies/:id/invite', { schema: { tags, summary: 'Einladung mit Tagesordnung per E-Mail an alle aktuellen Mitglieder (prüft die Einladungsfrist); wer keine E-Mail hat, wird für den Brief gelistet', params: idParam, body: z.object({}).optional(), response: { 200: z.object({ sent: z.number(), letters: z.array(z.object({ memberId: z.uuid(), name: z.string(), reason: z.string() })) }) } } }, async (req) => {
+  app.post('/assemblies/:id/invite', { schema: { tags, summary: 'Einladung mit Tagesordnung per E-Mail an alle aktuellen Mitglieder, bei Vorstandssitzungen an die Gruppe (prüft die Einladungsfrist); wer keine E-Mail hat, wird für den Brief gelistet', params: idParam, body: z.object({}).optional(), response: { 200: z.object({ sent: z.number(), letters: z.array(z.object({ memberId: z.uuid(), name: z.string(), reason: z.string() })) }) } } }, async (req) => {
     const actor = requireActor(req);
     board(actor);
     requireClubWide(actor, 'communication', 'write');
@@ -110,11 +121,11 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
       'Viele Grüße',
       org.name,
     ].join('\n');
-    const { recipients, excluded } = await resolveRecipients(db, actor, { mode: 'all' }, 'notice');
+    const { recipients, excluded } = await resolveRecipients(db, actor, a.groupId ? { mode: 'group', groupId: a.groupId } : { mode: 'all' }, 'notice');
     // Former members are not invited at all; everyone else without e-mail gets a letter.
     const letters = excluded.filter((e) => e.reason !== 'kein aktuelles Mitglied');
     await db.transaction().execute(async (tx) => {
-      const messageId = recipients.length ? await createMessage(tx, actor, { kind: 'free', category: 'notice', subject, body, filter: { mode: 'all', assemblyId: a.id } }, recipients.map((r) => ({ personId: r.personId, memberId: r.memberId, email: r.email }))) : null;
+      const messageId = recipients.length ? await createMessage(tx, actor, { kind: 'free', category: 'notice', subject, body, filter: { mode: a.groupId ? 'group' : 'all', groupId: a.groupId, assemblyId: a.id } }, recipients.map((r) => ({ personId: r.personId, memberId: r.memberId, email: r.email }))) : null;
       await tx.updateTable('assembly').set({ invited_at: new Date(), message_id: messageId }).where('id', '=', a.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'assembly.invited', entityType: 'assembly', entityId: a.id, diff: { emails: [null, recipients.length], letters: [null, letters.length] } });
     });
