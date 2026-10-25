@@ -190,7 +190,7 @@ The palette is a cool, near-neutral floor with a deep blue rail, one hot accent 
 - **Pale Birch Floor** (ground): page background for the app, portal and application form.
 - **Sheet White** (surface): tables, sheets, inputs, buttons, portal cards, the palette.
 - **Worn Floor** (surface-sunk): row hover, ghost-button hover, inline-form wells, out-of-month calendar days.
-- **Hallenblau** (rail): side rail, mobile top bar, auth side panel, portal top bar. **Rail Lift** (rail-raised) is the current rail link. **Rail Chalk** (rail-ink) and **Rail Haze** (rail-ink-muted) are text on the rail.
+- **Hallenblau** (rail): side rail, mobile top bar, auth side panel, portal top bar, the club marker on the application form. **Rail Lift** (rail-raised) is the current rail link. **Rail Chalk** (rail-ink) and **Rail Haze** (rail-ink-muted) are text on the rail.
 - **Hall Ink** (ink): body text, headings, the pressed segment, the bulk-action bar.
 - **Ink 2** (ink-2, 7.2:1 on ground): intros, table headers, labels in fact lists.
 - **Ink 3** (ink-3, 5.3:1 on surface): placeholders, meta, dates, axis labels.
@@ -236,7 +236,7 @@ blau, gruen, rot, gelb, orange, tuerkis, grau, schwarz. A group or calendar stor
 - **Page head:** h1 and one-line intro at top left, actions top right (flex-end aligned, wraps), 32px gap to content.
 - **Rhythm:** 8px grid with a 4px half step (s-1 to s-8). Sections sit 48px apart; section h2 has 16px below.
 - **Control height:** 36px, rising to 44px on coarse pointers.
-- **Breakpoints:** 860px (rail becomes an off-canvas drawer with a 56px Hallenblau top bar and a scrim; auth stacks), 760px (`hide-sm` columns drop, status shows its dot only, calendar events become 4px bars), 560px (form rows stack, agenda rows stack), 900px (composer stacks over preview), 720px (portal tabs move from the bottom to a top row).
+- **Breakpoints:** 860px (rail becomes an off-canvas drawer with a 56px Hallenblau top bar and a scrim; auth stacks), 760px (`hide-sm` columns drop, status labels drop to 13px and may wrap, calendar events become 4px bars, see Known exceptions), 560px (form rows stack, agenda rows stack), 900px (composer stacks over preview), 720px (portal tabs move from the bottom to a top row).
 - **Forms:** column with 16px gaps; two-up rows that collapse below 560px.
 - **Portal and application form:** one centred column, max 600px, padding 24px/16px.
 
@@ -280,7 +280,7 @@ White pill-less group in a 1px Control Edge frame with 2px inner padding; presse
 
 ### Tables
 - White wrapper, 1px hairline, 4px radius, horizontal scroll inside.
-- Headers 13px/600 ink-2, sticky. Rows 44px, 14px, hairline between rows, none after the last.
+- Headers 13px/600 ink-2. Rows 44px, 14px, hairline between rows, none after the last.
 - Row hover Worn Floor; selected row Accent Wash; keyboard focus 2px inset accent outline; clickable rows take a pointer.
 - Name cell 600 ink. Number and money cells right-aligned, tabular.
 - **Row actions** are hidden until the row is hovered or has focus inside.
@@ -308,7 +308,7 @@ Native dialog, max 640px, 12vh from the top, 6px radius, Pop shadow. 56px border
 - **Auth panel:** faint court markings drawn in SVG across the Hallenblau side panel (decorative, `aria-hidden`).
 
 ### Status
-A 7px dot in the state colour plus the label in the same colour at 14px: aktiv ok, künftig court-blau, Antrag/gekündigt warn, ehemalig ink-3, abgelehnt danger.
+A 7px dot in the state colour plus the label in the same colour at 14px: aktiv ok, künftig court-blau, Antrag/gekündigt warn, ehemalig ink-3, abgelehnt danger. `data-s` picks one of these colour slots; invoices, mandates, deliveries, SEPA items and import rows map their own states onto the same slots.
 
 ### Alerts and checklist
 Alerts: 4px radius, soft wash, strong text, 14px, no icon box. Overview checklist: hairline-ruled rows with an 18px circle tick; done rows fill the tick ok-green and strike the label through in ink-2.
@@ -341,3 +341,15 @@ Phone first. Hallenblau top bar with the club name and a 44px logout. One column
 - **Don't** load third-party fonts, trackers or CDNs; fonts ship through @fontsource.
 - **Don't** invent stats or testimonials; overview figures are live counts.
 - **Don't** let colour carry meaning alone; pair every status and court colour with text.
+
+## Known exceptions
+
+The code breaks a few of the rules above on purpose or as open debt. Don't copy them into new work, and don't "fix" them without a decision:
+
+- **`.pill`** (neutral meta tag: "Standard", "minderjährig", "Rundschreiben") is fully rounded with a grey fill. It is the one rounded shape; new tags use it rather than inventing another.
+- **Command palette** uses a 6px radius.
+- **Phone calendar:** below 760px month-grid events are 4px coloured bars without text, which breaks the 44px target and the no-colour-alone rule. Debt: make the day cell the target and show a count.
+- **Hard-coded colours:** `#fff` on accent and dark surfaces, the court lines in the sign-in panel SVG, and the QR codes. Everything else comes from tokens.
+- **`kbd`** hints are 12px, below the 13px meta floor.
+- **Arrows in link text** ("← Zurück", "× aufheben") are text glyphs, not icons.
+

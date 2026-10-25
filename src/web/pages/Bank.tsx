@@ -340,7 +340,7 @@ export function Collections({ me }: { me: Me }) {
                   <td>{c.memberId ? <Link to={`/mitglieder/${c.memberId}`}>{c.recipientName}</Link> : c.recipientName}{c.mandateReference && <div className="meta">Mandat {c.mandateReference}</div>}</td>
                   <td className="num hide-sm">{formatDate(c.dueDate)}</td>
                   <td className="num">{euro(c.openCents)}</td>
-                  <td><span className="status" title={READINESS_LABEL[c.readiness]} data-s={c.readiness === 'ok' ? 'active' : c.readiness === 'in_run' ? 'future' : 'applicant'}><span className="label-sm">{READINESS_LABEL[c.readiness]}</span></span></td>
+                  <td><span className="status" data-s={c.readiness === 'ok' ? 'active' : c.readiness === 'in_run' ? 'future' : 'applicant'}><span className="label-sm">{READINESS_LABEL[c.readiness]}</span></span></td>
                 </tr>
               ))}
             </tbody>

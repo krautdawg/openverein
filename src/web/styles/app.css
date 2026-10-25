@@ -368,7 +368,8 @@ dialog::backdrop { background: rgb(20 32 46 / 0.35); }
 @media (max-width: 760px) {
   .hide-sm { display: none; }
   /* Status chips keep their words on phones too (colour alone carries no meaning), just smaller. */
-  .label-sm { font-size: var(--text-xs); }
+  .label-sm { font-size: var(--text-xs); white-space: normal; }
+  .status:has(.label-sm) { align-items: baseline; }
 }
 
 .empty-state { padding: var(--s-7) var(--s-5); text-align: left; max-width: 52ch; }
