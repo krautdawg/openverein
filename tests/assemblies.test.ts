@@ -48,4 +48,17 @@ describe('general assembly', () => {
     const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Trainer:in', null) });
     expect((await trainer.post('/assemblies', input)).status).toBe(403);
   });
+
+  it('invites a board meeting to its group only and counts that group', async () => {
+    const board = (await admin.post('/groups', { name: 'Vorstand', shortCode: 'VS', kind: 'board' })).body.id;
+    await admin.post('/members', { firstName: 'Vera', lastName: 'Vorsitz', email: 'vera@example.org', joinDate: '2020-01-01', groupIds: [board] });
+    await admin.post('/members', { firstName: 'Max', lastName: 'Mitglied', email: 'max@example.org', joinDate: '2020-01-01' });
+    const input = { kind: 'board', groupId: board, title: 'Vorstandssitzung', heldOn: addDays(today(), 10), startsAt: '19:00', place: 'Online', noticeDays: 7, items: [{ title: 'Beschlüsse', isVote: true }] };
+    expect((await admin.post('/assemblies', { ...input, groupId: null })).status).toBe(400);
+    const m = await admin.post('/assemblies', input);
+    expect(m.body).toMatchObject({ kind: 'board', eligible: 1 });
+    expect((await admin.post(`/assemblies/${m.body.id}/invite`, {})).body.sent).toBe(1);
+    const to = await ctx.db.selectFrom('delivery').select('email').execute();
+    expect(to.map((d) => d.email)).toEqual(['vera@example.org']);
+  });
 });

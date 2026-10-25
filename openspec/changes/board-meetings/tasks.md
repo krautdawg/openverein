@@ -1,0 +1,4 @@
+- [x] kind and group on assembly
+- [x] invitation and eligibility by group
+- [x] UI switch and default agenda
+- [x] tests; missing assembly e2e added

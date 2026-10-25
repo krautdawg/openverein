@@ -7,6 +7,9 @@ export const assemblyItemInput = z.object({
 });
 
 export const assemblyInput = z.object({
+  /** general assembly (all members) or board meeting (one group, usually the board) */
+  kind: z.enum(['general', 'board']).default('general'),
+  groupId: z.uuid().nullish(),
   title: z.string().trim().min(1, 'Pflichtfeld.').max(200),
   heldOn: z.iso.date(),
   startsAt: z.string().regex(/^[0-2]\d:[0-5]\d$/, 'Uhrzeit wie 19:30.'),
@@ -27,6 +30,8 @@ export const assemblyItem = assemblyItemInput.extend({
 
 export const assembly = z.object({
   id: z.uuid(),
+  kind: z.enum(['general', 'board']),
+  groupId: z.uuid().nullable(),
   title: z.string(),
   heldOn: z.string(),
   startsAt: z.string(),
@@ -41,7 +46,7 @@ export const assembly = z.object({
   closedAt: z.string().nullable(),
   items: z.array(assemblyItem),
   attendees: z.array(z.uuid()),
-  /** current members on the day of the assembly */
+  /** members on the day (board meetings: of the group) */
   eligible: z.number(),
 });
 export type Assembly = z.infer<typeof assembly>;

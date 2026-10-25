@@ -943,6 +943,8 @@ export interface AssemblyTable {
   message_id: string | null;
   closed_at: Date | null;
   created_at: Generated<Date>;
+  kind: Generated<'general' | 'board'>;
+  group_id: string | null;
 }
 export interface AssemblyItemTable {
   id: Generated<string>;
