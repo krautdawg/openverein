@@ -151,3 +151,10 @@ The system SHALL run long operations (starting with the full export) as backgrou
 - **WHEN** a full export job is queued or running and another is started
 - **THEN** the second request is refused with 409
 
+### Requirement: Accessibility is checked in CI
+The system SHALL fail CI when axe-core reports a serious or critical WCAG 2.2 A/AA finding on any admin route, the sign-in pages or an open side sheet.
+
+#### Scenario: Regression caught
+- **WHEN** a change introduces text below 4.5:1 contrast on an admin route
+- **THEN** the accessibility e2e spec fails and names the route and element
+
