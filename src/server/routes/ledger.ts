@@ -255,6 +255,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!original) throw notFound('Buchung');
     // Payments are corrected where they happen (reverse the payment); their postings follow automatically.
     if (original.source === 'allocation' || original.source === 'allocation_reversal') throw new Problem(409, 'payment-entry', 'Diese Buchung kommt aus einer Zahlung.', 'Nimm die Zahlung bei der Rechnung oder im Kontoabgleich zurück; die Buchung folgt automatisch.');
+    if (original.source === 'receipt') throw new Problem(409, 'receipt-entry', 'Diese Buchung gehört zu einem Beleg.', 'Mach den Beleg unter Belege ungültig; die Zahlung wird dabei storniert.');
     if (original.source === 'donation') throw new Problem(409, 'donation-entry', 'Diese Buchung gehört zu einer Spende.', 'Mach die Spende unter Spenden ungültig; die Buchung wird dabei storniert.');
     const date = req.body?.date ?? today;
     if (date < original.entry_date) throw new Problem(400, 'validation', 'Das Storno kann nicht vor der Buchung liegen.');

@@ -150,7 +150,7 @@ function ReceiptSheet({ onClose }: { onClose: () => void }) {
           >
             {file ? <p>{file.name}{file.duplicateOf && <span className="error"> · Dieselbe Datei gehört schon zu: {file.duplicateOf}</span>}</p> : <p className="muted">PDF, Foto oder E-Rechnung (ZUGFeRD, XRechnung) hierher ziehen</p>}
             <button type="button" className="btn" aria-busy={busy} disabled={busy} onClick={() => input.current?.click()}>{file ? 'Andere Datei' : 'Datei wählen oder fotografieren'}</button>
-            <input ref={input} type="file" accept="application/pdf,image/*,.xml" capture="environment" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void attach(f); e.target.value = ''; }} />
+            <input ref={input} type="file" accept="application/pdf,image/*,.xml" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void attach(f); e.target.value = ''; }} />
           </div>
           <div className="form-row">
             <Field label="Von (Lieferant)" name="supplier" placeholder="z. B. Stadt Musterstadt" autoComplete="off" />
@@ -194,7 +194,7 @@ function SelfIssuedSheet({ onClose }: { onClose: () => void }) {
     const s = (k: string) => ((f.get(k) as string | null) ?? '').trim();
     setError(undefined);
     try {
-      await api('/receipts/self-issued', { method: 'POST', body: { date: s('date'), text: s('text'), reason: s('reason'), amountCents: parseEuro(s('amount')) ?? NaN, accountId: s('account'), signer: s('signer'), pay: { date: s('date'), moneyAccountId: s('pay-money') } } });
+      await api('/receipts/self-issued', { method: 'POST', body: { date: s('date'), payee: s('payee'), text: s('text'), reason: s('reason'), amountCents: parseEuro(s('amount')) ?? NaN, accountId: s('account'), signer: s('signer'), pay: { date: s('date'), moneyAccountId: s('pay-money') } } });
       await qc.invalidateQueries({ queryKey: ['receipts'] });
       await qc.invalidateQueries({ queryKey: ['journal'] });
       onClose();
@@ -211,7 +211,10 @@ function SelfIssuedSheet({ onClose }: { onClose: () => void }) {
           <Field label="Datum" name="date" type="date" defaultValue={todayLocal()} max={todayLocal()} />
           <div className="field"><label htmlFor="se-amount">Betrag</label><input id="se-amount" name="amount" className="input num" inputMode="decimal" /></div>
         </div>
-        <Field label="Wofür" name="text" placeholder="Parken beim Turnier" />
+        <div className="form-row">
+          <Field label="Wofür" name="text" placeholder="Parken beim Turnier" />
+          <Field label="An wen gezahlt" name="payee" placeholder="Parkhaus am Markt" />
+        </div>
         <div className="field"><label htmlFor="se-reason">Warum es keinen Beleg gibt</label><textarea id="se-reason" name="reason" className="textarea" /></div>
         <div className="form-row">
           <AccountSelect label="Ausgabenkonto" name="account" accounts={expense} />
@@ -287,7 +290,7 @@ function VoidSheet({ r, onClose }: { r: Receipt; onClose: () => void }) {
   );
 }
 
-interface CashBook { account: { id: string; number: string; name: string }; from: string; to: string; openingCents: number; rows: { entryNumber: number; date: string; text: string; inCents: number; outCents: number; balanceCents: number; receiptId: string | null }[]; closingCents: number }
+interface CashBook { account: { id: string; number: string; name: string }; from: string; to: string; openingCents: number; rows: { entryNumber: number; date: string; text: string; inCents: number; outCents: number; balanceCents: number; receiptId: string | null; receiptHasFile: boolean }[]; closingCents: number }
 
 export function CashBookPage({ me }: { me: Me }) {
   useTitle('Kassenbuch');
@@ -322,7 +325,7 @@ export function CashBookPage({ me }: { me: Me }) {
                 <tr key={r.entryNumber}>
                   <td className="num hide-sm">{r.entryNumber}</td>
                   <td className="num">{formatDate(r.date)}</td>
-                  <td>{r.text}{r.receiptId && <a href={`/api/v1/receipts/${r.receiptId}/file`} target="_blank" rel="noreferrer" aria-label="Beleg öffnen" style={{ marginLeft: 6 }}><FileText size={14} aria-hidden style={{ verticalAlign: '-2px' }} /></a>}</td>
+                  <td>{r.text}{r.receiptId && r.receiptHasFile && <a href={`/api/v1/receipts/${r.receiptId}/file`} target="_blank" rel="noreferrer" aria-label="Beleg öffnen" style={{ marginLeft: 6 }}><FileText size={14} aria-hidden style={{ verticalAlign: '-2px' }} /></a>}</td>
                   <td className="num hide-sm">{r.inCents ? euro(r.inCents) : ''}</td>
                   <td className="num hide-sm">{r.outCents ? euro(r.outCents) : ''}</td>
                   <td className="num show-sm">{euro(r.inCents - r.outCents)}</td>

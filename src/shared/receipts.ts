@@ -3,20 +3,23 @@ import { bookingLine } from './ledger.ts';
 
 export const RECEIPT_STATUS_LABEL = { open: 'offen', paid: 'bezahlt', void: 'ungültig' } as const;
 
+const receiptLine = bookingLine.extend({ grossCents: z.number().int().positive().max(100_000_000) });
+
 export const receiptInput = z.object({
   supplier: z.string().trim().min(1).max(200),
-  number: z.string().trim().max(100).nullish(),
+  number: z.string().trim().max(100).transform((v) => v || null).nullish(),
   receiptDate: z.iso.date(),
   dueDate: z.iso.date().nullish(),
   fileId: z.uuid().nullish(),
   note: z.string().trim().max(1000).nullish(),
-  lines: z.array(bookingLine).min(1).max(50),
+  lines: z.array(receiptLine).min(1).max(50),
   /** pay at once (cash on the spot, or already paid by card) */
   pay: z.object({ date: z.iso.date(), moneyAccountId: z.uuid() }).nullish(),
 });
 
 export const selfIssuedInput = z.object({
   date: z.iso.date(),
+  payee: z.string().trim().min(2).max(200),
   reason: z.string().trim().min(10, 'Bitte begründe, warum es keinen Beleg gibt.').max(500),
   text: z.string().trim().min(1).max(200),
   amountCents: z.number().int().positive().max(100_000_000),
@@ -48,6 +51,6 @@ export const cashBook = z.object({
   from: z.string(),
   to: z.string(),
   openingCents: z.number(),
-  rows: z.array(z.object({ entryNumber: z.number(), date: z.string(), text: z.string(), inCents: z.number(), outCents: z.number(), balanceCents: z.number(), receiptId: z.uuid().nullable() })),
+  rows: z.array(z.object({ entryNumber: z.number(), date: z.string(), text: z.string(), inCents: z.number(), outCents: z.number(), balanceCents: z.number(), receiptId: z.uuid().nullable(), receiptHasFile: z.boolean() })),
   closingCents: z.number(),
 });

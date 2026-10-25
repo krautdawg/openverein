@@ -32,8 +32,15 @@ describe('receipts', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     expect(r.body.receipt).toMatchObject({ status: 'open', totalCents: 48000, hasFile: true });
     expect(r.body.warnings).toEqual([]);
-    expect((await upload('kopie.pdf', pdf)).json().duplicateOf).toContain('Stadt Musterstadt');
+    const copy = await upload('kopie.pdf', pdf);
+    expect(copy.json().duplicateOf).toContain('Stadt Musterstadt');
     expect((await create('RE-77')).body.warnings[0]).toContain('schon einen Beleg mit der Nummer RE-77');
+    // One file, one receipt; receipt files stay out of the document module.
+    expect((await create('RE-78', f.json().id)).status).toBe(409);
+    expect((await admin.get('/files')).body.items ?? (await admin.get('/files')).body).toHaveLength(0);
+    // Open receipts can be corrected.
+    const edited = await admin.put(`/receipts/${r.body.receipt.id}`, { supplier: 'Stadt Musterstadt', number: 'RE-77', receiptDate: '2026-04-01', fileId: f.json().id, lines: [{ grossCents: 47000, accountId: acc('6200') }] });
+    expect(edited.body.receipt.totalCents).toBe(47000);
 
     const paid = await admin.post(`/receipts/${r.body.receipt.id}/pay`, { date: '2026-04-03', moneyAccountId: acc('1100') });
     expect(paid.body).toMatchObject({ status: 'paid', journalNumber: 1 });
@@ -53,9 +60,12 @@ describe('receipts', () => {
     expect(tooMuch.status).toBe(409);
     expect(await ctx.db.selectFrom('receipt').select('id').execute()).toHaveLength(0); // all or nothing
 
-    const self = await admin.post('/receipts/self-issued', { date: '2026-02-03', reason: 'Parkautomat ohne Quittung', text: 'Parken Turnier', amountCents: 1500, accountId: acc('6900'), signer: 'Erika Mustermann', pay: { date: '2026-02-03', moneyAccountId: acc('1000') } });
+    const self = await admin.post('/receipts/self-issued', { date: '2026-02-03', payee: 'Parkhaus am Markt', reason: 'Parkautomat ohne Quittung', text: 'Parken Turnier', amountCents: 1500, accountId: acc('6900'), signer: 'Erika Mustermann', pay: { date: '2026-02-03', moneyAccountId: acc('1000') } });
     expect(self.status, JSON.stringify(self.body)).toBe(201);
-    expect(self.body).toMatchObject({ selfIssued: true, status: 'paid', hasFile: true });
+    expect(self.body).toMatchObject({ selfIssued: true, status: 'paid', hasFile: true, supplier: 'Parkhaus am Markt' });
+    // The receipt's posting is corrected at the receipt, not in the journal.
+    const entry = (await admin.get('/ledger/entries?from=2026-01-01&to=2026-12-31')).body.find((e: { source: string }) => e.source === 'receipt');
+    expect((await admin.post(`/ledger/entries/${entry.id}/reverse`, {})).status).toBe(409);
     const book = (await admin.get(`/ledger/cash-book?accountId=${acc('1000')}&from=2026-01-01&to=2026-12-31`)).body;
     expect(book.rows.map((r: { balanceCents: number }) => r.balanceCents)).toEqual([3000, 1500]);
     expect(book.rows[1].receiptId).toBe(self.body.id);

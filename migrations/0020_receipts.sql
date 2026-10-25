@@ -1,4 +1,7 @@
 -- Supplier receipts (Eingangsbelege): recorded open, posted to the journal when paid (cash basis).
+
+-- Receipt files live in the file store but not in the document module.
+alter table file add column purpose text not null default 'document' check (purpose in ('document', 'receipt'));
 create table receipt (
   id uuid primary key default uuidv7(),
   organization_id uuid not null references organization(id),
@@ -41,13 +44,24 @@ declare s text;
 begin
   if tg_table_name = 'receipt' then
     if tg_op = 'DELETE' then raise exception 'receipts are voided, not deleted' using errcode = 'check_violation', constraint = 'receipt_frozen'; end if;
-    if old.status <> 'open' and (new.total_cents, new.supplier, new.number, new.receipt_date, new.file_id) is distinct from (old.total_cents, old.supplier, old.number, old.receipt_date, old.file_id) then
+    -- Only paid -> void is allowed after payment, and the posting columns never change again.
+    if old.status <> 'open' and (
+         (new.total_cents, new.supplier, new.number, new.receipt_date, new.file_id, new.self_reason, new.paid_on, new.money_account_id, new.journal_entry_id)
+           is distinct from (old.total_cents, old.supplier, old.number, old.receipt_date, old.file_id, old.self_reason, old.paid_on, old.money_account_id, old.journal_entry_id)
+         or old.status = 'void' or (old.status = 'paid' and new.status not in ('paid', 'void'))) then
       raise exception 'receipt is posted' using errcode = 'check_violation', constraint = 'receipt_frozen';
     end if;
     return new;
   end if;
-  select status into s from receipt where id = coalesce(new.receipt_id, old.receipt_id);
-  if s is not null and s <> 'open' then raise exception 'receipt is posted' using errcode = 'check_violation', constraint = 'receipt_frozen'; end if;
+  -- Lines: both the old and the new receipt must still be open.
+  if tg_op <> 'INSERT' then
+    select status into s from receipt where id = old.receipt_id;
+    if s is not null and s <> 'open' then raise exception 'receipt is posted' using errcode = 'check_violation', constraint = 'receipt_frozen'; end if;
+  end if;
+  if tg_op <> 'DELETE' then
+    select status into s from receipt where id = new.receipt_id;
+    if s is not null and s <> 'open' then raise exception 'receipt is posted' using errcode = 'check_violation', constraint = 'receipt_frozen'; end if;
+  end if;
   return coalesce(new, old);
 end $$;
 create trigger receipt_guard before update or delete on receipt for each row execute function receipt_guard();
