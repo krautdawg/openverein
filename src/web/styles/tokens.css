@@ -3,9 +3,9 @@
    group colours as court lines, one action colour from the handball line. */
 :root {
   /* Surfaces */
-  --ground: #f3f4f1;          /* pale birch floor, cool off-white */
+  --ground: #f1f3f4;          /* cool off-white hall floor */
   --surface: #ffffff;         /* tables, sheets, inputs */
-  --surface-sunk: #eceee9;    /* hover rows, inline wells */
+  --surface-sunk: #e8ebed;    /* hover rows, inline wells */
   --rail: #12355b;            /* Hallenblau */
   --rail-raised: #1b4471;
   --rail-ink: #e9eff6;
@@ -15,7 +15,7 @@
   --ink: #14202e;
   --ink-2: #47525f;           /* 7.2:1 on ground */
   --ink-3: #5f6874;           /* 5.3:1 on surface; placeholders, meta */
-  --line: #d8dbd4;            /* 1px hairlines */
+  --line: #d5dadd;            /* 1px hairlines */
   --line-strong: #858b83;     /* control borders, 3.5:1 on surface (WCAG 1.4.11) */
 
   /* Action: used only for primary actions, focus and current selection */
@@ -52,7 +52,7 @@
   --text-md: 0.9375rem;   /* 15px body */
   --text-lg: 1.125rem;    /* 18px */
   --text-xl: 1.375rem;    /* 22px section heads */
-  --text-2xl: 2rem;       /* 32px page titles */
+  --text-2xl: clamp(2rem, 1.25rem + 2.4vw, 2.875rem);  /* page titles: 32px on phones, ~46px on desktop */
   --leading: 1.55;
 
   /* Space: 8px grid, 4px half step */
@@ -67,7 +67,7 @@
 
   --radius: 4px;
   --control-h: 36px;
-  --rail-w: 232px;
+  --rail-w: 240px;
   --sheet-w: min(520px, 100vw);
   --shadow-sheet: -12px 0 32px rgb(20 32 46 / 0.12);
   --shadow-pop: 0 12px 32px rgb(20 32 46 / 0.18);
