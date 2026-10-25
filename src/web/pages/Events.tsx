@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { Cake, ChevronLeft, ChevronRight, Link2, Plus } from 'lucide-react';
+import { Cake, ChevronLeft, ChevronRight, Link2, Plus, Upload } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { PARTICIPATION_LABEL, type Calendar, type Occurrence, type OccurrenceDetail } from '../../shared/events.ts';
 import { euro } from '../../shared/fees.ts';
@@ -342,6 +342,17 @@ function CalendarsSheet({ calendars, onClose }: { calendars: Calendar[]; onClose
   const { data: groups } = useGroups();
   const [error, setError] = useState<ApiError>();
   const [feed, setFeed] = useState<{ id: string; url: string }>();
+  const [imported, setImported] = useState<{ id: string; text: string; notes: { title: string; note: string }[] }>();
+
+  async function importIcs(id: string, file: File) {
+    try {
+      const r = await api<{ imported: number; duplicates: number; notes: { title: string; note: string }[] }>(`/calendars/${id}/import`, { method: 'POST', body: { content: await file.text() } });
+      setImported({ id, text: `${r.imported === 1 ? 'Ein Termin' : `${r.imported} Termine`} übernommen${r.duplicates ? `, ${r.duplicates === 1 ? 'einer war' : `${r.duplicates} waren`} schon da` : ''}.`, notes: r.notes });
+      await qc.invalidateQueries({ queryKey: ['events'] });
+    } catch (err) {
+      setImported({ id, text: err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Die Datei ließ sich nicht lesen.', notes: [] });
+    }
+  }
 
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -367,14 +378,26 @@ function CalendarsSheet({ calendars, onClose }: { calendars: Calendar[]; onClose
     <Sheet title="Kalender" open onClose={onClose}>
       <ul className="timeline">
         {calendars.map((c) => (
-          <li key={c.id} style={{ gridTemplateColumns: '1fr auto' }}>
+          <li key={c.id} style={{ gridTemplateColumns: '1fr' }}>
             <span>
               <span className="court" style={courtVar(c.color)}>{c.name}</span>
               <div className="meta">{c.groupIds ? `Nur für ${c.groupIds.map((g) => groups?.find((x) => x.id === g)?.name ?? '…').join(', ')}` : 'Für alle Mitglieder'}</div>
+              <span className="actions-inline" style={{ marginTop: 'var(--s-1)' }}>
+                <button className="btn btn-ghost" style={{ paddingLeft: 0 }} onClick={() => void makeFeed(c.id)}><Link2 size={16} aria-hidden /> {c.hasFeed ? 'Neuer Abo-Link' : 'Abo-Link'}</button>
+                <label className="btn btn-ghost">
+                  <Upload size={16} aria-hidden /> ICS importieren
+                  <input type="file" accept=".ics,text/calendar" hidden aria-label={`ICS-Datei in ${c.name} importieren`} onChange={(e) => { const f = e.target.files?.[0]; if (f) void importIcs(c.id, f); e.target.value = ''; }} />
+                </label>
+              </span>
               {feed?.id === c.id && <div className="token-once" style={{ marginTop: 'var(--s-2)' }}>{feed.url}</div>}
+              {imported?.id === c.id && (
+                <div role="status" className="meta" style={{ marginTop: 'var(--s-2)' }}>
+                  {imported.text}
+                  {imported.notes.length > 0 && <ul style={{ margin: 'var(--s-1) 0 0', paddingLeft: '1.2em' }}>{imported.notes.slice(0, 8).map((n, i) => <li key={i}>{n.title}: {n.note}</li>)}</ul>}
+                </div>
+              )}
               <PublicCalendar c={c} />
             </span>
-            <button className="btn btn-ghost" onClick={() => void makeFeed(c.id)}><Link2 size={16} aria-hidden /> {c.hasFeed ? 'Neuer Abo-Link' : 'Abo-Link'}</button>
           </li>
         ))}
       </ul>

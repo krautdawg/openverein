@@ -566,6 +566,7 @@ export interface EventTable {
   created_by: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
+  import_uid: string | null;
 }
 
 export type ParticipationStatus = 'yes' | 'maybe' | 'no' | 'waitlist' | 'attended' | 'not_attended';
