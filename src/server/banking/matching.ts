@@ -114,7 +114,10 @@ export async function autoMatch(db: Db, organizationId: string, actor: AuditActo
   let returns = 0;
   const org = await db.selectFrom('organization').select('invoice_number_pattern').where('id', '=', organizationId).executeTakeFirstOrThrow();
   const numberRe = invoiceNumberRegex(org.invoice_number_pattern);
+  // Payments cannot be dated into a closed period, so transactions there are left for a person to decide.
+  const lock = (await db.selectFrom('ledger_setting').select('lock_date').where('organization_id', '=', organizationId).executeTakeFirst())?.lock_date;
   let q = db.selectFrom('bank_transaction').selectAll().where('organization_id', '=', organizationId).where('status', '=', 'unmatched');
+  if (lock) q = q.where('booking_date', '>', lock);
   if (onlyIds) q = q.where('id', 'in', onlyIds.length ? onlyIds : ['00000000-0000-0000-0000-000000000000']);
   const txs = await q.orderBy('booking_date').execute();
 

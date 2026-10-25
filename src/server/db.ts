@@ -356,6 +356,7 @@ export interface BankAccountTable {
   order_limit_cents: number | null;
   archived_at: Date | null;
   created_at: Timestamp;
+  ledger_account_id: string | null;
 }
 
 export interface SepaMandateTable {
@@ -702,6 +703,74 @@ export interface TotpRecoveryCodeTable {
   used_at: Date | null;
 }
 
+export type Sphere = 'ideell' | 'vermoegen' | 'zweck' | 'wirtschaft';
+export interface LedgerAccountTable {
+  id: Generated<string>;
+  organization_id: string;
+  number: string;
+  name: string;
+  kind: 'money' | 'income' | 'expense' | 'tax' | 'transit' | 'other';
+  default_sphere: Generated<Sphere>;
+  datev_number: string | null;
+  hidden: Generated<boolean>;
+  retired_at: Date | null;
+  created_at: Generated<Date>;
+}
+
+export interface TaxRateTable {
+  id: Generated<string>;
+  organization_id: string;
+  label: string;
+  rate_bp: number;
+  valid_from: string;
+  valid_to: string | null;
+  output_account_id: string | null;
+  input_account_id: string | null;
+}
+
+export interface CostCenterTable {
+  id: Generated<string>;
+  organization_id: string;
+  code: string;
+  name: string;
+}
+
+export interface LedgerSettingTable {
+  organization_id: string;
+  bank_account_id: string | null;
+  cash_account_id: string | null;
+  fee_account_id: string | null;
+  other_income_account_id: string | null;
+  dunning_account_id: string | null;
+  lock_date: string | null;
+}
+
+export interface JournalEntryTable {
+  id: Generated<string>;
+  organization_id: string;
+  number: number;
+  entry_date: string;
+  text: string;
+  source: 'manual' | 'allocation' | 'allocation_reversal' | 'reversal' | 'receipt' | 'import';
+  source_id: string | null;
+  reverses_id: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface JournalLineTable {
+  id: Generated<string>;
+  organization_id: string;
+  entry_id: string;
+  account_id: string;
+  debit_cents: Generated<number>;
+  credit_cents: Generated<number>;
+  sphere: Sphere;
+  cost_center_id: string | null;
+  tax_rate_id: string | null;
+  text: string | null;
+}
+
 export interface SuppressionTable {
   id: Generated<string>;
   organization_id: string;
@@ -757,6 +826,12 @@ export interface Database {
   application: ApplicationTable;
   import_run: ImportRunTable;
   totp_recovery_code: TotpRecoveryCodeTable;
+  ledger_account: LedgerAccountTable;
+  tax_rate: TaxRateTable;
+  cost_center: CostCenterTable;
+  ledger_setting: LedgerSettingTable;
+  journal_entry: JournalEntryTable;
+  journal_line: JournalLineTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

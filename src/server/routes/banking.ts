@@ -312,6 +312,8 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!t) throw notFound('Buchung');
       const ret = await tx.selectFrom('return_debit').select('id').where('bank_transaction_id', '=', t.id).executeTakeFirst();
       if (ret) throw new Problem(409, 'is-return', 'Eine verbuchte Rücklastschrift lässt sich nicht aufheben. Ziehe die Rechnung erneut ein oder buche sie aus.');
+      const lock = (await tx.selectFrom('ledger_setting').select('lock_date').where('organization_id', '=', actor.organizationId).executeTakeFirst())?.lock_date;
+      if (lock && t.booking_date <= lock) throw new Problem(409, 'period-locked', 'Diese Kontobewegung liegt in einem abgeschlossenen Zeitraum.', 'Die Zuordnung lässt sich danach nicht neu setzen. Korrigiere bei der Rechnung (Zahlung zurücknehmen und neu erfassen) oder öffne den Zeitraum wieder.');
       const allocations = await tx.selectFrom('allocation').select(['id', 'invoice_id', 'collection_item_id']).where('bank_transaction_id', '=', t.id).where('status', '=', 'confirmed').execute();
       for (const a of allocations) {
         await tx.updateTable('allocation').set({ status: 'reversed', reversed_at: new Date() }).where('id', '=', a.id).execute();
