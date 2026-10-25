@@ -4,6 +4,17 @@ Open-source club management for German registered associations (e.V.): members, 
 
 Licence: [AGPL-3.0](LICENSE). Status: early development, built slice by slice (see `openspec/`).
 
+## What it does
+
+| Area | Highlights |
+|---|---|
+| Members | Dated group memberships, households with a payer and family discount, custom fields, duplicates, saved views, bulk actions, age-based group change, census for the sports federation, honours, work hours, PDF and vCard lists |
+| Money | Effective-dated fees with a mandatory run preview, invoices and dunning, SEPA direct debit and credit transfers, CAMT import with matching, XRechnung out and in (ZUGFeRD/UBL/CII), article catalogue, letters as one duplex PDF |
+| Books | Cash-basis EÜR on an append-only balanced journal (GoBD lock date, reversals), receipts and cash book, DATEV export, budget vs. actual, volunteer allowances, donations and BMF receipts (money and in kind) |
+| Club life | Events with RSVP, waitlist and attendance, public calendar widget, mail with templates and delivery log, documents, general assemblies and board meetings with minutes |
+| Portal | Member self-service: data changes, invoices with GiroCode, documents, expense claims, household proxy for the payer |
+| Platform | Roles with division scope and field restrictions, TOTP for finance, API tokens and OpenAPI, signed webhooks, background jobs, full export, GDPR tooling, `ovctl` for install, backup, restore and update |
+
 ## Run it locally
 
 Requirements: Node 24, Docker.
