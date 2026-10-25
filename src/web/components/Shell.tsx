@@ -50,7 +50,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
 
   return (
     <div className="shell" data-nav-open={navOpen}>
-      <a href="#main" className="sr-only">Zum Inhalt springen</a>
+      <a href="#main" className="sr-only skip-link">Zum Inhalt springen</a>
       <aside className="rail" aria-label="Hauptnavigation">
         <div className="rail-club">
           {me.organization.name}
