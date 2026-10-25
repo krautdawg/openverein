@@ -8,13 +8,13 @@ export const PLACEHOLDERS = {
   mitgliedsnummer: 'Mitgliedsnummer',
   verein: 'Name des Vereins',
   rechnungsnummer: 'Rechnungsnummer (nur bei Rechnungsversand)',
-  betrag: 'Rechnungsbetrag (nur bei Rechnungsversand)',
+  betrag: 'Betrag (bei Rechnungen und Auslagen)',
   offen: 'Offener Betrag (nur bei Rechnungsversand)',
   faellig: 'Fälligkeitsdatum (nur bei Rechnungsversand)',
   mahnstufe: 'Bezeichnung der letzten Mahnstufe (nur bei Mahnungen)',
   link: 'Link (nur bei Einladungen und Anmeldecodes)',
   code: 'Anmeldecode (nur beim Anmeldecode)',
-  entscheidung: 'Entscheidung mit Begründung (nur bei Änderungswünschen)',
+  entscheidung: 'Entscheidung mit Begründung (bei Änderungswünschen, Anträgen und Auslagen)',
   austritt: 'Austrittsdatum (nur bei Kündigungen)',
 } as const;
 /** Fixed placeholders plus `custom.<key>` for the club's own (non-sensitive) fields. */
@@ -48,7 +48,7 @@ export function textToHtml(text: string) {
     .join('\n');
 }
 
-export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | 'application_received' | 'application_accepted' | 'application_rejected';
+export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | 'application_received' | 'application_accepted' | 'application_rejected' | 'expense_decided';
 export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject: string; body: string }> = {
   invoice: {
     name: 'Rechnung',
@@ -84,6 +84,11 @@ export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject
     name: 'Aufnahme bestätigt',
     subject: 'Willkommen bei {{verein}}',
     body: 'Hallo {{vorname}},\n\nwillkommen im Verein! Deine Mitgliedsnummer ist {{mitgliedsnummer}}.{{entscheidung}}\n\nViele Grüße\n{{verein}}',
+  },
+  expense_decided: {
+    name: 'Auslage entschieden',
+    subject: 'Deine Auslage bei {{verein}}',
+    body: 'Hallo {{vorname}},\n\nDeine Auslage über {{betrag}}: {{entscheidung}}\n\nViele Grüße\n{{verein}}',
   },
   application_rejected: {
     name: 'Aufnahme abgelehnt',
