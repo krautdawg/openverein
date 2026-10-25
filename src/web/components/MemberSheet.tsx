@@ -29,7 +29,15 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
     void qc.invalidateQueries({ queryKey: ['members'] });
     void qc.invalidateQueries({ queryKey: ['overview'] });
   };
-  const patch = async (body: Record<string, unknown>) => refresh(await api<MemberDetail>(`/members/${id}`, { method: 'PATCH', body }));
+  // A change made by someone else in the meantime is not overwritten: the sheet reloads and the user tries again.
+  const patch = async (body: Record<string, unknown>) => {
+    try {
+      refresh(await api<MemberDetail>(`/members/${id}`, { method: 'PATCH', body, ifMatch: m?.version }));
+    } catch (err) {
+      if (err instanceof ApiError && err.problem.status === 412) void reload();
+      throw err;
+    }
+  };
   const reload = async () => refresh(await api<MemberDetail>(`/members/${id}`));
 
   return (

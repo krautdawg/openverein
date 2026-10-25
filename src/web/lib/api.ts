@@ -31,7 +31,7 @@ const newKey = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(
 const stepUp = () => (stepUpInFlight ??= stepUpHandler!().finally(() => (stepUpInFlight = null)));
 
 /** The UI talks only to the public REST API, so every UI action is also an API action. */
-export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}, retried = false): Promise<T> {
+export async function api<T>(path: string, init: { method?: string; body?: unknown; ifMatch?: string } = {}, retried = false): Promise<T> {
   const method = init.method ?? 'GET';
   // Every write is JSON, even without payload: the server rejects other content types (CSRF guard).
   const body = method === 'GET' ? undefined : JSON.stringify(init.body ?? {});
@@ -41,6 +41,8 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   const key = sig ? (openKeys.get(sig) ?? newKey()) : '';
   if (sig) openKeys.set(sig, key);
   const headers: Record<string, string> = body ? { 'content-type': 'application/json', ...(key ? { 'idempotency-key': key } : {}) } : {};
+  // Optimistic concurrency: the server refuses with 412 when the record changed since it was read.
+  if (init.ifMatch) headers['if-match'] = `"${init.ifMatch}"`;
   let res: Response;
   try {
     res = await fetch(`/api/v1${path}`, { method, headers, body, credentials: 'same-origin' });

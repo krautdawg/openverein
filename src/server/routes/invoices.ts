@@ -1,3 +1,4 @@
+import { assertIfMatch, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -79,7 +80,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function detail(actor: Actor, id: string) {
     const today = await orgToday(db, actor.organizationId);
-    const row = await base(actor, today).select([...listColumns, 'invoice.cover_text', 'invoice.cancels_invoice_id', 'invoice.pdf_sha256', 'invoice.written_off_reason', 'invoice.dunning_hold_until', 'invoice.dunning_hold_reason']).where('invoice.id', '=', id).executeTakeFirst();
+    const row = await base(actor, today).select([...listColumns, 'invoice.updated_at', 'invoice.cover_text', 'invoice.cancels_invoice_id', 'invoice.pdf_sha256', 'invoice.written_off_reason', 'invoice.dunning_hold_until', 'invoice.dunning_hold_reason']).where('invoice.id', '=', id).executeTakeFirst();
     if (!row) throw notFound('Rechnung');
     const [item] = await toItems([row], today);
     const lines = await db
@@ -96,6 +97,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const snap = row.recipient as IssueSnapshot | null;
     return {
       ...item!,
+      version: versionOf(row.updated_at as Date),
       coverText: row.cover_text,
       recipient: snap?.recipient ?? null,
       lines: lines.map((l) => ({ id: l.id, position: l.position, text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, totalCents: l.total_cents, taxRate: Number(l.tax_rate), periodStart: l.period_start, periodEnd: l.period_end })),
@@ -188,6 +190,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const inv = await loadForWrite(tx, actor, req.params.id);
       if (inv.status !== 'draft') throw new Problem(409, 'immutable', 'Ausgestellte Rechnungen lassen sich nicht ändern. Erstelle eine Stornorechnung.');
+      assertIfMatch(req, versionOf(inv.updated_at as Date));
       await tx.updateTable('invoice').set({ ...(req.body.kind ? { kind: req.body.kind } : {}), ...(req.body.dueDate !== undefined ? { due_date: req.body.dueDate } : {}), ...(req.body.coverText !== undefined ? { cover_text: req.body.coverText } : {}), updated_at: new Date() }).where('id', '=', inv.id).execute();
       if (req.body.lines) {
         await tx.deleteFrom('invoice_line').where('invoice_id', '=', inv.id).execute();

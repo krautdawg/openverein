@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '../../../shared/auth.ts';
 import type { Organization } from '../../../shared/organization.ts';
 import { InlineEdit } from '../../components/InlineEdit.tsx';
-import { api } from '../../lib/api.ts';
+import { api, ApiError } from '../../lib/api.ts';
 import { useTitle } from '../../lib/useTitle.ts';
 
 const EXIT_AT = { any_day: 'zu jedem Tag', month_end: 'zum Monatsende', quarter_end: 'zum Quartalsende', half_year_end: 'zum Halbjahresende', year_end: 'zum Jahresende' } as const;
@@ -14,7 +14,14 @@ export function ClubSettings({ me }: { me: Me }) {
   const { data: org } = useQuery({ queryKey: ['organization'], queryFn: () => api<Organization>('/organization') });
 
   async function save(body: Partial<Organization>) {
-    const updated = await api<Organization>('/organization', { method: 'PATCH', body });
+    let updated: Organization;
+    try {
+      updated = await api<Organization>('/organization', { method: 'PATCH', body, ifMatch: org?.version });
+    } catch (err) {
+      // Someone else saved meanwhile: show their state, the user repeats the change.
+      if (err instanceof ApiError && err.problem.status === 412) await qc.invalidateQueries({ queryKey: ['organization'] });
+      throw err;
+    }
     qc.setQueryData(['organization'], updated);
     await qc.invalidateQueries({ queryKey: ['me'] });
   }
