@@ -69,6 +69,7 @@ export interface OrganizationTable {
   fee_schedule_lead_days: Generated<number>;
   fee_schedule_user_id: string | null;
   fee_schedule_last_run: string | null;
+  offer_number_pattern: Generated<string>;
 }
 
 export interface AppUserTable {
@@ -860,6 +861,38 @@ export interface ContactLogTable {
   created_at: Generated<Date>;
 }
 
+export interface OfferTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  person_id: string;
+  number: string | null;
+  status: Generated<'draft' | 'sent' | 'accepted' | 'declined' | 'converted'>;
+  issue_date: string | null;
+  valid_until: string | null;
+  recipient: unknown;
+  cover_text: string | null;
+  closing_text: string | null;
+  total_cents: Generated<string | number>;
+  pdf: Buffer | null;
+  invoice_id: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface OfferLineTable {
+  id: Generated<string>;
+  organization_id: string;
+  offer_id: string;
+  position: number;
+  text: string;
+  quantity: number | string;
+  unit_cents: number | string;
+  total_cents: number | string;
+  tax_rate: number | string;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -948,6 +981,8 @@ export interface Database {
   inventory_item: InventoryItemTable;
   inventory_loan: InventoryLoanTable;
   contact_log: ContactLogTable;
+  offer: OfferTable;
+  offer_line: OfferLineTable;
 }
 
 export interface InventoryItemTable {

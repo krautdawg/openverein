@@ -1,0 +1,4 @@
+- [x] tables, guards, routes
+- [x] PDF via the invoice renderer
+- [x] UI tab and form
+- [x] tests, e2e, a11y route
