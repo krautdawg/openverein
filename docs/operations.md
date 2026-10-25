@@ -69,4 +69,6 @@ For clubs without a technical volunteer, one operator can host several clubs on 
 
 What a club sees and does stays inside its club: members, mails, files, the portal (the portal signs members in for the club whose host name they use) and the full export under Einstellungen → Gesamtexport. One e-mail address can be an admin access in one club only. Mail goes out per club, each with its own rate and pause switch.
 
-Not yet included: deleting or moving out a single club (until then: full export, then delete the club's data by hand), per-club backups (`ovctl backup` backs up the whole installation), and the data-processing agreement template (Art. 28 GDPR) the operator needs with each club.
+As operator you process the clubs' data on their behalf: conclude a data-processing agreement (Art. 28 GDPR) with each club. `docs/avv-vorlage.md` is a German template with the technical and organisational measures OpenVerein brings and a part for your own operations.
+
+Not yet included: deleting or moving out a single club (until then: full export, then delete the club's data by hand) and per-club backups (`ovctl backup` backs up the whole installation).
