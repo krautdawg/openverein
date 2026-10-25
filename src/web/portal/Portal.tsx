@@ -32,6 +32,7 @@ interface PortalMember {
   city: string | null;
   groups: { name: string; color: string }[];
   mandate: { reference: string; ibanLast4: string; signedOn: string; status: string } | null;
+  features: Record<'profile' | 'bank' | 'invoices' | 'mandate' | 'resignation' | 'contact', boolean>;
   pending: { field: string; value: string; requestedAt: string }[];
   resignationProposal: string | null;
 }
@@ -105,7 +106,7 @@ function PortalShell({ me, children }: { me: PortalMe; children: ReactNode }) {
       <main className="portal-main" id="main">{children}</main>
       <nav className="portal-tabs" aria-label="Mitgliederportal">
         <NavLink to="/portal" end><Home size={20} aria-hidden /><span>Übersicht</span></NavLink>
-        <NavLink to="/portal/rechnungen"><Receipt size={20} aria-hidden /><span>Rechnungen</span></NavLink>
+        {me.members.some((m) => m.features.invoices) && <NavLink to="/portal/rechnungen"><Receipt size={20} aria-hidden /><span>Rechnungen</span></NavLink>}
         <NavLink to="/portal/dokumente"><FileText size={20} aria-hidden /><span>Dokumente</span></NavLink>
         <NavLink to="/portal/auslagen"><Wallet size={20} aria-hidden /><span>Auslagen</span></NavLink>
       </nav>
@@ -230,17 +231,17 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
       </p>
       {m.groups.length > 0 && <div className="portal-groups">{m.groups.map((g) => <GroupBadge key={g.name} {...g} />)}</div>}
       <dl className="facts portal-facts">
-        <dt>Lastschrift</dt>
-        <dd>{m.mandate ? <>Konto •••• {m.mandate.ibanLast4}<div className="meta">Mandat {m.mandate.reference} vom {formatDate(m.mandate.signedOn)}{m.mandate.status === 'pending_evidence' && ', wartet auf Unterschrift'}</div></> : <span className="muted">kein Mandat, Du überweist selbst</span>}</dd>
+        {m.features.mandate && <><dt>Lastschrift</dt>
+        <dd>{m.mandate ? <>Konto •••• {m.mandate.ibanLast4}<div className="meta">Mandat {m.mandate.reference} vom {formatDate(m.mandate.signedOn)}{m.mandate.status === 'pending_evidence' && ', wartet auf Unterschrift'}</div></> : <span className="muted">kein Mandat, Du überweist selbst</span>}</dd></>}
         <dt>Adresse</dt>
         <dd>{m.street ? <>{m.street}<br />{m.postalCode} {m.city}</> : <span className="muted">keine</span>}</dd>
         {m.custom.map((c) => <Fragment key={c.key}><dt>{c.label}</dt><dd>{c.value || <span className="muted">–</span>}</dd></Fragment>)}
       </dl>
       {m.pending.filter((p) => p.field !== 'resignation').length > 0 && <p className="meta">Änderungen warten auf den Verein: {m.pending.filter((p) => p.field !== 'resignation').map((p) => FIELD_LABEL[p.field] ?? p.field).join(', ')}.</p>}
       <div className="actions-row">
-        <button className="btn" onClick={() => navigate(`/portal/daten/${m.memberId}`)}>Daten ändern</button>
+        {(m.features.profile || m.features.bank) && <button className="btn" onClick={() => navigate(`/portal/daten/${m.memberId}`)}>Daten ändern</button>}
         <a className="btn btn-ghost" href={`/api/v1/portal/members/${m.memberId}/certificate.pdf`} download>Mitgliedsbescheinigung</a>
-        {m.status !== 'resigned' && !pendingResignation && !confirm && !(m.managed && m.email) && <button className="btn btn-ghost" onClick={() => setConfirm(true)}>Kündigen …</button>}
+        {m.features.resignation && m.status !== 'resigned' && !pendingResignation && !confirm && !(m.managed && m.email) && <button className="btn btn-ghost" onClick={() => setConfirm(true)}>Kündigen …</button>}
       </div>
       {pendingResignation && <p className="meta">Deine Kündigung zum {formatDate(pendingResignation.value)} ist eingegangen; der Vorstand bestätigt sie.</p>}
       {confirm && m.resignationProposal && (
@@ -270,7 +271,7 @@ function PortalData({ me }: { me: PortalMe }) {
       <h1 className="portal-h1">Daten ändern</h1>
       <p className="muted" style={{ marginBottom: 'var(--s-5)' }}>Die Telefonnummer gilt sofort. Alles andere prüft der Verein und meldet sich per E-Mail.</p>
       <ul className="portal-fields">
-        {fields.filter(([f]) => f !== 'iban' || m.mandate).map(([field, value]) => <FieldRow key={field} member={m} field={field} value={value} pending={m.pending.find((p) => p.field === field)?.value} />)}
+        {fields.filter(([f]) => (f === 'iban' ? m.features.bank && m.mandate : m.features.profile)).map(([field, value]) => <FieldRow key={field} member={m} field={field} value={value} pending={m.pending.find((p) => p.field === field)?.value} />)}
       </ul>
     </>
   );

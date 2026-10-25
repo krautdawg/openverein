@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '../../../shared/auth.ts';
-import type { Organization } from '../../../shared/organization.ts';
+import { PORTAL_FEATURE_KEYS, PORTAL_FEATURES, type Organization } from '../../../shared/organization.ts';
 import { InlineEdit } from '../../components/InlineEdit.tsx';
 import { api, ApiError } from '../../lib/api.ts';
 import { useTitle } from '../../lib/useTitle.ts';
@@ -121,6 +121,15 @@ export function ClubSettings({ me }: { me: Me }) {
             <p className="meta">So steht es meist in der Satzung. OpenVerein schlägt damit das Austrittsdatum vor.</p>
           </dd>
         </dl>
+      </section>
+      <section className="section" aria-labelledby="portal">
+        <h2 id="portal">Mitgliederportal</h2>
+        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '70ch' }}>Was Mitglieder im Portal tun können. Jede Gruppe kann einzelne Punkte für ihre Mitglieder erlauben oder verbieten (Gruppen → Gruppe → Im Portal); ein Verbot geht vor.</p>
+        <ul className="check-list">
+          {PORTAL_FEATURE_KEYS.map((k) => (
+            <li key={k}><label className="check"><input type="checkbox" disabled={!canWrite} checked={org.portalFeatures[k] ?? true} onChange={(e) => void save({ portalFeatures: { ...org.portalFeatures, [k]: e.target.checked } })} /> {PORTAL_FEATURES[k]}</label></li>
+          ))}
+        </ul>
       </section>
     </>
   );

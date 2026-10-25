@@ -358,6 +358,7 @@ dialog::backdrop { background: rgb(20 32 46 / 0.35); }
 .select { appearance: none; padding-right: 32px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2347525f' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; width: auto; }
 .check { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--text-sm); cursor: pointer; min-height: var(--control-h); }
 .check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; }
 
 .segmented { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); padding: 2px; }
 .segmented button { border: 0; background: transparent; font: inherit; font-size: var(--text-sm); padding: 0 var(--s-3); height: calc(var(--control-h) - 6px); border-radius: 3px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }

@@ -22,6 +22,7 @@ import { epcPayload } from '../invoices/pdf.ts';
 import { storedPdf, type IssueSnapshot } from '../invoices/service.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { orgToday } from '../members/query.ts';
+import { resolvePortalFeatures, type PortalFeature } from '../../shared/organization.ts';
 import { membershipCertificate } from '../members/certificate.ts';
 import { eligibleMembers, pollResults } from './polls.ts';
 import { addDays as addDaysIso } from '../../shared/dates.ts';
@@ -99,13 +100,24 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       .where('member.status', 'in', [...CURRENT])
       .orderBy('person.first_name')
       .execute();
-    return { session: s, organizationId: s.organization_id, email: s.email, members };
+    // What each membership may do here: the club's switches, overridden by the member's current groups.
+    const club = (await db.selectFrom('organization').select('portal_features').where('id', '=', s.organization_id).executeTakeFirstOrThrow()).portal_features as Record<string, boolean>;
+    const today = await orgToday(db, s.organization_id);
+    const overrides = members.length
+      ? await db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['group_membership.member_id', 'club_group.portal_overrides'])
+        .where('group_membership.member_id', 'in', members.map((m) => m.memberId)).where('group_membership.valid_from', '<=', today).where((eb) => eb.or([eb('group_membership.valid_to', 'is', null), eb('group_membership.valid_to', '>=', today)])).where('club_group.archived_at', 'is', null).execute()
+      : [];
+    const withFeatures = members.map((m) => ({ ...m, features: resolvePortalFeatures(club, overrides.filter((o) => o.member_id === m.memberId).map((o) => o.portal_overrides as Record<string, string>)) }));
+    return { session: s, organizationId: s.organization_id, email: s.email, members: withFeatures };
   }
   type PortalUser = Awaited<ReturnType<typeof portalUser>>;
   const ownMember = (u: PortalUser, memberId: string) => {
     const m = u.members.find((x) => x.memberId === memberId);
     if (!m) throw notFound('Mitgliedschaft');
     return m;
+  };
+  const requireFeature = (m: PortalUser['members'][number], f: PortalFeature) => {
+    if (!m.features[f]) throw new Problem(403, 'portal-feature-off', 'Das bietet Dein Verein im Portal nicht an.', 'Wende Dich bitte direkt an den Verein.');
   };
 
   // ---------- Sign-in ----------
@@ -187,7 +199,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const pending = ids.length ? await db.selectFrom('change_request').select(['member_id', 'field', 'new_value', 'requested_at']).where('member_id', 'in', ids).where('status', '=', 'pending').execute() : [];
     return {
       email: u.email,
-      club: { name: org.name, email: org.email },
+      // The contact shows if it is on for any of the memberships under this address.
+      club: { name: org.name, email: u.members.some((m) => m.features.contact) ? org.email : null },
       members: u.members.map((m) => ({
         memberId: m.memberId,
         /** managed as the household's payer, not the member's own address */
@@ -206,7 +219,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
         city: m.city,
         groups: groups.filter((g) => g.member_id === m.memberId).map((g) => ({ name: g.name, color: g.color })),
         custom: shown.map((f) => ({ key: f.key, label: f.label, value: customText(f.type, m.custom[f.id]) })),
-        mandate: mandates.filter((x) => x.person_id === m.personId).map((x) => ({ reference: x.reference, ibanLast4: x.iban_last4, signedOn: x.signed_on, status: x.status }))[0] ?? null,
+        features: m.features,
+        mandate: !m.features.mandate ? null : mandates.filter((x) => x.person_id === m.personId).map((x) => ({ reference: x.reference, ibanLast4: x.iban_last4, signedOn: x.signed_on, status: x.status }))[0] ?? null,
         pending: pending.filter((p) => p.member_id === m.memberId).map((p) => ({ field: p.field, value: pendingText(p.field, p.new_value), requestedAt: p.requested_at.toISOString() })),
         resignationProposal: m.status === 'resigned' ? null : proposeExitDate(today, org.notice_weeks, org.exit_at),
       })),
@@ -215,7 +229,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /** Invoices addressed to any person under this address. */
   async function ownInvoices(u: PortalUser) {
-    const persons = u.members.map((m) => m.personId);
+    const persons = u.members.filter((m) => m.features.invoices).map((m) => m.personId);
     if (!persons.length) return [];
     return db.selectFrom('invoice').selectAll().where('organization_id', '=', u.organizationId).where('recipient_person_id', 'in', persons).where('status', '!=', 'draft').orderBy('issue_date', 'desc').execute();
   }
@@ -364,6 +378,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       const u = await portalUser(req, reply);
       const b = req.body;
       const m = ownMember(u, b.memberId);
+      requireFeature(m, b.field === 'iban' ? 'bank' : 'profile');
       const invalid = (field: string, message: string) => new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message }] });
       let old: string | null;
       let value: string;
@@ -411,6 +426,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const u = await portalUser(req, reply);
       const m = ownMember(u, req.body.memberId);
+      requireFeature(m, 'resignation');
       if (m.status === 'resigned') throw new Problem(409, 'already-resigned', 'Diese Mitgliedschaft ist schon gekündigt.');
       // Someone with their own address resigns themselves; the payer only for members without one (e.g. children).
       if (m.viaHousehold && m.email) throw new Problem(403, 'own-access', 'Kündigen kann nur das Mitglied selbst.', `${m.first_name ?? 'Das Mitglied'} hat eine eigene E-Mail-Adresse und kann sich selbst im Portal anmelden.`);

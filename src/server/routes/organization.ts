@@ -1,6 +1,6 @@
 import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { organization, organizationPatch } from '../../shared/organization.ts';
+import { organization, organizationPatch, resolvePortalFeatures } from '../../shared/organization.ts';
 import { audit, diffOf } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { requirePermission } from '../policy.ts';
@@ -30,6 +30,7 @@ const toDto = (o: Selectable<Database['organization']>) => ({
   creditorId: o.creditor_id,
   prenotificationDays: o.prenotification_days,
   remittanceTemplate: o.remittance_template,
+  portalFeatures: resolvePortalFeatures(o.portal_features as Record<string, boolean>, []),
   mailFromName: o.mail_from_name,
   mailFromAddress: o.mail_from_address,
   mailReplyTo: o.mail_reply_to,
@@ -65,6 +66,7 @@ const COLUMNS = {
   creditorId: 'creditor_id',
   prenotificationDays: 'prenotification_days',
   remittanceTemplate: 'remittance_template',
+  portalFeatures: 'portal_features',
   mailFromName: 'mail_from_name',
   mailFromAddress: 'mail_from_address',
   mailReplyTo: 'mail_reply_to',
@@ -98,7 +100,7 @@ export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
       const values: Record<string, unknown> = {};
       for (const [api, col] of Object.entries(COLUMNS)) {
         const v = (req.body as Record<string, unknown>)[api];
-        if (v !== undefined) values[col] = col === 'dunning_levels' ? JSON.stringify(v) : v;
+        if (v !== undefined) values[col] = col === 'dunning_levels' || col === 'portal_features' ? JSON.stringify(v) : v;
       }
       return db.transaction().execute(async (tx) => {
         const before = await tx.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).forUpdate().executeTakeFirstOrThrow();
