@@ -1,3 +1,4 @@
+import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { organization, organizationPatch } from '../../shared/organization.ts';
 import { audit, diffOf } from '../audit.ts';
@@ -8,6 +9,7 @@ import type { Selectable } from 'kysely';
 
 const toDto = (o: Selectable<Database['organization']>) => ({
   id: o.id,
+  version: versionOf(o.updated_at as Date),
   name: o.name,
   timeZone: o.time_zone,
   isDemo: o.is_demo,
@@ -66,9 +68,11 @@ const COLUMNS = {
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  app.get('/organization', { schema: { tags: ['organization'], summary: 'Stammdaten des Vereins', response: { 200: organization } } }, async (req) => {
+  app.get('/organization', { schema: { tags: ['organization'], summary: 'Stammdaten des Vereins (ETag für If-Match)', response: { 200: organization } } }, async (req, reply) => {
     const actor = requireActor(req);
-    return toDto(await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow());
+    const o = toDto(await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow());
+    setETag(reply, o.version);
+    return o;
   });
 
   app.patch(
@@ -84,6 +88,7 @@ export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       return db.transaction().execute(async (tx) => {
         const before = await tx.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).forUpdate().executeTakeFirstOrThrow();
+        assertIfMatch(req, versionOf(before.updated_at as Date));
         const after = await tx
           .updateTable('organization')
           .set({ ...values, updated_at: new Date() })

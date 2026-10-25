@@ -23,7 +23,7 @@ export function MailSettings({ me }: { me: Me }) {
   const [unblock, setUnblock] = useState<string>();
 
   async function save(body: Partial<Organization>) {
-    qc.setQueryData(['organization'], await api<Organization>('/organization', { method: 'PATCH', body }));
+    qc.setQueryData(['organization'], await api<Organization>('/organization', { method: 'PATCH', body, ifMatch: qc.getQueryData<Organization>(['organization'])?.version }));
   }
   async function sendTest() {
     setBusy(true);

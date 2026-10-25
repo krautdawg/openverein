@@ -24,7 +24,7 @@ export function ApplicationSettings({ me }: { me: Me }) {
   const [editing, setEditing] = useState<AppForm | 'new' | null>(null);
 
   async function save(body: Partial<Organization>) {
-    qc.setQueryData(['organization'], await api<Organization>('/organization', { method: 'PATCH', body }));
+    qc.setQueryData(['organization'], await api<Organization>('/organization', { method: 'PATCH', body, ifMatch: qc.getQueryData<Organization>(['organization'])?.version }));
   }
   if (!org) return <div className="skeleton" style={{ width: 280 }} />;
   return (

@@ -24,6 +24,7 @@ import { nextNumber } from '../members/numbers.ts';
 import { applyScope, currentGroups, loadMemberRow, memberColumns, memberDetail, orgToday, toListItem } from '../members/query.ts';
 import { statusForJoin } from '../members/status.ts';
 import { fieldsFor, seesSensitive, writeCustom } from '../members/custom.ts';
+import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import { customText } from '../../shared/customFields.ts';
 import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 
@@ -199,10 +200,12 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     return { exitDate: proposeExitDate(req.query.noticeDate, org.notice_weeks, org.exit_at), rule: `${org.notice_weeks} Wochen Frist ${at}` };
   });
 
-  app.get('/members/:id', { schema: { tags, summary: 'Mitglied mit Gruppenverlauf und Zeitleiste', params: idParam, response: { 200: memberDetailSchema } } }, async (req) => {
+  app.get('/members/:id', { schema: { tags, summary: 'Mitglied mit Gruppenverlauf und Zeitleiste (ETag für If-Match)', params: idParam, response: { 200: memberDetailSchema } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'read');
-    return memberDetail(db, actor, req.params.id);
+    const m = await memberDetail(db, actor, req.params.id);
+    setETag(reply, m.version);
+    return m;
   });
 
   app.post('/members', { schema: { tags, summary: 'Mitglied anlegen (Person und Mitgliedschaft)', body: memberCreate, response: { 201: memberDetailSchema } } }, async (req, reply) => {
@@ -234,6 +237,9 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
         throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'postalCode', message: postalProblem }] });
       }
       await db.transaction().execute(async (tx) => {
+        // Optimistic concurrency: compare under row locks, so check and write are one step.
+        const locked = await tx.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.updated_at as m', 'person.updated_at as p']).where('member.id', '=', row.id).forUpdate().executeTakeFirstOrThrow();
+        assertIfMatch(req, versionOf(locked.m, locked.p));
         if (body.custom) await writeCustom(tx, actor, row.person_id, body.custom, 'patch');
         const person = personValues(body);
         if (Object.keys(person).length) {

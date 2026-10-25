@@ -25,7 +25,8 @@ export function MemberFees({ memberId, joinDate, canWrite, canSeeInvoices }: { m
   const calc = useQuery({ queryKey: ['fee-calc', memberId, until, fees.data], queryFn: () => api<Calc>(`/members/${memberId}/fee-calculator?until=${until}`), enabled: !!fees.data?.assignments.length });
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<ApiError>();
-  const refresh = () => qc.invalidateQueries({ queryKey: ['member-fees', memberId] });
+  // Fee changes touch the member record too (payment method): the sheet reloads its version.
+  const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['member-fees', memberId] }), qc.invalidateQueries({ queryKey: ['member', memberId] })]);
 
   async function call(fn: () => Promise<unknown>) {
     setError(undefined);

@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 export const organization = z.object({
   id: z.uuid(),
+  /** send back as If-Match when changing (412 when someone changed it meanwhile) */
+  version: z.string(),
   name: z.string(),
   timeZone: z.string(),
   isDemo: z.boolean(),

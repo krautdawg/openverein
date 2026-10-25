@@ -140,6 +140,8 @@ export const memberDetail = memberListItem.extend({
   restricted: z.array(z.string()),
   /** custom field values the user may see, by field id */
   custom: z.record(z.string(), z.unknown()),
+  /** send back as If-Match when changing the record (412 when someone changed it meanwhile) */
+  version: z.string(),
 });
 export type MemberDetail = z.infer<typeof memberDetail>;
 

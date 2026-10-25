@@ -4,6 +4,7 @@ import { todayIn } from '../../shared/dates.ts';
 import type { MemberDetail, MemberListItem } from '../../shared/members.ts';
 import { notFound } from '../http/problem.ts';
 import { fieldsFor, visibleDiffKeys, visibleValues } from './custom.ts';
+import { versionOf } from '../http/concurrency.ts';
 
 const maskCustom = (diff: unknown, keys: Set<string>) => (diff && typeof diff === 'object' && !Array.isArray(diff) ? Object.fromEntries(Object.entries(diff).filter(([k]) => !k.startsWith('custom.') || keys.has(k))) : diff);
 import { restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
@@ -55,10 +56,12 @@ export const memberColumns = [
   'person.preferred_channel',
   'person.note',
   'person.custom',
+  'member.updated_at as member_updated_at',
+  'person.updated_at as person_updated_at',
 ] as const;
 
 type Row = Pick<Selectable<MemberTable>, 'id' | 'person_id' | 'membership_number' | 'status' | 'application_date' | 'join_date' | 'notice_date' | 'exit_date' | 'exit_reason'> &
-  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note' | 'custom'>;
+  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note' | 'custom'> & { member_updated_at: Date; person_updated_at: Date };
 
 /** Current group badges for a set of members. */
 export async function currentGroups(db: Db, memberIds: string[], today: string) {
@@ -163,6 +166,7 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
     warnings,
     restricted: [...hidden],
     custom: visibleValues(row.custom, await fieldsFor(db, actor)),
+    version: versionOf(row.member_updated_at, row.person_updated_at),
   };
 }
 
