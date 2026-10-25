@@ -2,7 +2,6 @@
 
 ## Purpose
 The import capability covers the full data export, CSV / XLSX import with column mapping and duplicate handling, and the easyVerein importer (B M37, M38, M39). For easyVerein, importing from easyVerein's CSV / XLSX exports is the first deliverable; pulling through the easyVerein API (v3, v2 fallback) follows later and reuses the same mapping, review and reconciliation. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Full data export
 The system SHALL export all organisation data as a ZIP with one JSON-lines and one CSV file per entity, a `files/` directory with the stored files and a `manifest.json` (schema version, counts, SHA-256 of each file, export time), following a documented, versioned export schema, from the UI and as `ovctl export-all`.
@@ -102,3 +101,11 @@ The system SHALL produce a reconciliation report that blocks the scheduler and f
 #### Scenario: Fee run blocked before sign-off
 - **WHEN** a treasurer starts a fee run before the reconciliation report is signed off
 - **THEN** the system refuses and links the report
+
+### Requirement: Status from join and exit dates
+The system SHALL set the status of imported members from their join and exit dates: future join date → `future`, exit date in the past → `former`, exit date in the future → `resigned`, otherwise `active`.
+
+#### Scenario: Former member
+- **WHEN** a row has an exit date of 31.12.2023
+- **THEN** the member is imported as `former` with that exit date and closed group memberships
+
