@@ -122,7 +122,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
       .selectFrom('invoice')
       .innerJoin('member', 'member.id', 'invoice.member_id')
       .leftJoin('sepa_mandate as m', (j) => j.onRef('m.person_id', '=', 'invoice.recipient_person_id').on('m.status', '=', 'active'))
-      .select(['invoice.id', 'invoice.number', 'invoice.kind', 'invoice.due_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.member_id', 'invoice.recipient', 'member.payment_method', 'm.reference', 'm.type as mandate_type', 'm.first_collected'])
+      .select(['invoice.id', 'invoice.number', 'invoice.kind', 'invoice.due_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.member_id', 'invoice.recipient', 'invoice.recipient_person_id', 'member.person_id as member_person_id', 'member.payment_method', 'm.reference', 'm.type as mandate_type', 'm.first_collected'])
       .select((eb) => eb.exists(eb.selectFrom('collection_item_invoice as c').select('c.id').whereRef('c.invoice_id', '=', 'invoice.id').where('c.live', '=', true)).as('in_run'))
       .where('invoice.organization_id', '=', actor.organizationId)
       .where('invoice.status', 'in', ['open', 'partially_paid'])
@@ -131,10 +131,12 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     if (scope !== null) q = q.where(scopePredicate(scope, today, 'write'));
     const rows = await q.orderBy('invoice.due_date').execute();
     return rows.map((r) => {
-      const snap = r.recipient as { recipient: { name: string }; mandateReference?: string | null };
+      const snap = r.recipient as { recipient: { name: string }; mandateReference?: string | null; paymentMethod?: string | null };
+      // A household invoice goes to the payer: its method was fixed at issue from the payer's mandate.
+      const method = r.recipient_person_id !== r.member_person_id ? (snap.paymentMethod ?? r.payment_method) : r.payment_method;
       let readiness: Candidate['readiness'];
       if (r.in_run) readiness = 'in_run';
-      else if (kind === 'debit' && r.payment_method !== 'direct_debit') readiness = 'not_debit';
+      else if (kind === 'debit' && method !== 'direct_debit') readiness = 'not_debit';
       else if (!r.reference || (kind === 'debit' && r.mandate_type === 'one_off' && r.first_collected)) readiness = kind === 'debit' ? 'no_mandate' : 'no_iban';
       // The invoice is the pre-notification: it must have announced exactly this mandate.
       else if (kind === 'debit' && snap.mandateReference !== r.reference) readiness = 'no_prenotification';

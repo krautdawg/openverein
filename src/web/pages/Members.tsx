@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { Download, Plus, Search } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
@@ -113,6 +113,7 @@ export function Members({ me }: { me: Me }) {
         intro={list.data ? `${total} ${total === 1 ? 'Eintrag' : 'Einträge'} in dieser Ansicht.` : ' '}
         actions={
           <>
+            <Link className="btn btn-ghost" to="/mitglieder/haushalte">Haushalte</Link>
             <a className="btn" href={exportHref} download><Download size={16} aria-hidden /> CSV</a>
             {canWrite && <button className="btn btn-primary" onClick={() => setCreating(true)} aria-keyshortcuts="n"><Plus size={16} aria-hidden /> Mitglied anlegen</button>}
           </>

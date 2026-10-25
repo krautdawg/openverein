@@ -23,6 +23,7 @@ import { requireActor } from '../auth/session.ts';
 import type { Db, FeeRunTable } from '../db.ts';
 import { assess } from '../fees/engine.ts';
 import { loadInputs, membersWithMandate, previewFor } from '../fees/service.ts';
+import { previewHouseholds, type PreviewHousehold } from '../fees/household.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
@@ -258,13 +259,15 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // ---------- Fee runs ----------
 
-  type Stored = { members: PreviewMember[] };
+  type Stored = { members: PreviewMember[]; households?: PreviewHousehold[] };
 
   async function runDto(actor: Actor, r: Selectable<FeeRunTable>) {
     let members = (r.preview as Stored).members;
+    let households = (r.preview as Stored).households ?? [];
     // A scoped reader sees only the members of their groups, never the whole club's billing.
     const scope = scopeOf(actor, 'fees', 'read');
     if (scope !== null) {
+      households = [];
       const today = await orgToday(db, actor.organizationId);
       const visible = new Set((await db.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where(scopePredicate(scope, today, 'read')).execute()).map((m) => m.id));
       members = members.filter((m) => visible.has(m.memberId));
@@ -280,10 +283,11 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
       createdAt: r.created_at.toISOString(),
       postedAt: r.posted_at?.toISOString() ?? null,
       members,
+      households: households.map(({ householdId, name, payerName, memberIds, discountCents, label }) => ({ householdId, name, payerName, memberIds, discountCents, label })),
       totals: {
         members: members.filter((m) => m.lines.length > 0).length,
         lines: members.reduce((s, m) => s + m.lines.length, 0),
-        totalCents: members.reduce((s, m) => s + m.totalCents, 0),
+        totalCents: members.reduce((s, m) => s + m.totalCents, 0) - households.reduce((s, h) => s + h.discountCents, 0),
         catchUpLines: members.reduce((s, m) => s + m.lines.filter((l) => l.catchUp).length, 0),
         warnings: members.filter((m) => m.warnings.length > 0).length,
       },
@@ -299,9 +303,30 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function computePreview(actor: Actor, until: string, groupId: string | null, conn: Db = db) {
     const today = await orgToday(conn, actor.organizationId);
-    const { members, versions } = await loadInputs(conn, actor.organizationId, { groupId, today, scope: scopeOf(actor, 'fees', 'write') });
+    const scope = scopeOf(actor, 'fees', 'write');
+    const { members, versions } = await loadInputs(conn, actor.organizationId, { groupId, today, scope });
+    // A household is billed as a whole: its other members join the run even outside the group filter.
+    const inRun = members.map((m) => m.memberId);
+    const extra = inRun.length
+      ? await conn.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.id', 'person.last_name', 'person.first_name'])
+          .where('member.organization_id', '=', actor.organizationId).where('member.status', 'not in', ['applicant', 'rejected'])
+          .where('member.household_id', 'in', conn.selectFrom('member').select('household_id').where('id', 'in', inRun).where('household_id', 'is not', null))
+          .where('member.id', 'not in', inRun).execute()
+      : [];
+    if (extra.length) {
+      const more = await loadInputs(conn, actor.organizationId, { memberIds: extra.map((e) => e.id), today, scope });
+      if (more.members.length < extra.length) throw new Problem(409, 'household-outside-scope', 'Ein Haushalt reicht über Deine Gruppen hinaus.', 'Haushalte werden gemeinsam abgerechnet; diesen Lauf kann nur ein Zugang für den ganzen Verein buchen.');
+      members.push(...more.members);
+      for (const [k, v] of more.versions) versions.set(k, v);
+    }
     const mandates = await membersWithMandate(conn, actor.organizationId);
-    return members.map((m) => previewFor(m, versions, until, today, mandates.has(m.memberId))).filter((p) => p.lines.length > 0 || p.skipped.length > 0);
+    // Household members pay through the payer: the payer's mandate counts, not their own.
+    const payers = await conn.selectFrom('member').innerJoin('household', 'household.id', 'member.household_id').leftJoin('sepa_mandate as m', (j) => j.onRef('m.person_id', '=', 'household.payer_person_id').on('m.status', '=', 'active'))
+      .select(['member.id', 'm.id as mandate']).where('member.id', 'in', members.length ? members.map((m) => m.memberId) : ['00000000-0000-0000-0000-000000000000']).execute();
+    const payerMandate = new Map(payers.map((p) => [p.id, !!p.mandate]));
+    return members
+      .map((m) => previewFor(m, versions, until, today, payerMandate.has(m.memberId) ? payerMandate.get(m.memberId)! : mandates.has(m.memberId)))
+      .filter((p) => p.lines.length > 0 || p.skipped.length > 0);
   }
 
   app.get('/fee-runs', { schema: { tags, summary: 'Beitragsläufe', response: { 200: z.array(feeRunSummary) } } }, async (req) => {
@@ -324,10 +349,11 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     const dueDate = req.body.dueDate ?? addDays(issueDate, org.payment_terms_days);
     if (dueDate < issueDate) throw new Problem(400, 'validation', 'Die Fälligkeit liegt vor dem Rechnungsdatum.', undefined, { errors: [{ field: 'dueDate', message: 'Liegt vor dem Rechnungsdatum.' }] });
     const members = await computePreview(actor, req.body.until, req.body.groupId ?? null);
+    const households = await previewHouseholds(db, actor.organizationId, members, issueDate);
     const r = await db.transaction().execute(async (tx) => {
       const r = await tx
         .insertInto('fee_run')
-        .values({ organization_id: actor.organizationId, until: req.body.until, issue_date: issueDate, due_date: dueDate, group_id: req.body.groupId ?? null, preview: JSON.stringify({ members }), input_hash: members.map((m) => m.hash).join(','), created_by: actor.userId })
+        .values({ organization_id: actor.organizationId, until: req.body.until, issue_date: issueDate, due_date: dueDate, group_id: req.body.groupId ?? null, preview: JSON.stringify({ members, households }), input_hash: members.map((m) => m.hash).join(','), created_by: actor.userId })
         .returningAll()
         .executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'fee_run.previewed', entityType: 'fee_run', entityId: r.id, diff: { until: [null, r.until], members: [null, members.length] } });
@@ -361,17 +387,26 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
         const before = new Map(stored.map((m) => [m.memberId, m.hash]));
         const changed = current.filter((m) => before.get(m.memberId) !== m.hash).map((m) => m.name);
         const gone = stored.filter((m) => !current.some((c) => c.memberId === m.memberId)).map((m) => m.name);
-        if (changed.length || gone.length) {
-          throw new Problem(409, 'stale-preview', 'Daten haben sich seit der Vorschau geändert.', `Betroffen: ${[...changed, ...gone].slice(0, 5).join(', ')}${changed.length + gone.length > 5 ? ' …' : ''}. Bitte erstelle die Vorschau neu.`);
+        // Households: computed again with the excluded lines; a changed payer, member set, birth date or rule is stale.
+        const households = await previewHouseholds(tx, actor.organizationId, current, run.issue_date, exclude);
+        const storedHouseholds = new Map(((run.preview as Stored).households ?? []).map((h) => [h.householdId, h.hash]));
+        const hhChanged = [...households.filter((h) => storedHouseholds.get(h.householdId) !== h.hash), ...[...storedHouseholds.keys()].filter((id) => !households.some((h) => h.householdId === id)).map((id) => ({ name: `Haushalt ${id.slice(0, 8)}` }))].map((h) => h.name);
+        if (changed.length || gone.length || hhChanged.length) {
+          const all = [...changed, ...gone, ...hhChanged];
+          throw new Problem(409, 'stale-preview', 'Daten haben sich seit der Vorschau geändert.', `Betroffen: ${all.slice(0, 5).join(', ')}${all.length > 5 ? ' …' : ''}. Bitte erstelle die Vorschau neu.`);
         }
+        const householdOf = new Map(households.flatMap((h) => h.memberIds.map((id) => [id, h] as const)));
         const persons = new Map(
           (await tx.selectFrom('member').select(['id', 'person_id']).where('id', 'in', current.length ? current.map((m) => m.memberId) : ['00000000-0000-0000-0000-000000000000']).execute()).map((m) => [m.id, m.person_id]),
         );
         let invoices = 0;
+        type Created = { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string; discount?: boolean };
+        const perHousehold = new Map<string, Created[]>();
         for (const m of current) {
           const lines = m.lines.filter((l) => !exclude.has(l.key));
           if (lines.length === 0) continue;
-          const created: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId: string }[] = [];
+          const hh = householdOf.get(m.memberId);
+          const created: Created[] = [];
           for (const l of lines) {
             const a = await tx
               .insertInto('assessment')
@@ -388,11 +423,27 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
               })
               .returning('id')
               .executeTakeFirstOrThrow();
-            created.push({ text: l.text, quantity: 1, unitCents: l.amountCents, taxRate: 0, assessmentId: a.id });
+            created.push({ text: hh ? `${m.name}: ${l.text}` : l.text, quantity: 1, unitCents: l.amountCents, taxRate: 0, assessmentId: a.id });
+          }
+          if (hh) {
+            perHousehold.set(hh.householdId, [...(perHousehold.get(hh.householdId) ?? []), ...created]);
+            continue;
           }
           if (created.reduce((s, c) => s + c.unitCents, 0) === 0) continue;
           const invId = await createDraft(tx, { organizationId: actor.organizationId, kind: 'membership', personId: persons.get(m.memberId)!, memberId: m.memberId, dueDate: run.due_date, feeRunId: run.id, createdBy: actor.userId }, created);
           await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date);
+          invoices++;
+        }
+        // One invoice per household to the payer, with the family discount as its own line.
+        for (const h of households) {
+          const created = perHousehold.get(h.householdId) ?? [];
+          if (!created.length) continue;
+          if (h.discountCents > 0) created.push({ text: h.label, quantity: 1, unitCents: -h.discountCents, taxRate: 0, discount: true });
+          if (created.reduce((s, c) => s + c.unitCents, 0) <= 0) continue;
+          const invId = await createDraft(tx, { organizationId: actor.organizationId, kind: 'membership', personId: h.payerPersonId, memberId: h.anchorMemberId, dueDate: run.due_date, feeRunId: run.id, coverText: `Beiträge für den Haushalt ${h.name}`, createdBy: actor.userId }, created);
+          // The payer's active mandate makes it a direct debit (pre-notified on the invoice), else the anchor's method.
+          const payerMandate = await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', h.payerPersonId).where('status', '=', 'active').executeTakeFirst();
+          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date, payerMandate ? { paymentMethod: 'direct_debit' } : {});
           invoices++;
         }
         await tx.updateTable('fee_run').set({ status: 'posted', posted_at: new Date() }).where('id', '=', run.id).execute();

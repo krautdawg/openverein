@@ -95,6 +95,16 @@ export const previewMember = z.object({
 });
 export type PreviewMember = z.infer<typeof previewMember>;
 
+export const previewHousehold = z.object({
+  householdId: z.uuid(),
+  name: z.string(),
+  payerName: z.string(),
+  memberIds: z.array(z.uuid()),
+  discountCents: z.number(),
+  label: z.string(),
+});
+export type PreviewHouseholdDto = z.infer<typeof previewHousehold>;
+
 export const feeRunCreate = z.object({
   until: isoDate,
   issueDate: isoDate.optional(),
@@ -111,11 +121,13 @@ export const feeRun = z.object({
   createdAt: z.string(),
   postedAt: z.string().nullable(),
   members: z.array(previewMember),
+  /** households billed on one invoice to the payer, with their family discount */
+  households: z.array(previewHousehold),
   totals: z.object({ members: z.number(), lines: z.number(), totalCents: z.number(), catchUpLines: z.number(), warnings: z.number() }),
   invoiceCount: z.number(),
 });
 export type FeeRun = z.infer<typeof feeRun>;
-export const feeRunSummary = feeRun.omit({ members: true });
+export const feeRunSummary = feeRun.omit({ members: true, households: true });
 export const feeRunPost = z.object({ excludeLineKeys: z.array(z.string()).max(100_000).default([]) });
 
 export const euro = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });

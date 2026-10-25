@@ -30,6 +30,8 @@ export async function anonymiseBlockers(tx: Db, organizationId: string, personId
     select reference, (coalesce(last_collected_on, revoked_on, signed_on) + interval '14 months')::date::text as until from sepa_mandate
     where person_id = ${personId} and (status in ('active', 'pending_evidence') or coalesce(last_collected_on, revoked_on, signed_on) + interval '14 months' >= ${today}::date)`.execute(tx);
   for (const m of keep.rows) out.push(`SEPA-Mandat ${m.reference} muss bis ${m.until.split('-').reverse().join('.')} aufbewahrt werden.`);
+  const payerOf = await tx.selectFrom('household').select('name').where('payer_person_id', '=', personId).execute();
+  for (const h of payerOf) out.push(`Zahlende Person des Haushalts „${h.name}“: wähle dort zuerst eine andere.`);
   // The address is needed for the receipt.
   const unreceipted = await tx.selectFrom('donation').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', personId).where('voided_at', 'is', null)
     .where((eb) => eb.not(eb.exists(eb.selectFrom('donation_receipt_item').select('donation_id').whereRef('donation_receipt_item.donation_id', '=', 'donation.id').where('live', '=', true)))).executeTakeFirstOrThrow();
