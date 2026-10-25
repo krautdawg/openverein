@@ -1,0 +1,4 @@
+- [x] public flag and origins
+- [x] public events route
+- [x] widget page and framing
+- [x] tests and e2e

@@ -135,4 +135,21 @@ describe('events', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.participants.find((p: { memberId: string }) => p.memberId === b).status).toBe('waitlist');
   });
+
+  it('publishes a calendar for the website without descriptions, only when public', async () => {
+    const day = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    await admin.post('/events', { calendarId, title: 'Probetraining', description: 'Intern: Schlüssel bei Jens', location: 'Halle 2', startsAt: `${day}T18:00`, endsAt: `${day}T19:30` });
+    const pub = (url: string) => ctx.app.inject({ url: `/api/v1${url}` });
+    expect((await pub(`/public/calendars/${calendarId}/events`)).statusCode).toBe(404);
+    expect((await admin.patch(`/calendars/${calendarId}`, { publicOrigins: ['http://unsicher.example'] })).status).toBe(400);
+    const on = await admin.patch(`/calendars/${calendarId}`, { public: true, publicOrigins: ['https://www.tsv.example'] });
+    expect(on.body).toMatchObject({ public: true, publicOrigins: ['https://www.tsv.example'] });
+    const res = await pub(`/public/calendars/${calendarId}/events`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().events[0]).toEqual({ title: 'Probetraining', date: day, startsAt: `${day}T18:00`, endsAt: `${day}T19:30`, allDay: false, location: 'Halle 2' });
+    expect(res.body).not.toContain('Schlüssel');
+    const board = (await admin.post('/groups', { name: 'Vorstand', shortCode: 'VS', kind: 'board' })).body.id;
+    const internal = (await admin.post('/calendars', { name: 'Intern', groupIds: [board] })).body.id;
+    expect((await admin.patch(`/calendars/${internal}`, { public: true })).status).toBe(409);
+  });
 });

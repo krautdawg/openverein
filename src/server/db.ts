@@ -527,6 +527,8 @@ export interface CalendarTable {
   group_ids: string[] | null;
   feed_token_hash: string | null;
   created_at: Timestamp;
+  public: Generated<boolean>;
+  public_origins: Generated<string[]>;
 }
 
 /** Wall-clock timestamps in the club's time zone, kept as 'YYYY-MM-DD HH:MM:SS' strings. */

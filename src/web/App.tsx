@@ -39,6 +39,7 @@ import { SecuritySettings } from './pages/settings/SecuritySettings.tsx';
 import { Applications } from './pages/Applications.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
+import { CalendarWidget } from './pages/CalendarWidget.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
 import { AuditLog } from './pages/settings/AuditLog.tsx';
 import { ClubSettings } from './pages/settings/ClubSettings.tsx';
@@ -51,6 +52,7 @@ import './lib/search.ts';
 export function App() {
   const { pathname } = useLocation();
   if (pathname.startsWith('/aufnahme/')) return <Routes><Route path="/aufnahme/:slug" element={<ApplicationForm />} /></Routes>;
+  if (pathname.startsWith('/widget/termine/')) return <Routes><Route path="/widget/termine/:id" element={<CalendarWidget />} /></Routes>;
   return pathname.startsWith('/portal') ? <PortalApp /> : <AdminApp />;
 }
 

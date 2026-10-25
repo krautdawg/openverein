@@ -172,8 +172,13 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     if (serveWeb && req.method === 'GET' && !isApi(req.url) && !/\.\w+$/.test(path)) {
       // Pages may not be framed, except an application form on the sites the club allowed for it.
       const slug = path.match(/^\/aufnahme\/([a-z0-9-]{3,60})\/?$/)?.[1];
-      const form = slug ? await db.selectFrom('application_form').select('allowed_origins').where('slug', '=', slug).where('active', '=', true).executeTakeFirst() : undefined;
-      reply.header('content-security-policy', `frame-ancestors 'self'${form?.allowed_origins.length ? ` ${form.allowed_origins.join(' ')}` : ''}`);
+      const calendarId = path.match(/^\/widget\/termine\/([0-9a-f-]{36})\/?$/)?.[1];
+      const origins = slug
+        ? (await db.selectFrom('application_form').select('allowed_origins').where('slug', '=', slug).where('active', '=', true).executeTakeFirst())?.allowed_origins
+        : calendarId
+          ? (await db.selectFrom('calendar').select('public_origins').where('id', '=', calendarId).where('public', '=', true).executeTakeFirst())?.public_origins
+          : undefined;
+      reply.header('content-security-policy', `frame-ancestors 'self'${origins?.length ? ` ${origins.join(' ')}` : ''}`);
       return reply.sendFile('index.html');
     }
     return sendProblem(reply, new Problem(404, 'not-found', 'Diese Adresse gibt es nicht.'), req.url);

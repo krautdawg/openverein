@@ -372,6 +372,7 @@ function CalendarsSheet({ calendars, onClose }: { calendars: Calendar[]; onClose
               <span className="court" style={courtVar(c.color)}>{c.name}</span>
               <div className="meta">{c.groupIds ? `Nur für ${c.groupIds.map((g) => groups?.find((x) => x.id === g)?.name ?? '…').join(', ')}` : 'Für alle Mitglieder'}</div>
               {feed?.id === c.id && <div className="token-once" style={{ marginTop: 'var(--s-2)' }}>{feed.url}</div>}
+              <PublicCalendar c={c} />
             </span>
             <button className="btn btn-ghost" onClick={() => void makeFeed(c.id)}><Link2 size={16} aria-hidden /> {c.hasFeed ? 'Neuer Abo-Link' : 'Abo-Link'}</button>
           </li>
@@ -397,5 +398,38 @@ function CalendarsSheet({ calendars, onClose }: { calendars: Calendar[]; onClose
         <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">Kalender anlegen</button></div>
       </form>
     </Sheet>
+  );
+}
+
+/** Website widget: make a calendar public and copy the embed code. */
+function PublicCalendar({ c }: { c: Calendar }) {
+  const qc = useQueryClient();
+  const [origins, setOrigins] = useState(c.publicOrigins.join(', '));
+  const [error, setError] = useState<string>();
+  async function save(body: { public?: boolean; publicOrigins?: string[] }) {
+    setError(undefined);
+    try {
+      await api(`/calendars/${c.id}`, { method: 'PATCH', body });
+      await qc.invalidateQueries({ queryKey: ['calendars'] });
+    } catch (err) {
+      setError(err instanceof ApiError ? (err.problem.errors?.map((x) => x.message).join(' ') ?? err.problem.title) : 'Das hat nicht geklappt.');
+    }
+  }
+  const src = `${window.location.origin}/widget/termine/${c.id}`;
+  if (c.groupIds) return null;
+  return (
+    <div style={{ marginTop: 'var(--s-2)' }}>
+      <label className="check"><input type="checkbox" checked={c.public} onChange={(e) => void save({ public: e.target.checked })} /> Öffentlich auf der Vereinswebsite zeigen (ohne Beschreibung und Teilnehmende)</label>
+      {c.public && (
+        <div className="form" style={{ marginTop: 'var(--s-2)' }}>
+          <div className="field">
+            <label htmlFor={`orig-${c.id}`}>Websites, die einbetten dürfen</label>
+            <input id={`orig-${c.id}`} className="input" placeholder="https://www.mein-verein.de" value={origins} onChange={(e) => setOrigins(e.target.value)} onBlur={() => void save({ publicOrigins: origins.split(/[\s,]+/).filter(Boolean) })} />
+          </div>
+          {error && <span className="error" role="alert">{error}</span>}
+          <div className="token-once">{`<iframe src="${src}" title="Termine" style="border:0;width:100%;height:480px"></iframe>`}</div>
+        </div>
+      )}
+    </div>
   );
 }
