@@ -877,6 +877,7 @@ export interface Database {
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
   idempotency_key: IdempotencyKeyTable;
+  duplicate_dismissal: DuplicateDismissalTable;
   household: HouseholdTable;
   household_rule: HouseholdRuleTable;
   receipt: ReceiptTable;
@@ -977,6 +978,14 @@ export interface ErasureLogTable {
   organization_id: string;
   person_id: string;
   at: Generated<Date>;
+}
+
+export interface DuplicateDismissalTable {
+  organization_id: string;
+  person_a: string;
+  person_b: string;
+  dismissed_by: string | null;
+  dismissed_at: Generated<Date>;
 }
 
 export interface IdempotencyKeyTable {

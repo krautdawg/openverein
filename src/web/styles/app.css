@@ -586,3 +586,10 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .dropzone { display: grid; gap: var(--s-2); justify-items: start; padding: var(--s-4); border: 1px dashed var(--line-strong, var(--line)); border-radius: var(--radius); background: var(--surface); }
 .dropzone p { margin: 0; font-size: var(--text-sm); }
+.dup-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-4); }
+.dup { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: var(--s-4); display: grid; gap: var(--s-3); }
+.dup-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-5); }
+.dup-score { font-size: var(--text-sm); color: var(--ink-2); }
+mark.match { background: var(--warn-soft); color: inherit; padding: 0 2px; border-radius: 2px; }
+@media (max-width: 760px) { .dup-pair { grid-template-columns: 1fr; } .dup-pair > dl + dl { border-top: 1px solid var(--line); padding-top: var(--s-3); } }
+input[type='range'] { accent-color: var(--accent); }
