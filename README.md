@@ -45,6 +45,7 @@ Then open http://localhost:3300.
 npm run typecheck && npm run lint
 npm test            # unit and integration tests (needs the Postgres container)
 npm run test:e2e    # Playwright end-to-end tests
+npm run validate:xrechnung  # sample e-invoices through the official KoSIT validator (needs Java 17+ or Docker)
 ```
 
 ## How the project is organised

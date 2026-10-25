@@ -40,6 +40,11 @@ const personBase = z.object({
   country: z.string().length(2).toUpperCase(),
   preferredChannel: z.enum(['email', 'letter', 'none']),
   note: optText(4000),
+  /** e-invoice (XRechnung) for business or public recipients */
+  einvoiceFormat: z.enum(['none', 'xrechnung']).optional(),
+  buyerReference: optText(100).optional(),
+  einvoiceAddress: optText(200).optional(),
+  vatId: z.preprocess((v) => (typeof v === 'string' ? v.replace(/\s+/g, '').toUpperCase() : v), z.string().regex(/^[A-Z]{2}[A-Z0-9]{2,13}$/, 'Format: Länderkürzel und Nummer, z. B. DE123456789.').nullish().or(z.literal('').transform(() => null))).optional(),
 });
 
 /** For create: with defaults. For patch, personBase.partial() keeps absent fields absent. */
@@ -142,6 +147,7 @@ export const memberDetail = memberListItem.extend({
   custom: z.record(z.string(), z.unknown()),
   /** send back as If-Match when changing the record (412 when someone changed it meanwhile) */
   version: z.string(),
+  einvoice: z.object({ format: z.enum(['none', 'xrechnung']), buyerReference: z.string().nullable(), address: z.string().nullable(), vatId: z.string().nullable() }),
 });
 export type MemberDetail = z.infer<typeof memberDetail>;
 

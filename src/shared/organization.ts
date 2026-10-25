@@ -31,6 +31,12 @@ export const organization = z.object({
   mailPausedReason: z.string().nullable(),
   electronicMandatesAgreed: z.boolean(),
   joinRule: z.enum(['application_date', 'acceptance_date', 'month_first', 'next_month_first']),
+  vatId: z.string().nullable(),
+  taxNumber: z.string().nullable(),
+  registerNumber: z.string().nullable(),
+  smallBusiness: z.boolean(),
+  einvoiceContactName: z.string().nullable(),
+  einvoiceContactPhone: z.string().nullable(),
 });
 export type Organization = z.infer<typeof organization>;
 
@@ -59,6 +65,12 @@ export const organizationPatch = z.object({
   mailPerMinute: z.number().int().min(1).max(1000).optional(),
   electronicMandatesAgreed: z.boolean().optional(),
   joinRule: z.enum(['application_date', 'acceptance_date', 'month_first', 'next_month_first']).optional(),
+  vatId: z.preprocess((v) => (typeof v === 'string' ? v.replace(/\s+/g, '').toUpperCase() : v), z.string().regex(/^[A-Z]{2}[A-Z0-9]{2,13}$/, 'Format: Länderkürzel und Nummer, z. B. DE123456789.').nullish().or(z.literal('').transform(() => null))).optional(),
+  taxNumber: optText(30),
+  registerNumber: optText(100),
+  smallBusiness: z.boolean().optional(),
+  einvoiceContactName: optText(100),
+  einvoiceContactPhone: optText(40),
   mailReplyTo: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)).optional(),
   creditorId: z.preprocess((v) => (typeof v === 'string' ? v.replace(/\s+/g, '').toUpperCase() : v), z.string().max(35).nullish().transform((v) => (v === '' ? null : v)).refine((v) => !v || isValidCreditorId(v), 'Diese Gläubiger-ID ist nicht gültig (Prüfziffer).')).optional(),
   dunningLevels: z

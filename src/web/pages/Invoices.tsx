@@ -206,6 +206,7 @@ export function InvoiceSheet({ id, canWrite, onClose }: { id: string | null; can
             {inv.status !== 'draft' && (
               <div className="actions-row">
                 <a className="btn" href={`/api/v1/invoices/${inv.id}/pdf`} target="_blank" rel="noreferrer"><FileDown size={16} aria-hidden /> PDF</a>
+                {inv.hasEinvoice && <a className="btn" href={`/api/v1/invoices/${inv.id}/xrechnung.xml`}><FileDown size={16} aria-hidden /> XRechnung</a>}
               </div>
             )}
           </section>

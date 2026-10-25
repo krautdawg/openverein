@@ -63,6 +63,19 @@ export function ClubSettings({ me }: { me: Me }) {
           </dd>
         </dl>
       </section>
+      <section className="section" aria-labelledby="einvoice">
+        <h2 id="einvoice">Steuer und E-Rechnung</h2>
+        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '70ch' }}>Für Rechnungen an Firmen und Behörden, die eine E-Rechnung (XRechnung) verlangen. Mitgliedsbeiträge gehen als nicht steuerbar hinein.</p>
+        <dl className="facts">
+          <dt>USt-IdNr.</dt><dd>{edit('USt-IdNr.', 'vatId')}</dd>
+          <dt>Steuernummer</dt><dd>{edit('Steuernummer', 'taxNumber')}</dd>
+          <dt>Vereinsregister</dt><dd>{edit('Vereinsregister', 'registerNumber')}<p className="meta">Zum Beispiel „VR 1234, Amtsgericht Musterstadt“.</p></dd>
+          <dt>Ansprechperson</dt><dd>{edit('Ansprechperson für E-Rechnungen', 'einvoiceContactName')}</dd>
+          <dt>Telefon</dt><dd>{edit('Telefon für E-Rechnungen', 'einvoiceContactPhone')}</dd>
+          <dt>Kleinunternehmer</dt>
+          <dd><label className="check"><input type="checkbox" disabled={!canWrite} checked={org.smallBusiness} onChange={(e) => void save({ smallBusiness: e.target.checked })} /> Umsatzsteuer wird nach § 19 UStG nicht erhoben</label></dd>
+        </dl>
+      </section>
       <section className="section" aria-labelledby="invoicing">
         <h2 id="invoicing">Rechnungen</h2>
         <dl className="facts">

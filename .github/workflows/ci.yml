@@ -17,13 +17,17 @@ jobs:
         image: axllent/mailpit:v1.27
         ports: ['11025:1025', '18025:8025']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '17' }
+      # Official KoSIT validator with the XRechnung configuration on our sample e-invoices.
+      - run: npm run validate:xrechnung
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env: { CI: 'true' }

@@ -49,6 +49,12 @@ export interface OrganizationTable {
   exemption_purposes: string | null;
   receipt_signer: string | null;
   erase_after_months: Generated<number>;
+  vat_id: string | null;
+  tax_number: string | null;
+  small_business: Generated<boolean>;
+  register_number: string | null;
+  einvoice_contact_name: string | null;
+  einvoice_contact_phone: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -128,6 +134,10 @@ export interface PersonTable {
   import_run_id: Generated<string | null>;
   custom: Generated<Record<string, unknown>>;
   anonymised_at: Date | null;
+  einvoice_format: Generated<'none' | 'xrechnung'>;
+  buyer_reference: string | null;
+  einvoice_address: string | null;
+  vat_id: string | null;
   legal_hold_reason: string | null;
 }
 
@@ -877,6 +887,7 @@ export interface Database {
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
   idempotency_key: IdempotencyKeyTable;
+  invoice_einvoice: InvoiceEinvoiceTable;
   duplicate_dismissal: DuplicateDismissalTable;
   saved_view: SavedViewTable;
   household: HouseholdTable;
@@ -996,6 +1007,15 @@ export interface SavedViewTable {
   name: string;
   params: string;
   shared_role_id: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface InvoiceEinvoiceTable {
+  invoice_id: string;
+  organization_id: string;
+  format: 'xrechnung-cii';
+  xml: Buffer;
+  sha256: string;
   created_at: Generated<Date>;
 }
 

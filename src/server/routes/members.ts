@@ -46,6 +46,10 @@ const PERSON_COLUMNS = {
   country: 'country',
   preferredChannel: 'preferred_channel',
   note: 'note',
+  einvoiceFormat: 'einvoice_format',
+  buyerReference: 'buyer_reference',
+  einvoiceAddress: 'einvoice_address',
+  vatId: 'vat_id',
 } as const;
 
 function personValues(body: Record<string, unknown>) {
