@@ -164,3 +164,10 @@ The system SHALL refuse a manual payment larger than the open amount of the invo
 - **WHEN** a treasurer records 6000 cents on an invoice with 5000 cents open
 - **THEN** the request is refused with a field error and nothing is booked
 
+### Requirement: Article catalogue
+The system SHALL keep a catalogue of articles with gross price and VAT rate that can be picked into invoice lines, copying their values so later changes never alter existing invoices.
+
+#### Scenario: Price change
+- **WHEN** an article's price changes after it was used on an issued invoice
+- **THEN** the issued invoice keeps the old price
+
