@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from 'react-router';
-import { FileText, Home, LogOut, Receipt } from 'lucide-react';
+import { FileText, Home, LogOut, Receipt, Wallet } from 'lucide-react';
+import { EXPENSE_STATUS_LABEL } from '../../shared/expenses.ts';
+import { MoneyField } from '../components/MoneyField.tsx';
 import { formatDate } from '../../shared/dates.ts';
 import { AuthLayout } from '../components/AuthLayout.tsx';
 import { Field } from '../components/Field.tsx';
@@ -55,6 +57,7 @@ export function PortalApp() {
         <Route path="/portal/daten/:id" element={<PortalData me={me.data} />} />
         <Route path="/portal/rechnungen" element={<PortalInvoices />} />
         <Route path="/portal/dokumente" element={<PortalDocuments />} />
+        <Route path="/portal/auslagen" element={<PortalExpenses me={me.data} />} />
         <Route path="*" element={<Navigate to="/portal" replace />} />
       </Routes>
     </PortalShell>
@@ -101,6 +104,7 @@ function PortalShell({ me, children }: { me: PortalMe; children: ReactNode }) {
         <NavLink to="/portal" end><Home size={20} aria-hidden /><span>Übersicht</span></NavLink>
         <NavLink to="/portal/rechnungen"><Receipt size={20} aria-hidden /><span>Rechnungen</span></NavLink>
         <NavLink to="/portal/dokumente"><FileText size={20} aria-hidden /><span>Dokumente</span></NavLink>
+        <NavLink to="/portal/auslagen"><Wallet size={20} aria-hidden /><span>Auslagen</span></NavLink>
       </nav>
     </div>
   );
@@ -375,6 +379,86 @@ function PortalDocuments() {
           </ul>
         </section>
       ))}
+    </>
+  );
+}
+
+interface PortalExpense { id: string; memberId: string; purpose: string; spentOn: string; amountCents: number; status: keyof typeof EXPENSE_STATUS_LABEL; rejectReason: string | null; createdAt: string }
+
+/** Expense claims: what a member paid for the club, with the receipt, for reimbursement. */
+function PortalExpenses({ me }: { me: PortalMe }) {
+  useTitle('Auslagen');
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['portal-expenses'], queryFn: () => api<PortalExpense[]>('/portal/expenses') });
+  const [error, setError] = useState<ApiError>();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [formKey, setFormKey] = useState(0);
+  const first = me.members[0];
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const file = f.get('file') as File | null;
+    setError(undefined);
+    setDone(false);
+    if (!file || !file.size) {
+      setError(new ApiError({ type: 'validation', title: 'Bitte den Beleg anhängen (PDF oder Foto).', status: 400 }));
+      return;
+    }
+    setBusy(true);
+    try {
+      const up = await fetch(`/api/v1/portal/expenses/files?name=${encodeURIComponent(file.name.slice(0, 200))}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-type': file.type || 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+      if (!up.ok) throw new ApiError(await up.json());
+      const { id: fileId } = (await up.json()) as { id: string };
+      await api('/portal/expenses', { method: 'POST', body: { memberId: f.get('memberId') ?? first?.memberId, purpose: f.get('purpose'), spentOn: f.get('spentOn'), amountCents: Number(f.get('amountCents')), accountHolder: f.get('accountHolder'), iban: f.get('iban'), fileId } });
+      await qc.invalidateQueries({ queryKey: ['portal-expenses'] });
+      setDone(true);
+      setFormKey((k) => k + 1);
+    } catch (err) {
+      setError(err instanceof ApiError ? err : new ApiError({ type: 'network', title: 'Das hat nicht geklappt.', status: 0 }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h1 className="portal-h1">Auslagen</h1>
+      <p className="muted" style={{ marginBottom: 'var(--s-5)' }}>Du hast etwas für den Verein bezahlt? Reich den Beleg hier ein; die Kasse prüft ihn und überweist Dir den Betrag.</p>
+      <form key={formKey} className="portal-card form" onSubmit={submit} aria-label="Auslage einreichen" noValidate>
+        {error && <div className="alert alert-error" role="alert">{error.problem.errors?.map((x) => x.message).join(' ') ?? [error.problem.title, error.problem.detail].filter(Boolean).join(' ')}</div>}
+        {done && <div className="alert alert-ok" role="status">Eingereicht. Du siehst unten, wann sie angenommen ist.</div>}
+        {me.members.length > 1 && (
+          <div className="field">
+            <label htmlFor="exp-member">Für</label>
+            <select id="exp-member" name="memberId" className="select">{me.members.map((m) => <option key={m.memberId} value={m.memberId}>{m.name}</option>)}</select>
+          </div>
+        )}
+        <Field label="Wofür" name="purpose" required maxLength={200} placeholder="z. B. Bälle für das Training" error={error?.fieldError('purpose')} />
+        <Field label="Bezahlt am" name="spentOn" type="date" required error={error?.fieldError('spentOn')} />
+        <MoneyField label="Betrag" name="amountCents" error={error?.fieldError('amountCents')} />
+        <Field label="Kontoinhaber:in" name="accountHolder" required defaultValue={first?.name ?? ''} autoComplete="name" error={error?.fieldError('accountHolder')} />
+        <Field label="IBAN für die Erstattung" name="iban" required autoComplete="off" inputMode="text" error={error?.fieldError('iban')} />
+        <div className="field">
+          <label htmlFor="exp-file">Beleg (PDF oder Foto)</label>
+          <input id="exp-file" name="file" type="file" accept="application/pdf,image/*" className="input input-file" />
+        </div>
+        <button className="btn btn-primary" aria-busy={busy} disabled={busy}>Einreichen</button>
+      </form>
+      {data && data.length > 0 && (
+        <section style={{ marginTop: 'var(--s-6)' }} aria-labelledby="exp-list">
+          <h2 id="exp-list">Eingereicht</h2>
+          <ul className="portal-list">
+            {data.map((x) => (
+              <li key={x.id} className="portal-row">
+                <span><span className="name">{x.purpose}</span><div className="meta">{formatDate(x.spentOn)} · {EXPENSE_STATUS_LABEL[x.status]}{x.rejectReason ? `: ${x.rejectReason}` : ''}</div></span>
+                <span className="num">{euro(x.amountCents)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </>
   );
 }

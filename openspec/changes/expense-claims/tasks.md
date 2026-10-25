@@ -1,0 +1,4 @@
+- [x] table and portal routes
+- [x] treasurer routes and UI
+- [x] portal UI
+- [x] tests, e2e, anonymisation

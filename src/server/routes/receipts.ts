@@ -5,6 +5,9 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { formatDate } from '../../shared/dates.ts';
 import { MAX_FILE_BYTES } from '../../shared/documents.ts';
+import { expenseClaim } from '../../shared/expenses.ts';
+import { bookingLine } from '../../shared/ledger.ts';
+import { displayName } from '../../shared/members.ts';
 import { cashBook, receipt, receiptInput, selfIssuedInput } from '../../shared/receipts.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
@@ -13,7 +16,8 @@ import { getBlob, putBlob, sha256Of } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { assertCashNotNegative, bookingLines, lockJournal, postEntry, reverseEntry } from '../ledger/service.ts';
 import { orgToday } from '../members/query.ts';
-import { requireClubWide, type Actor } from '../policy.ts';
+import { requireClubWide, restrictedFields, type Actor } from '../policy.ts';
+import { decrypt } from '../crypto.ts';
 
 const tags = ['ledger'];
 const idParam = z.object({ id: z.uuid() });
@@ -115,21 +119,87 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     return dto(actor.organizationId, undefined, req.query);
   });
 
+  /** Records an open receipt (and pays it at once with `pay`) in the caller's transaction. */
+  async function recordReceipt(tx: Db, actor: Actor, b: z.infer<typeof receiptInput>) {
+    await claimFile(tx, actor.organizationId, b.fileId ?? null, null);
+    await bookingLines(tx, actor.organizationId, { kind: 'expense', date: b.receiptDate, moneyAccountId: null, lines: b.lines });
+    const warnings = await warningsFor(tx, actor.organizationId, b);
+    const total = b.lines.reduce((s, l) => s + l.grossCents, 0);
+    const r = await tx.insertInto('receipt').values({ organization_id: actor.organizationId, supplier: b.supplier, number: b.number ?? null, receipt_date: b.receiptDate, due_date: b.dueDate ?? null, total_cents: total, file_id: b.fileId ?? null, note: b.note ?? null, created_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
+    await tx.insertInto('receipt_line').values(b.lines.map((l, i) => ({ receipt_id: r.id, position: i + 1, text: l.text ?? null, gross_cents: l.grossCents, account_id: l.accountId, tax_rate_id: l.taxRateId ?? null, sphere: l.sphere ?? null, cost_center_id: l.costCenterId ?? null }))).execute();
+    await audit(tx, actor.organizationId, actor, { action: 'receipt.recorded', entityType: 'receipt', entityId: r.id, diff: { supplier: [null, b.supplier], totalCents: [null, total] } });
+    if (b.pay) await pay(tx, actor, r.id, b.pay);
+    return { id: r.id, warnings };
+  }
+
+  // ---------- Expense claims (Auslagen) from the portal ----------
+  const claimRows = (organizationId: string) =>
+    db.selectFrom('expense_claim').innerJoin('person', 'person.id', 'expense_claim.person_id')
+      .select(['expense_claim.id', 'expense_claim.member_id', 'expense_claim.purpose', 'expense_claim.spent_on', 'expense_claim.amount_cents', 'expense_claim.account_holder', 'expense_claim.iban_encrypted', 'expense_claim.status', 'expense_claim.receipt_id', 'expense_claim.reject_reason', 'expense_claim.created_at', 'expense_claim.file_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
+      .where('expense_claim.organization_id', '=', organizationId);
+  type ClaimRow = Awaited<ReturnType<ReturnType<typeof claimRows>['execute']>>[number];
+  const claimDto = (actor: Actor, c: ClaimRow) => {
+    const iban = decrypt(c.iban_encrypted);
+    return {
+      id: c.id, memberId: c.member_id, name: displayName({ kind: c.kind, firstName: c.first_name, lastName: c.last_name, companyName: c.company_name }),
+      purpose: c.purpose, spentOn: c.spent_on, amountCents: Number(c.amount_cents), accountHolder: c.account_holder,
+      iban: restrictedFields(actor).has('iban') ? `•••• ${iban.slice(-4)}` : iban,
+      status: c.status, receiptId: c.receipt_id, rejectReason: c.reject_reason, createdAt: c.created_at.toISOString(),
+    };
+  };
+
+  app.get('/expense-claims', { schema: { tags, summary: 'Eingereichte Auslagen von Mitgliedern (offene zuerst)', response: { 200: z.array(expenseClaim) } } }, async (req) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'read');
+    const rows = await claimRows(actor.organizationId).orderBy(sql`expense_claim.status = 'submitted'`, 'desc').orderBy('expense_claim.created_at', 'desc').limit(200).execute();
+    return rows.map((c) => claimDto(actor, c));
+  });
+
+  app.get('/expense-claims/:id/file', { schema: { tags, summary: 'Beleg einer Auslage ansehen', params: idParam } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'read');
+    const f = await db.selectFrom('expense_claim').innerJoin('file', 'file.id', 'expense_claim.file_id').select(['file.sha256', 'file.mime_type', 'file.name']).where('expense_claim.id', '=', req.params.id).where('expense_claim.organization_id', '=', actor.organizationId).executeTakeFirst();
+    if (!f) throw notFound('Auslage');
+    // Uploaded by members: shown as a download, never rendered inline as HTML.
+    const safe = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(f.mime_type) ? f.mime_type : 'application/octet-stream';
+    return reply.header('content-type', safe).header('content-disposition', `${safe === 'application/octet-stream' ? 'attachment' : 'inline'}; filename="${f.name.replace(/[^\w.\- ]/g, '_')}"`).header('x-content-type-options', 'nosniff').header('cache-control', 'private, no-store').send(await getBlob(f.sha256));
+  });
+
+  app.post('/expense-claims/:id/approve', { schema: { tags, summary: 'Auslage annehmen: wird ein offener Beleg (Erstattung danach wie jeder Beleg bezahlen)', params: idParam, body: z.object({ accountId: z.uuid(), sphere: bookingLine.shape.sphere, taxRateId: z.uuid().nullish(), costCenterId: z.uuid().nullish() }), response: { 200: expenseClaim } } }, async (req) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'write');
+    await db.transaction().execute(async (tx) => {
+      const c = await tx.selectFrom('expense_claim').innerJoin('person', 'person.id', 'expense_claim.person_id').select(['expense_claim.id', 'expense_claim.status', 'expense_claim.purpose', 'expense_claim.spent_on', 'expense_claim.amount_cents', 'expense_claim.account_holder', 'expense_claim.file_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name']).where('expense_claim.id', '=', req.params.id).where('expense_claim.organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
+      if (!c) throw notFound('Auslage');
+      if (c.status !== 'submitted') throw new Problem(409, 'decided', 'Über diese Auslage ist schon entschieden.');
+      const name = displayName({ kind: c.kind, firstName: c.first_name, lastName: c.last_name, companyName: c.company_name });
+      const { id } = await recordReceipt(tx, actor, {
+        supplier: `Auslage ${name}`, number: null, receiptDate: c.spent_on, dueDate: null, fileId: c.file_id,
+        note: `Erstattung an ${c.account_holder} (IBAN in der Auslage)`,
+        lines: [{ text: c.purpose, grossCents: Number(c.amount_cents), accountId: req.body.accountId, sphere: req.body.sphere, taxRateId: req.body.taxRateId ?? null, costCenterId: req.body.costCenterId ?? null }],
+        pay: null,
+      });
+      await tx.updateTable('expense_claim').set({ status: 'approved', receipt_id: id, decided_by: actor.userId, decided_at: new Date() }).where('id', '=', c.id).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'expense_claim.approved', entityType: 'expense_claim', entityId: c.id, diff: { receiptId: [null, id] } });
+    });
+    return claimDto(actor, (await claimRows(actor.organizationId).where('expense_claim.id', '=', req.params.id).executeTakeFirstOrThrow()));
+  });
+
+  app.post('/expense-claims/:id/reject', { schema: { tags, summary: 'Auslage ablehnen (mit Begründung für das Mitglied)', params: idParam, body: z.object({ reason: z.string().trim().min(1, 'Bitte begründen.').max(500) }), response: { 200: expenseClaim } } }, async (req) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'write');
+    await db.transaction().execute(async (tx) => {
+      const res = await tx.updateTable('expense_claim').set({ status: 'rejected', reject_reason: req.body.reason, decided_by: actor.userId, decided_at: new Date() }).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('status', '=', 'submitted').executeTakeFirst();
+      if (Number(res.numUpdatedRows) === 0) throw new Problem(409, 'decided', 'Diese Auslage gibt es nicht oder es ist schon entschieden.');
+      await audit(tx, actor.organizationId, actor, { action: 'expense_claim.rejected', entityType: 'expense_claim', entityId: req.params.id, diff: { reason: [null, req.body.reason] } });
+    });
+    return claimDto(actor, (await claimRows(actor.organizationId).where('expense_claim.id', '=', req.params.id).executeTakeFirstOrThrow()));
+  });
+
   app.post('/receipts', { schema: { tags, summary: 'Eingangsbeleg erfassen (offen; mit `pay` gleich bezahlt und gebucht); warnt bei gleicher Nummer oder Datei', body: receiptInput, response: { 201: z.object({ receipt, warnings: z.array(z.string()) }) } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
-    const b = req.body;
-    const result = await db.transaction().execute(async (tx) => {
-      await claimFile(tx, actor.organizationId, b.fileId ?? null, null);
-      await bookingLines(tx, actor.organizationId, { kind: 'expense', date: b.receiptDate, moneyAccountId: null, lines: b.lines });
-      const warnings = await warningsFor(tx, actor.organizationId, b);
-      const total = b.lines.reduce((s, l) => s + l.grossCents, 0);
-      const r = await tx.insertInto('receipt').values({ organization_id: actor.organizationId, supplier: b.supplier, number: b.number ?? null, receipt_date: b.receiptDate, due_date: b.dueDate ?? null, total_cents: total, file_id: b.fileId ?? null, note: b.note ?? null, created_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
-      await tx.insertInto('receipt_line').values(b.lines.map((l, i) => ({ receipt_id: r.id, position: i + 1, text: l.text ?? null, gross_cents: l.grossCents, account_id: l.accountId, tax_rate_id: l.taxRateId ?? null, sphere: l.sphere ?? null, cost_center_id: l.costCenterId ?? null }))).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'receipt.recorded', entityType: 'receipt', entityId: r.id, diff: { supplier: [null, b.supplier], totalCents: [null, total] } });
-      if (b.pay) await pay(tx, actor, r.id, b.pay);
-      return { id: r.id, warnings };
-    });
+    const result = await db.transaction().execute((tx) => recordReceipt(tx, actor, req.body));
     reply.status(201);
     return { receipt: (await dto(actor.organizationId, [result.id]))[0]!, warnings: result.warnings };
   });

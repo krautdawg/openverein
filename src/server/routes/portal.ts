@@ -7,6 +7,7 @@ import { toSvgSource } from 'lean-qr/extras/svg';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { email as emailSchema } from '../../shared/auth.ts';
+import { expenseClaimInput } from '../../shared/expenses.ts';
 import { formatDate, proposeExitDate } from '../../shared/dates.ts';
 import { isValidIban, normalizeIban } from '../../shared/iban.ts';
 import { postalCodeProblem } from '../../shared/members.ts';
@@ -15,7 +16,7 @@ import { sha256 } from '../auth/session.ts';
 import { config } from '../config.ts';
 import { blindIndex, encrypt } from '../crypto.ts';
 import type { ChangeField, Db } from '../db.ts';
-import { getBlob } from '../files/store.ts';
+import { getBlob, putBlob } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { epcPayload } from '../invoices/pdf.ts';
 import { storedPdf, type IssueSnapshot } from '../invoices/service.ts';
@@ -235,6 +236,51 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!['open', 'partially_paid'].includes(inv.status) || !snap?.org.iban || open <= 0 || snap.paymentMethod === 'direct_debit') throw notFound('Zahlcode');
     const code = generate(epcPayload({ name: snap.org.name, iban: snap.org.iban, bic: snap.org.bic, amountCents: open, remittance: inv.number ?? '' }), { minCorrectionLevel: correction.M });
     return reply.header('content-type', 'image/svg+xml').header('cache-control', 'private, no-store').send(toSvgSource(code, { on: '#14202e', off: '#ffffff', padX: 4, padY: 4 }));
+  });
+
+  // ---------- Expense claims (Auslagen) ----------
+  // Receipt uploads send raw bytes (allowed for this path only, see the CSRF guard in app.ts).
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: 10 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+  const EXPENSE_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+
+  app.post('/portal/expenses/files', { schema: { tags, summary: 'Beleg für eine Auslage hochladen (PDF oder Foto, höchstens 10 MB; Dateityp im Header X-File-Type)', security: [], querystring: z.object({ name: z.string().trim().min(1).max(200) }), response: { 201: z.object({ id: z.uuid() }) } } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const bytes = req.body as Buffer;
+    if (!Buffer.isBuffer(bytes) || !bytes.length) throw new Problem(400, 'empty', 'Die Datei ist leer.');
+    if (bytes.length > 10 * 1024 * 1024) throw new Problem(413, 'too-large', 'Die Datei ist größer als 10 MB.');
+    const type = String(req.headers['x-file-type'] ?? '');
+    if (!EXPENSE_FILE_TYPES.includes(type)) throw new Problem(415, 'file-type', 'Bitte ein PDF oder ein Foto (JPG, PNG) hochladen.');
+    const sha = await putBlob(bytes);
+    // Temporary until a claim uses it; abandoned uploads expire like other temporary files.
+    const f = await db.insertInto('file').values({ organization_id: u.organizationId, folder_id: null, member_id: null, purpose: 'receipt', sha256: sha, size_bytes: bytes.length, mime_type: type, name: req.query.name, retention_class: 'temporary', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
+    reply.status(201);
+    return { id: f.id };
+  });
+
+  app.post('/portal/expenses', { schema: { tags, summary: 'Auslage zur Erstattung einreichen', security: [], body: expenseClaimInput, response: { 201: z.object({ id: z.uuid() }) } } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const m = ownMember(u, req.body.memberId);
+    const b = req.body;
+    const id = await db.transaction().execute(async (tx) => {
+      // Only a fresh, unused upload of this club: a claim cannot pick up somebody else's receipt.
+      const f = await tx.selectFrom('file').select('id').where('id', '=', b.fileId).where('organization_id', '=', u.organizationId).where('purpose', '=', 'receipt').where('uploaded_by', 'is', null).where('retention_class', '=', 'temporary').where('created_at', '>', new Date(Date.now() - 3_600_000)).forUpdate().executeTakeFirst();
+      if (!f) throw new Problem(409, 'file-gone', 'Der Beleg ist nicht mehr da. Lade ihn bitte noch einmal hoch.');
+      const c = await tx.insertInto('expense_claim').values({ organization_id: u.organizationId, member_id: m.memberId, person_id: m.personId, purpose: b.purpose, spent_on: b.spentOn, amount_cents: b.amountCents, account_holder: b.accountHolder, iban_encrypted: encrypt(b.iban), file_id: f.id }).returning('id').executeTakeFirstOrThrow();
+      // Kept like any receipt once claimed (8 years from the end of the year).
+      await tx.updateTable('file').set({ retention_class: 'voucher', retain_until: `${Number(b.spentOn.slice(0, 4)) + 8}-12-31` }).where('id', '=', f.id).execute();
+      await audit(tx, u.organizationId, null, { action: 'expense_claim.submitted', entityType: 'expense_claim', entityId: c.id, diff: { amountCents: [null, b.amountCents] } });
+      return c.id;
+    });
+    reply.status(201);
+    return { id };
+  });
+
+  app.get('/portal/expenses', { schema: { tags, summary: 'Meine eingereichten Auslagen', security: [] } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const persons = u.members.map((m) => m.personId);
+    if (!persons.length) return [];
+    const rows = await db.selectFrom('expense_claim').select(['id', 'member_id', 'purpose', 'spent_on', 'amount_cents', 'status', 'reject_reason', 'created_at']).where('organization_id', '=', u.organizationId).where('person_id', 'in', persons).orderBy('created_at', 'desc').limit(50).execute();
+    return rows.map((r) => ({ id: r.id, memberId: r.member_id, purpose: r.purpose, spentOn: r.spent_on, amountCents: Number(r.amount_cents), status: r.status, rejectReason: r.reject_reason, createdAt: r.created_at.toISOString() }));
   });
 
   app.get('/portal/documents', { schema: { tags, summary: 'Dokumente, die der Verein mit Mitgliedern teilt', security: [] } }, async (req, reply) => {
