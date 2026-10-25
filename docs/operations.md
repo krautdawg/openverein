@@ -11,14 +11,14 @@ git clone https://github.com/krautdawg/openverein.git && cd openverein
 
 Caddy fetches the HTTPS certificate on its own. Open `https://<domain>` and create the club and the first admin.
 
-**DATA_KEY** in `deploy/.env` encrypts bank details. Without it, a backup's IBANs cannot be read. Keep a copy apart from the backups (password manager, sealed envelope with the board), not on the same disk.
+**DATA_KEY** in `deploy/.env` encrypts bank details. The database stores a fingerprint of it; a server started with a different key stops with "DATA_KEY passt nicht zu dieser Datenbank" instead of writing bank details with a second key (for example after restoring a backup onto a new server: copy the old `DATA_KEY` into `deploy/.env` first). Without it, a backup's IBANs cannot be read. Keep a copy apart from the backups (password manager, sealed envelope with the board), not on the same disk.
 
 ## Back up, restore, update, check
 
 ```sh
 ./ovctl backup               # database (pg_dump) and files into backups/openverein-<time>/ with SHA256SUMS; keeps the last 14
 ./ovctl restore backups/openverein-20261024-0300   # checks the sums, backs up the current state first, then restores
-./ovctl update               # backup, git pull, rebuild, restart
+./ovctl update               # backup, git pull, rebuild, restart; if the new version does not come up, it prints the commands to go back (code and data together)
 ./ovctl doctor               # services, health, DATA_KEY, free disk, age of the last backup, certificate expiry
 ./ovctl logs
 ```

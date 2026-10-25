@@ -16,6 +16,9 @@ function keys() {
 }
 let cached: ReturnType<typeof keys> | null = null;
 
+/** Keyed fingerprint of DATA_KEY (not the key): equal only for the same key. */
+export const dataKeyCheck = () => createHmac('sha256', k().mac).update('openverein:data-key-check:v1').digest('hex');
+
 /** Called at startup, so a missing or short DATA_KEY stops the server instead of failing on first use. */
 export const assertDataKey = () => void k();
 const k = () => (cached ??= keys());

@@ -1,0 +1,4 @@
+- [x] fingerprint table and check
+- [x] start-up stop
+- [x] ovctl rollback guidance
+- [x] docs and test

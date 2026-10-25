@@ -113,9 +113,19 @@ cmd_restore() {
 cmd_update() {
   need_env
   cmd_backup
+  local before last
+  before="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+  last="$(find "$BACKUP_DIR" -maxdepth 1 -name 'openverein-*' | sort | tail -1)"
   if [ -d "$ROOT/.git" ]; then git -C "$ROOT" pull --ff-only; fi
   dc up -d --build
-  wait_healthy
+  # The new version may have migrated the database: old code must never run on it. Roll back code and data together.
+  if ! (wait_healthy) ; then
+    say ""
+    say "Das Update ist fehlgeschlagen. Zurück zum Stand vor dem Update:"
+    [ -n "$before" ] && say "  git -C \"$ROOT\" checkout $before"
+    say "  ./ovctl restore $last"
+    exit 1
+  fi
   say "Aktualisiert."
 }
 
