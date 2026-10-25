@@ -92,7 +92,9 @@ export async function syncAllocations(db: Db, organizationId: string) {
     .leftJoin('bank_account', 'bank_account.id', 'bank_transaction.bank_account_id')
     .select(['allocation.id', 'allocation.invoice_id', 'allocation.amount_cents', 'allocation.booked_on', 'allocation.method', 'allocation.created_by', 'invoice.kind', 'invoice.number', 'invoice.total_cents', 'bank_account.ledger_account_id'])
     .where('allocation.organization_id', '=', organizationId)
-    .where('allocation.status', '=', 'confirmed')
+    // Reversed ones too: a payment confirmed and reversed before the first sync still belongs to its period,
+    // and its reversal is posted by the second loop below.
+    .where('allocation.status', 'in', ['confirmed', 'reversed'])
     .where('allocation.method', '!=', 'write_off')
     // Payments inside a closed period were posted before the lock (locking refuses otherwise) or predate the ledger.
     .$if(!!settings.lock_date, (q) => q.where('allocation.booked_on', '>', settings.lock_date!))

@@ -53,11 +53,14 @@ export function Journal({ me }: { me: Me }) {
   const to = params.get('bis') ?? `${year()}-12-31`;
   const entries = useQuery({ queryKey: ['journal', from, to], queryFn: () => api<Entry[]>(`/ledger/entries?from=${from}&to=${to}`) });
   const [booking, setBooking] = useState(false);
+  const { data: accounts } = useAccounts();
+  const transit = new Set((accounts ?? []).filter((a) => a.kind === 'transit').map((a) => a.id));
   const selected = entries.data?.find((e) => e.id === id) ?? null;
 
   return (
     <LedgerLayout me={me} action={<button className="btn btn-primary" onClick={() => setBooking(true)}><Plus size={16} aria-hidden /> Buchen</button>}>
       <RangePicker from={from} to={to} onChange={(f, t) => setParams({ von: f, bis: t })} />
+      {entries.data?.length === 1000 && <div className="alert alert-warn" role="status" style={{ marginBottom: 'var(--s-4)' }}>Es werden die neuesten 1.000 Buchungen gezeigt. Wähle einen kürzeren Zeitraum, um alle zu sehen.</div>}
       <div className="table-wrap">
         {entries.data?.length === 0 ? (
           <div className="empty-state"><h3>Keine Buchungen im Zeitraum.</h3><p>Zahlungen auf Rechnungen erscheinen hier von selbst. Spenden, Zuschüsse und Ausgaben buchst Du mit „Buchen“.</p></div>
@@ -66,7 +69,8 @@ export function Journal({ me }: { me: Me }) {
             <thead><tr><th scope="col" className="num">Nr.</th><th scope="col" className="num">Datum</th><th scope="col">Text</th><th scope="col" className="hide-sm">Konten</th><th scope="col" className="num">Betrag</th></tr></thead>
             <tbody>
               {entries.data?.map((e) => {
-                const amount = e.lines.reduce((s, l) => s + l.debitCents, 0);
+                // Transfers go through Geldtransit (debited and credited once each): count money moved, not both legs.
+                const amount = e.lines.filter((l) => !transit.has(l.accountId)).reduce((s, l) => s + l.debitCents, 0);
                 const debit = e.lines.filter((l) => l.debitCents).map((l) => l.accountNumber);
                 const credit = e.lines.filter((l) => l.creditCents).map((l) => l.accountNumber);
                 return (
