@@ -92,8 +92,9 @@ describe('member portal', () => {
   it('limits code attempts and expires codes', async () => {
     await admin.post('/members', { lastName: 'Code', email: 'code@example.org', joinDate: '2024-01-01' });
     await post('/portal/auth/request-code', { email: 'code@example.org' });
-    for (let i = 0; i < 5; i++) expect((await post('/portal/auth/verify', { email: 'code@example.org', code: '000000' })).statusCode).toBe(400);
+    // The code is issued after the answer (same timing for unknown addresses): wait for its mail before guessing.
     const code = (await text((await mailTo('code@example.org'))[0]!.ID)).match(/\b(\d{6})\b/)![1]!;
+    for (let i = 0; i < 5; i++) expect((await post('/portal/auth/verify', { email: 'code@example.org', code: '000000' })).statusCode).toBe(400);
     expect((await post('/portal/auth/verify', { email: 'code@example.org', code })).statusCode).toBe(400); // used up by wrong attempts
     // An admin can hand out a code when mail does not arrive; a newer mailed code does not hide it.
     const m = (await admin.get('/members?q=code')).body.items[0].id;
