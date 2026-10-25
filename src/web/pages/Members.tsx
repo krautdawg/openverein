@@ -5,6 +5,7 @@ import { Download, Plus, Search } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
 import { displayName, type MemberDetail, type MemberListItem } from '../../shared/members.ts';
+import { CustomInputs, readCustom, useCustomFields } from '../components/CustomFields.tsx';
 import { Field } from '../components/Field.tsx';
 import { GroupBadge } from '../components/GroupBadge.tsx';
 import { MemberSheet } from '../components/MemberSheet.tsx';
@@ -229,6 +230,7 @@ function CreateMember({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const qc = useQueryClient();
   const { data: groups } = useGroups();
   const [kind, setKind] = useState<'natural' | 'organisation'>('natural');
+  const { data: customFields } = useCustomFields();
   const [error, setError] = useState<ApiError>();
   const [busy, setBusy] = useState(false);
 
@@ -241,6 +243,7 @@ function CreateMember({ onClose, onCreated }: { onClose: () => void; onCreated: 
       if (typeof v === 'string' && v) body[k] = v;
     }
     if (f.get('applicant') === 'on') delete body.joinDate;
+    if (customFields?.length) body.custom = readCustom(f, customFields.filter((x) => x.required));
     setBusy(true);
     setError(undefined);
     try {
@@ -281,6 +284,7 @@ function CreateMember({ onClose, onCreated }: { onClose: () => void; onCreated: 
           <Field label="Eintritt" name="joinDate" type="date" defaultValue={todayLocal()} error={error?.fieldError('joinDate')} />
           {kind === 'natural' && <Field label="Geburtsdatum" name="birthDate" type="date" error={error?.fieldError('birthDate')} />}
         </div>
+        {customFields && <CustomInputs fields={customFields} only="required" error={error} />}
         <label className="check"><input type="checkbox" name="applicant" /> Erst als Antrag erfassen (noch nicht aufgenommen)</label>
         {groups && groups.length > 0 && (
           <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>

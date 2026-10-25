@@ -66,6 +66,8 @@ export const memberCreate = personFields
     applicationDate: date.nullish(),
     membershipNumber: z.string().trim().min(1).max(40).optional(),
     groupIds: z.array(z.uuid()).max(50).default([]),
+    /** custom field values by field id */
+    custom: z.record(z.uuid(), z.unknown()).optional(),
   })
   .superRefine((v, ctx) => checkPerson(v, ctx));
 export type MemberCreate = z.input<typeof memberCreate>;
@@ -76,6 +78,7 @@ export const memberPatch = personBase
   .extend({
     joinDate: date.optional(),
     applicationDate: date.nullish(),
+    custom: z.record(z.uuid(), z.unknown()).optional(),
     status: z.unknown().refine(() => false, 'Der Status ändert sich nur über Aktionen: resign, withdraw-resignation, admit, reject.').optional(),
   })
   .strict()
@@ -134,6 +137,8 @@ export const memberDetail = memberListItem.extend({
   warnings: z.array(z.string()),
   /** fields hidden for this user by their role */
   restricted: z.array(z.string()),
+  /** custom field values the user may see, by field id */
+  custom: z.record(z.string(), z.unknown()),
 });
 export type MemberDetail = z.infer<typeof memberDetail>;
 
@@ -142,6 +147,8 @@ export const memberListQuery = z.object({
   status: z.union([memberStatus, z.array(memberStatus)]).optional(),
   groupId: z.uuid().optional(),
   includeFormer: z.stringbool().optional(),
+  /** one custom field filter: `<field id>:<value>` (text matches partly, others exactly) */
+  cf: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.{1,100}$/, 'Format: <Feld-ID>:<Wert>').optional(),
   sort: z.enum(['name', 'number', 'joinDate']).default('name'),
   cursor: z.string().max(40).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

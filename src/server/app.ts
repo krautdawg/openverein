@@ -27,6 +27,7 @@ import { exportRoutes } from './routes/exports.ts';
 import { registerIdempotency } from './http/idempotency.ts';
 import { donationRoutes } from './routes/donations.ts';
 import { privacyRoutes } from './routes/privacy.ts';
+import { customFieldRoutes } from './routes/customFields.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -126,6 +127,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(exportRoutes);
       await api.register(donationRoutes);
       await api.register(privacyRoutes);
+      await api.register(customFieldRoutes);
     },
     { prefix: '/api/v1' },
   );

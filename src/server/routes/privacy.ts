@@ -7,6 +7,7 @@ import { CONSENT_PURPOSE_LABEL, consent, consentInput, privacyState, reviewItem 
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { zip } from '../exports/zip.ts';
+import { customText } from '../../shared/customFields.ts';
 import { anonymise, anonymiseBlockers, recordErasureFile } from '../gdpr/service.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { emailHash } from '../mail/worker.ts';
@@ -150,6 +151,8 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
       ['Stammdaten', [{ Vorname: p.first_name, Nachname: p.last_name, Firma: p.company_name, Geburtsdatum: p.birth_date, 'E-Mail': p.email, Telefon: p.phone, Straße: p.street, PLZ: p.postal_code, Ort: p.city, Land: p.country, Notiz: p.note }]],
+      // Archived fields included: their values are still stored.
+      ['Weitere Angaben', [Object.fromEntries((await db.selectFrom('custom_field').select(['id', 'label', 'type']).where('organization_id', '=', actor.organizationId).orderBy('position').execute()).filter((f) => p.custom[f.id] !== undefined).map((f) => [f.label, customText(f.type, p.custom[f.id])]))]],
       ['Mitgliedschaften', members.map((m) => ({ Nummer: m.membership_number, Status: m.status, Antrag: m.application_date, Eintritt: m.join_date, Kündigung: m.notice_date, Austritt: m.exit_date, Zahlweise: m.payment_method }))],
       ['Gruppen', groups.map(({ member_id: _m, ...g }) => g)],
       ['Einwilligungen', consents.map((c) => ({ Zweck: c.label ?? CONSENT_PURPOSE_LABEL[c.purpose], Quelle: c.source, Text: c.text_version, Erteilt: c.granted_at.toISOString(), Widerrufen: c.withdrawn_at?.toISOString() ?? null }))],

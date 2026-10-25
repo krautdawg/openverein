@@ -3,6 +3,9 @@ import type { Database, Db, MemberTable, PersonTable } from '../db.ts';
 import { todayIn } from '../../shared/dates.ts';
 import type { MemberDetail, MemberListItem } from '../../shared/members.ts';
 import { notFound } from '../http/problem.ts';
+import { fieldsFor, visibleDiffKeys, visibleValues } from './custom.ts';
+
+const maskCustom = (diff: unknown, keys: Set<string>) => (diff && typeof diff === 'object' && !Array.isArray(diff) ? Object.fromEntries(Object.entries(diff).filter(([k]) => !k.startsWith('custom.') || keys.has(k))) : diff);
 import { restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
 
 export async function orgToday(db: Db, organizationId: string) {
@@ -51,10 +54,11 @@ export const memberColumns = [
   'person.country',
   'person.preferred_channel',
   'person.note',
+  'person.custom',
 ] as const;
 
 type Row = Pick<Selectable<MemberTable>, 'id' | 'person_id' | 'membership_number' | 'status' | 'application_date' | 'join_date' | 'notice_date' | 'exit_date' | 'exit_reason'> &
-  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note'>;
+  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note' | 'custom'>;
 
 /** Current group badges for a set of members. */
 export async function currentGroups(db: Db, memberIds: string[], today: string) {
@@ -139,6 +143,8 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
   if (row.preferred_channel === 'email' && !row.email) warnings.push('Bevorzugt E-Mail, aber keine E-Mail-Adresse hinterlegt.');
   if (row.preferred_channel === 'letter' && (!row.street || !row.postal_code || !row.city)) warnings.push('Bevorzugt Brief, aber die Anschrift ist unvollständig.');
 
+  // Custom values in old diffs follow today's visibility: sensitive, archived or deleted fields are dropped.
+  const customKeys = await visibleDiffKeys(db, actor);
   const pick = <T>(field: string, value: T) => (hidden.has(field) ? {} : { [toCamel(field)]: value });
   return {
     ...toListItem(row, groups, hidden),
@@ -153,9 +159,10 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
     noticeDate: row.notice_date,
     exitReason: row.exit_reason,
     memberships: memberships.map((m) => ({ id: m.id, groupId: m.group_id, groupName: m.name, color: m.color, validFrom: m.valid_from, validTo: m.valid_to })),
-    timeline: timeline.map((t) => ({ at: t.at.toISOString(), action: t.action, actor: t.actor_label, diff: maskDiff(t.diff, hidden) })),
+    timeline: timeline.map((t) => ({ at: t.at.toISOString(), action: t.action, actor: t.actor_label, diff: maskCustom(maskDiff(t.diff, hidden), customKeys) })),
     warnings,
     restricted: [...hidden],
+    custom: visibleValues(row.custom, await fieldsFor(db, actor)),
   };
 }
 
