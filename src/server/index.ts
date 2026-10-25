@@ -9,6 +9,7 @@ import { startMailWorker } from './mail/worker.ts';
 import { refreshMemberStatuses } from './members/status.ts';
 import { migrate } from './migrate.ts';
 import { replayErasures } from './gdpr/service.ts';
+import { pruneIdempotencyKeys } from './http/idempotency.ts';
 
 assertDataKey();
 await migrate(config.databaseUrl);
@@ -39,6 +40,7 @@ const refresh = () =>
     sweepFiles(db).then((n) => n && app.log.info(`${n} unused files removed`)),
     pruneSignIns(db),
     pruneApplications(db),
+    pruneIdempotencyKeys(db),
   ]).catch((err) => app.log.error(err));
 await refresh();
 setInterval(refresh, 60 * 60 * 1000).unref();

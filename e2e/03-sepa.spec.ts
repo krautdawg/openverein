@@ -18,8 +18,8 @@ test('SEPA: mandate, direct debit file, statement import settles the invoice', a
   await sheet.getByRole('button', { name: 'Speichern' }).click();
   await expect(sheet.getByText('Mandatsreferenz')).toBeVisible();
 
-  const draft = await (await page.request.post('/api/v1/invoices', { data: { memberId: m.id, dueDate: today(), lines: [{ text: 'Beitrag', unitCents: 4200 }] } })).json();
-  await page.request.post(`/api/v1/invoices/${draft.id}/issue`, { data: {} });
+  const draft = await (await page.request.post('/api/v1/invoices', { data: { memberId: m.id, dueDate: today(), lines: [{ text: 'Beitrag', unitCents: 4200 }] }, headers: { 'idempotency-key': crypto.randomUUID() } })).json();
+  await page.request.post(`/api/v1/invoices/${draft.id}/issue`, { data: {}, headers: { 'idempotency-key': crypto.randomUUID() } });
 
   await page.goto('/bank/lastschriften');
   const date = addBusinessDays(today(), 3);

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { buildApp } from '../app.ts';
 import type { Db } from '../db.ts';
@@ -60,7 +61,7 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
     if (setup.statusCode !== 201 && setup.statusCode !== 200) throw new Error(`Setup fehlgeschlagen: ${setup.body}`);
     const cookie = String(setup.headers['set-cookie']).split(';')[0]!;
     const call = async (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) => {
-      const r = await app.inject({ method, url: `/api/v1${url}`, headers: { cookie }, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
+      const r = await app.inject({ method, url: `/api/v1${url}`, headers: { cookie, ...(method === 'POST' ? { 'idempotency-key': randomUUID() } : {}) }, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
       if (r.statusCode >= 400) throw new Error(`${method} ${url}: ${r.statusCode} ${r.body}`);
       return r.body ? r.json() : null;
     };

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { codeAt, currentStep } from '../src/server/auth/totp.ts';
 import { MIGRATIONS_TABLE } from '../src/server/migrate.ts';
 import { sql } from 'kysely';
@@ -60,7 +61,8 @@ export const totpNow = (secret: string, offset = 0) => codeAt(secret, currentSte
 export function client(app: App, auth: { cookie?: string; token?: string }) {
   const headers = { ...(auth.cookie ? { cookie: auth.cookie } : {}), ...(auth.token ? { authorization: `Bearer ${auth.token}` } : {}) };
   const call = async (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) => {
-    const res = await app.inject({ method, url: `/api/v1${url}`, headers, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
+    // A fresh idempotency key per call, as the web client does.
+    const res = await app.inject({ method, url: `/api/v1${url}`, headers: method === 'POST' ? { ...headers, 'idempotency-key': randomUUID() } : headers, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
     return { status: res.statusCode, body: res.body ? (res.headers['content-type']?.includes('json') ? res.json() : res.body) : null, headers: res.headers };
   };
   return {

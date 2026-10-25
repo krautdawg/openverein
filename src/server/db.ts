@@ -871,6 +871,7 @@ export interface Database {
   donation_receipt_item: DonationReceiptItemTable;
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
+  idempotency_key: IdempotencyKeyTable;
 }
 
 export type ConsentPurpose = 'newsletter' | 'photos' | 'phone_list' | 'other';
@@ -894,6 +895,18 @@ export interface ErasureLogTable {
   organization_id: string;
   person_id: string;
   at: Generated<Date>;
+}
+
+export interface IdempotencyKeyTable {
+  organization_id: string;
+  actor: string;
+  key: string;
+  route: string;
+  request_hash: string;
+  status_code: number | null;
+  response: string | null;
+  content_type: string | null;
+  created_at: Generated<Date>;
 }
 
 export interface DonationTable {

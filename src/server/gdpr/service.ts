@@ -83,6 +83,8 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   await sql`select set_config('ov.scrub', 'on', true)`.execute(tx);
   await tx.updateTable('audit_event').set({ diff: null }).where('organization_id', '=', organizationId).where('entity_id', 'in', [personId, ...members, ...fileIds]).where('diff', 'is not', null).execute();
   await sql`select set_config('ov.scrub', 'off', true)`.execute(tx);
+  // Stored API responses may name the person; they are only kept for retries.
+  await tx.deleteFrom('idempotency_key').where('organization_id', '=', organizationId).execute();
   await tx.insertInto('erasure_log').values({ organization_id: organizationId, person_id: personId }).execute();
 }
 
