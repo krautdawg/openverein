@@ -116,3 +116,10 @@ The system SHALL invite all current members to a general assembly with its agend
 - **WHEN** an assembly with a 14-day notice period is 7 days away
 - **THEN** the invitation is refused and names the last possible day
 
+### Requirement: Board meetings
+The system SHALL run board meetings like general assemblies but invite and count only the members of the chosen group.
+
+#### Scenario: Invitation
+- **WHEN** a board meeting for the group "Vorstand" is invited
+- **THEN** only members of that group receive the invitation
+
