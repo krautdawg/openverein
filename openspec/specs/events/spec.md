@@ -91,3 +91,10 @@ The system SHALL publish a calendar's upcoming dates without descriptions or par
 - **WHEN** a public calendar's event has an internal description
 - **THEN** the public list shows title, time and place but not the description
 
+### Requirement: ICS import
+The system SHALL import events from an ICS file into a calendar the user may write to, in the club's time zone, and SHALL not import an event with the same UID twice into the same calendar.
+
+#### Scenario: Same file twice
+- **WHEN** the same ICS file with two events is imported twice
+- **THEN** the second import adds nothing and reports two duplicates
+
