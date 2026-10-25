@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { ageOn } from '../fees/engine.ts';
 import { parseIcs } from '../events/icsImport.ts';
 import { csvCell } from './members.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -10,13 +11,14 @@ import { formatRule, occurrences, parseRule } from '../../shared/recurrence.ts';
 import { audit } from '../audit.ts';
 import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, EventTable, ParticipationStatus } from '../db.ts';
-import { notFound, Problem } from '../http/problem.ts';
+import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
 import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 
 const idParam = z.object({ id: z.uuid() });
 const tags = ['events'];
+CONSTRAINT_MESSAGES.event_child_price_pair = 'Für den ermäßigten Preis bitte Betrag und Altersgrenze angeben.';
 type Ev = Selectable<EventTable>;
 
 const toLocal = (s: string) => s.replace('T', ' ') + (s.length === 16 ? ':00' : '');
@@ -235,6 +237,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
       rsvp: e.rsvp,
       registrationClosesHours: e.registration_closes_hours,
       priceCents: e.price_cents,
+      childPriceCents: e.child_price_cents === null ? null : Number(e.child_price_cents),
+      childUpToAge: e.child_up_to_age,
       participants: people.map((p) => ({ memberId: p.member_id, name: displayName({ kind: p.kind, firstName: p.first_name, lastName: p.last_name, companyName: p.company_name }), status: p.status, invoiceId: p.invoice_id, updatedAt: p.updated_at.toISOString() })),
     };
   }
@@ -323,7 +327,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     const e = await db.transaction().execute(async (tx) => {
       const e = await tx
         .insertInto('event')
-        .values({ organization_id: actor.organizationId, calendar_id: cal.id, title: b.title, description: b.description ?? null, location: b.location ?? null, starts_at: startsAt, ends_at: endsAt, all_day: b.allDay, rrule, max_participants: b.maxParticipants ?? null, rsvp: b.rsvp, registration_closes_hours: b.registrationClosesHours ?? null, price_cents: b.priceCents ?? null, created_by: actor.userId })
+        .values({ organization_id: actor.organizationId, calendar_id: cal.id, title: b.title, description: b.description ?? null, location: b.location ?? null, starts_at: startsAt, ends_at: endsAt, all_day: b.allDay, rrule, max_participants: b.maxParticipants ?? null, rsvp: b.rsvp, registration_closes_hours: b.registrationClosesHours ?? null, price_cents: b.priceCents ?? null, child_price_cents: b.childPriceCents ?? null, child_up_to_age: b.childUpToAge ?? null, created_by: actor.userId })
         .returningAll()
         .executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'event.created', entityType: 'event', entityId: e.id, diff: { title: [null, e.title], startsAt: [null, e.starts_at], rrule: [null, rrule] } });
@@ -374,6 +378,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     if (b.rsvp !== undefined) v.rsvp = b.rsvp;
     if (b.registrationClosesHours !== undefined) v.registration_closes_hours = b.registrationClosesHours ?? null;
     if (b.priceCents !== undefined) v.price_cents = b.priceCents ?? null;
+    if (b.childPriceCents !== undefined) v.child_price_cents = b.childPriceCents ?? null;
+    if (b.childUpToAge !== undefined) v.child_up_to_age = b.childUpToAge ?? null;
     if (b.recurrence !== undefined) v.rrule = ruleOrProblem(() => rruleOf(b.recurrence));
     return v;
   }
@@ -436,7 +442,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   function pick(e: Ev) {
-    return { calendar_id: e.calendar_id, title: e.title, description: e.description, location: e.location, starts_at: e.starts_at, ends_at: e.ends_at, all_day: e.all_day, max_participants: e.max_participants, rsvp: e.rsvp, registration_closes_hours: e.registration_closes_hours, price_cents: e.price_cents };
+    return { calendar_id: e.calendar_id, title: e.title, description: e.description, location: e.location, starts_at: e.starts_at, ends_at: e.ends_at, all_day: e.all_day, max_participants: e.max_participants, rsvp: e.rsvp, registration_closes_hours: e.registration_closes_hours, price_cents: e.price_cents, child_price_cents: e.child_price_cents, child_up_to_age: e.child_up_to_age };
   }
 
   app.delete(
@@ -525,10 +531,15 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
   /** Paid events: the first confirmed place issues one invoice for this member and occurrence. */
   async function chargeOnce(tx: Db, actor: Actor, e: Ev, date: string, memberId: string, personId: string) {
     if (!e.price_cents) return;
+    // Children up to the event's age limit pay the reduced fee (age on the event day); a free place gets no invoice.
+    const birth = e.child_up_to_age !== null ? (await tx.selectFrom('person').select('birth_date').where('id', '=', personId).executeTakeFirst())?.birth_date : null;
+    const child = !!birth && e.child_up_to_age !== null && ageOn(birth, date) <= e.child_up_to_age;
+    const price = child ? Number(e.child_price_cents) : e.price_cents;
+    if (!price) return;
     const p = await tx.selectFrom('participation').select(['id', 'invoice_id']).where('event_id', '=', e.id).where('occurrence_date', '=', date).where('member_id', '=', memberId).executeTakeFirstOrThrow();
     if (p.invoice_id) return;
     const today = await orgToday(tx, actor.organizationId);
-    const invoiceId = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId, memberId, createdBy: actor.userId }, [{ text: `${e.title} am ${date.split('-').reverse().join('.')}`, quantity: 1, unitCents: e.price_cents, taxRate: 0 }]);
+    const invoiceId = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId, memberId, createdBy: actor.userId }, [{ text: `${e.title} am ${date.split('-').reverse().join('.')}${child ? ` (ermäßigt bis ${e.child_up_to_age} Jahre)` : ''}`, quantity: 1, unitCents: price, taxRate: 0 }]);
     await issueInvoice(tx, actor.organizationId, invoiceId, today);
     await tx.updateTable('participation').set({ invoice_id: invoiceId }).where('id', '=', p.id).execute();
   }

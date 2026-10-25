@@ -567,6 +567,8 @@ export interface EventTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   import_uid: string | null;
+  child_price_cents: number | null;
+  child_up_to_age: number | null;
 }
 
 export type ParticipationStatus = 'yes' | 'maybe' | 'no' | 'waitlist' | 'attended' | 'not_attended';

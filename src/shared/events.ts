@@ -38,6 +38,9 @@ export const eventInput = z.object({
   rsvp: z.boolean().default(true),
   registrationClosesHours: z.number().int().min(0).max(720).nullish(),
   priceCents: z.number().int().min(0).max(10_000_000).nullish(),
+  /** reduced fee for children up to (and including) childUpToAge on the event day; both or neither */
+  childPriceCents: z.number().int().min(0).max(10_000_000).nullish(),
+  childUpToAge: z.number().int().min(0).max(25).nullish(),
 });
 
 /** Changes to a recurring event apply to one occurrence, this and the following ones, or the whole series. */
@@ -68,6 +71,8 @@ export const occurrenceDetail = occurrence.extend({
   rsvp: z.boolean(),
   registrationClosesHours: z.number().nullable(),
   priceCents: z.number().nullable(),
+  childPriceCents: z.number().nullable(),
+  childUpToAge: z.number().nullable(),
   participants: z.array(participant),
 });
 export type OccurrenceDetail = z.infer<typeof occurrenceDetail>;
