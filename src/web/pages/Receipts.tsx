@@ -5,6 +5,7 @@ import { FileText, Plus } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
 import { euro } from '../../shared/fees.ts';
+import type { ExpenseClaim } from '../../shared/expenses.ts';
 import { RECEIPT_STATUS_LABEL, type Receipt } from '../../shared/receipts.ts';
 import { Field } from '../components/Field.tsx';
 import { Sheet } from '../components/Sheet.tsx';
@@ -29,6 +30,7 @@ export function Receipts({ me }: { me: Me }) {
 
   return (
     <LedgerLayout me={me} action={<span style={{ display: 'inline-flex', gap: 'var(--s-2)' }}><button className="btn" onClick={() => setSheet('self')}>Eigenbeleg</button><button className="btn btn-primary" onClick={() => setSheet('new')}><Plus size={16} aria-hidden /> Beleg erfassen</button></span>}>
+      <ExpenseClaims canWrite={canWrite} />
       <div className="toolbar">
         <div className="segmented" role="group" aria-label="Status">
           {(['open', 'paid', 'void', 'all'] as const).map((s) => <button key={s} aria-pressed={status === s} onClick={() => setParams({ status: s })}>{s === 'all' ? 'alle' : RECEIPT_STATUS_LABEL[s]}</button>)}
@@ -338,5 +340,70 @@ export function CashBookPage({ me }: { me: Me }) {
         </div>
       )}
     </LedgerLayout>
+  );
+}
+
+/** Expense claims members submitted in the portal: accept into an open receipt, or reject with a reason. */
+function ExpenseClaims({ canWrite }: { canWrite: boolean }) {
+  const claims = useQuery({ queryKey: ['expense-claims'], queryFn: () => api<ExpenseClaim[]>('/expense-claims') });
+  const [deciding, setDeciding] = useState<{ claim: ExpenseClaim; action: 'approve' | 'reject' } | null>(null);
+  const open = claims.data?.filter((c) => c.status === 'submitted') ?? [];
+  if (!open.length) return null;
+  return (
+    <section className="section" aria-labelledby="claims-h" style={{ marginTop: 0, marginBottom: 'var(--s-6)' }}>
+      <h2 id="claims-h">Eingereichte Auslagen</h2>
+      <ul className="timeline" aria-label="Eingereichte Auslagen">
+        {open.map((c) => (
+          <li key={c.id} className="claim">
+            <span>
+              <span className="name">{c.name}</span>: {c.purpose} <a href={`/api/v1/expense-claims/${c.id}/file`} target="_blank" rel="noreferrer" aria-label={`Beleg von ${c.name} öffnen`}><FileText size={14} aria-hidden style={{ verticalAlign: '-2px' }} /></a>
+              <span className="meta" style={{ display: 'block' }}>{formatDate(c.spentOn)} · Erstattung an {c.accountHolder}, <span style={{ whiteSpace: 'nowrap' }}>{c.iban.replace(/(.{4})(?=.)/g, '$1 ')}</span></span>
+            </span>
+            <span className="claim-actions">
+              <span className="num">{euro(c.amountCents)}</span>
+              {canWrite && <button className="btn btn-ghost" onClick={() => setDeciding({ claim: c, action: 'approve' })}>Annehmen …</button>}
+              {canWrite && <button className="btn btn-ghost" onClick={() => setDeciding({ claim: c, action: 'reject' })}>Ablehnen …</button>}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {deciding && <DecideClaim claim={deciding.claim} action={deciding.action} onClose={() => setDeciding(null)} />}
+    </section>
+  );
+}
+
+function DecideClaim({ claim, action, onClose }: { claim: ExpenseClaim; action: 'approve' | 'reject'; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { data: accounts } = useAccounts();
+  const [error, setError] = useState<string>();
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setError(undefined);
+    try {
+      await api(`/expense-claims/${claim.id}/${action}`, { method: 'POST', body: action === 'approve' ? { accountId: f.get('accountId') } : { reason: f.get('reason') } });
+      await qc.invalidateQueries({ queryKey: ['expense-claims'] });
+      await qc.invalidateQueries({ queryKey: ['receipts'] });
+      onClose();
+    } catch (err) {
+      setError(problemText(err));
+    }
+  }
+  return (
+    <Sheet title={`${action === 'approve' ? 'Auslage annehmen' : 'Auslage ablehnen'}: ${claim.name}`} open onClose={onClose}>
+      <form className="form" noValidate onSubmit={(e) => void submit(e)}>
+        {error && <div className="alert alert-error" role="alert">{error}</div>}
+        <p style={{ margin: 0 }}>{claim.purpose}, {euro(claim.amountCents)} vom {formatDate(claim.spentOn)}.</p>
+        {action === 'approve' ? (
+          <>
+            <AccountSelect label="Ausgabenkonto" name="accountId" accounts={(accounts ?? []).filter((a) => a.kind === 'expense' && !a.retired)} />
+            <p className="meta" style={{ margin: 0 }}>Daraus wird ein offener Beleg mit dem eingereichten Beleg als Datei. Erstatte den Betrag an {claim.accountHolder} und buche den Beleg dann mit „Bezahlt …“.</p>
+          </>
+        ) : (
+          <div className="field"><label htmlFor="c-reason">Begründung für das Mitglied</label><textarea id="c-reason" name="reason" className="textarea" maxLength={500} /></div>
+        )}
+        <div className="actions-row"><button className="btn btn-primary">{action === 'approve' ? 'Annehmen' : 'Ablehnen'}</button><button type="button" className="btn btn-ghost" onClick={onClose}>Abbrechen</button></div>
+      </form>
+    </Sheet>
   );
 }

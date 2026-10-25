@@ -95,7 +95,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !oneClick) {
       const type = (req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
       // File uploads send raw bytes; octet-stream is not CORS-simple either, so it needs the same preflight.
-      const upload = type === 'application/octet-stream' && /^\/api\/v1\/(files(\/[^/]+\/versions)?|receipts\/files)(\?|$)/.test(req.url);
+      const upload = type === 'application/octet-stream' && /^\/api\/v1\/(files(\/[^/]+\/versions)?|receipts\/files|portal\/expenses\/files)(\?|$)/.test(req.url);
       if (type !== 'application/json' && !upload) throw new Problem(415, 'json-required', 'Schreibende Anfragen brauchen einen JSON-Body (Content-Type: application/json).');
       const origin = req.headers.origin;
       // Bearer-token clients carry no ambient credentials, so the origin check only guards cookies.

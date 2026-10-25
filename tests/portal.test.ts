@@ -166,4 +166,33 @@ describe('member portal', () => {
     expect(docs.map((d: { name: string }) => d.name)).toEqual(['Satzung.pdf']);
     expect((await get(`/portal/documents/${docs[0].id}`, cookie)).body).toBe('%PDF satzung');
   });
+
+  it('members submit expense claims with a receipt; the treasurer approves into an open receipt or rejects', async () => {
+    const m = (await admin.post('/members', { firstName: 'Ali', lastName: 'Auslage', email: 'ali@example.org', joinDate: '2024-01-01' })).body;
+    const cookie = await signIn('ali@example.org');
+    const up = await ctx.app.inject({ method: 'POST', url: '/api/v1/portal/expenses/files?name=bon.pdf', headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-type': 'application/pdf' }, payload: Buffer.from('%PDF-1.4 Kassenbon') });
+    expect(up.statusCode, up.body).toBe(201);
+    const fileId = up.json().id;
+    const html = await ctx.app.inject({ method: 'POST', url: '/api/v1/portal/expenses/files?name=x.html', headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-type': 'text/html' }, payload: Buffer.from('<script>') });
+    expect(html.statusCode).toBe(415);
+    const claim = { memberId: m.id, purpose: 'Bälle für das Training', spentOn: '2026-03-02', amountCents: 4590, accountHolder: 'Ali Auslage', iban: 'DE02 1203 0000 0000 2020 51', fileId };
+    const sub = await post('/portal/expenses', claim, cookie);
+    expect(sub.statusCode, sub.body).toBe(201);
+    // The same upload cannot be claimed twice.
+    expect((await post('/portal/expenses', claim, cookie)).statusCode).toBe(409);
+    expect((await get('/portal/expenses', cookie)).json()[0]).toMatchObject({ status: 'submitted', amountCents: 4590 });
+
+    const list = (await admin.get('/expense-claims')).body;
+    expect(list[0]).toMatchObject({ name: 'Auslage, Ali', iban: 'DE02120300000000202051', status: 'submitted' });
+    expect((await ctx.app.inject({ url: `/api/v1/expense-claims/${list[0].id}/file`, headers: { cookie: adminCookie } })).body).toContain('Kassenbon');
+    const accounts = (await admin.get('/ledger/accounts')).body as { id: string; kind: string }[];
+    const expenseAccount = accounts.find((a) => a.kind === 'expense')!.id;
+    const ok = await admin.post(`/expense-claims/${list[0].id}/approve`, { accountId: expenseAccount, sphere: 'ideell' });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.status).toBe('approved');
+    const receipts = (await admin.get('/receipts')).body as { id: string; supplier: string; status: string; totalCents: number }[];
+    expect(receipts.find((r) => r.id === ok.body.receiptId)).toMatchObject({ supplier: 'Auslage Auslage, Ali', status: 'open', totalCents: 4590 });
+    expect((await admin.post(`/expense-claims/${list[0].id}/reject`, { reason: 'zu spät' })).status).toBe(409);
+    expect((await get('/portal/expenses', cookie)).json()[0].status).toBe('approved');
+  });
 });

@@ -899,6 +899,26 @@ export interface Database {
   receipt: ReceiptTable;
   receipt_line: ReceiptLineTable;
   job: JobTable;
+  expense_claim: ExpenseClaimTable;
+}
+
+export interface ExpenseClaimTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  person_id: string;
+  purpose: string;
+  spent_on: string;
+  amount_cents: number;
+  account_holder: string;
+  iban_encrypted: string;
+  file_id: string;
+  status: Generated<'submitted' | 'approved' | 'rejected'>;
+  receipt_id: string | null;
+  decided_by: string | null;
+  decided_at: Date | null;
+  reject_reason: string | null;
+  created_at: Generated<Date>;
 }
 
 export type JobKind = 'full_export' | 'member_bulk';
