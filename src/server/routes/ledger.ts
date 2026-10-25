@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { account, accountInput, accountPatch, bookingInput, costCenter, euerReport, journalEntry, ledgerSettings, SPHERES, taxRate, wirtschaftLimitCents } from '../../shared/ledger.ts';
+import { account, accountInput, accountPatch, bookingInput, costCenter, euerReport, journalEntry, ledgerSettings, SPHERES, taxRate, taxRateInput, wirtschaftLimitCents } from '../../shared/ledger.ts';
 import { treasurerReportPdf } from '../ledger/report-pdf.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
@@ -16,6 +16,9 @@ const idParam = z.object({ id: z.uuid() });
 const rangeBase = z.object({ from: z.iso.date(), to: z.iso.date() });
 const sane = (r: { from: string; to: string }) => r.from <= r.to && Number(r.to.slice(0, 4)) - Number(r.from.slice(0, 4)) <= 10;
 const range = rangeBase.refine(sane, { message: 'Zeitraum: Anfang vor Ende, höchstens zehn Jahre.' });
+
+const taxRateDto = (t: { id: string; label: string; rate_bp: number; valid_from: string; valid_to: string | null; output_account_id: string | null; input_account_id: string | null }) =>
+  ({ id: t.id, label: t.label, rateBp: t.rate_bp, validFrom: t.valid_from, validTo: t.valid_to, outputAccountId: t.output_account_id, inputAccountId: t.input_account_id });
 
 export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -75,7 +78,46 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'read');
     await settingsOf(actor.organizationId);
-    return (await db.selectFrom('tax_rate').selectAll().where('organization_id', '=', actor.organizationId).orderBy('valid_from', 'desc').execute()).map((t) => ({ id: t.id, label: t.label, rateBp: t.rate_bp, validFrom: t.valid_from, validTo: t.valid_to }));
+    return (await db.selectFrom('tax_rate').selectAll().where('organization_id', '=', actor.organizationId).orderBy('valid_from', 'desc').execute()).map(taxRateDto);
+  });
+
+  // Own rates (spec M16): the rate itself never changes once created; a rate ends by its valid-to date.
+  app.post('/ledger/tax-rates', { schema: { tags, summary: 'Eigenen Steuersatz anlegen (mit Gültigkeit und Steuerkonten)', body: taxRateInput, response: { 201: taxRate } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'write');
+    const b = req.body;
+    for (const [field, id] of [['outputAccountId', b.outputAccountId], ['inputAccountId', b.inputAccountId]] as const) {
+      if (!id) continue;
+      const acc = await db.selectFrom('ledger_account').select('kind').where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+      if (acc?.kind !== 'tax') throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message: 'Bitte ein Steuerkonto wählen.' }] });
+    }
+    if (b.rateBp > 0 && !b.outputAccountId && !b.inputAccountId) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'outputAccountId', message: 'Ein Steuersatz über 0 % braucht ein Umsatzsteuer- oder Vorsteuerkonto.' }] });
+    const t = await db.transaction().execute(async (tx) => {
+      const t = await tx.insertInto('tax_rate').values({ organization_id: actor.organizationId, label: b.label, rate_bp: b.rateBp, valid_from: b.validFrom, valid_to: b.validTo ?? null, output_account_id: b.outputAccountId ?? null, input_account_id: b.inputAccountId ?? null }).returningAll().executeTakeFirstOrThrow();
+      await audit(tx, actor.organizationId, actor, { action: 'ledger.tax_rate_created', entityType: 'tax_rate', entityId: t.id, diff: { label: [null, t.label], rateBp: [null, t.rate_bp] } });
+      return t;
+    });
+    reply.status(201);
+    return taxRateDto(t);
+  });
+
+  app.patch('/ledger/tax-rates/:id', { schema: { tags, summary: 'Gültigkeit eines Steuersatzes beenden oder verlängern (der Satz selbst bleibt)', params: idParam, body: z.object({ validTo: z.iso.date().nullable() }), response: { 200: taxRate } } }, async (req) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'ledger', 'write');
+    const before = await db.selectFrom('tax_rate').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+    if (!before) throw notFound('Steuersatz');
+    if (req.body.validTo && req.body.validTo < before.valid_from) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'validTo', message: 'Das Ende liegt vor dem Beginn.' }] });
+    // Lines already booked with this rate keep it; ending it earlier than a booked line is refused.
+    if (req.body.validTo) {
+      const later = await db.selectFrom('journal_line').innerJoin('journal_entry', 'journal_entry.id', 'journal_line.entry_id').select('journal_entry.entry_date as date').where('journal_line.tax_rate_id', '=', before.id).where('journal_entry.entry_date', '>', req.body.validTo).orderBy('journal_entry.entry_date', 'desc').executeTakeFirst();
+      if (later) throw new Problem(409, 'rate-in-use', `Mit diesem Satz ist noch am ${later.date.split('-').reverse().join('.')} gebucht.`);
+    }
+    const t = await db.transaction().execute(async (tx) => {
+      const t = await tx.updateTable('tax_rate').set({ valid_to: req.body.validTo }).where('id', '=', before.id).returningAll().executeTakeFirstOrThrow();
+      await audit(tx, actor.organizationId, actor, { action: 'ledger.tax_rate_updated', entityType: 'tax_rate', entityId: t.id, diff: { validTo: [before.valid_to, t.valid_to] } });
+      return t;
+    });
+    return taxRateDto(t);
   });
 
   app.get('/ledger/cost-centers', { schema: { tags, summary: 'Kostenstellen', response: { 200: z.array(costCenter) } } }, async (req) => {

@@ -20,7 +20,15 @@ export const accountInput = z.object({
 });
 export const accountPatch = accountInput.pick({ name: true, defaultSphere: true, datevNumber: true }).partial().extend({ hidden: z.boolean().optional(), retired: z.boolean().optional() });
 
-export const taxRate = z.object({ id: z.uuid(), label: z.string(), rateBp: z.number(), validFrom: z.string(), validTo: z.string().nullable() });
+export const taxRate = z.object({ id: z.uuid(), label: z.string(), rateBp: z.number(), validFrom: z.string(), validTo: z.string().nullable(), outputAccountId: z.uuid().nullable(), inputAccountId: z.uuid().nullable() });
+export const taxRateInput = z.object({
+  label: z.string().trim().min(1, 'Pflichtfeld.').max(60),
+  rateBp: z.number().int().min(0).max(10_000),
+  validFrom: z.iso.date(),
+  validTo: z.iso.date().nullish(),
+  outputAccountId: z.uuid().nullish(),
+  inputAccountId: z.uuid().nullish(),
+}).refine((t) => !t.validTo || t.validTo >= t.validFrom, { message: 'Das Ende liegt vor dem Beginn.', path: ['validTo'] });
 export const costCenter = z.object({ id: z.uuid(), code: z.string(), name: z.string() });
 
 export const bookingLine = z.object({
