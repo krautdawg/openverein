@@ -18,6 +18,7 @@ import { Events } from './pages/Events.tsx';
 import { Communication } from './pages/Communication.tsx';
 import { Documents } from './pages/Documents.tsx';
 import { Accounts, EuerReport, Journal, LedgerExports, LedgerSettings } from './pages/Ledger.tsx';
+import { DonationReceipts, Donations, DonationSettingsPage } from './pages/Donations.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
@@ -88,6 +89,9 @@ function AdminApp() {
         <Route path="/buchhaltung/einstellungen" element={<LedgerSettings me={me.data} />} />
         <Route path="/buchhaltung/export" element={<LedgerExports me={me.data} />} />
         <Route path="/buchhaltung/:id" element={<Journal me={me.data} />} />
+        <Route path="/spenden" element={<Donations me={me.data} />} />
+        <Route path="/spenden/bestaetigungen" element={<DonationReceipts me={me.data} />} />
+        <Route path="/spenden/einstellungen" element={<DonationSettingsPage me={me.data} />} />
         <Route path="/antraege" element={<Applications me={me.data} />} />
         <Route path="/antraege/:id" element={<Applications me={me.data} />} />
         <Route path="/kommunikation" element={<Communication me={me.data} />} />

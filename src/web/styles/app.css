@@ -580,3 +580,4 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .recovery-codes code { font-size: var(--text-sm); }
 
 .booking-line { border: 0; border-top: 1px solid var(--line); padding: var(--s-3) 0 0; margin: 0; display: grid; gap: var(--s-3); min-width: 0; }
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }

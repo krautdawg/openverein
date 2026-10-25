@@ -22,7 +22,7 @@ interface Entry { id: string; number: number; date: string; text: string; source
 interface Euer { from: string; to: string; rows: { accountId: string; number: string; name: string; kind: 'income' | 'expense'; sphere: Sphere; netCents: number }[]; spheres: { sphere: Sphere; incomeCents: number; expenseCents: number; resultCents: number }[]; vat: { outputCents: number; inputCents: number }; totals: { incomeCents: number; expenseCents: number; resultCents: number }; warnings: { kind: string; message: string; href: string | null }[] }
 interface Settings { bankAccountId: string | null; cashAccountId: string | null; feeAccountId: string | null; otherIncomeAccountId: string | null; dunningAccountId: string | null; lockDate: string | null; bankAccounts: { id: string; name: string; ibanLast4: string; ledgerAccountId: string | null }[] }
 
-const SOURCE_LABEL: Record<string, string> = { manual: 'Buchung', allocation: 'Zahlung', allocation_reversal: 'Zahlung zurückgenommen', reversal: 'Storno', receipt: 'Beleg', import: 'Import' };
+const SOURCE_LABEL: Record<string, string> = { manual: 'Buchung', allocation: 'Zahlung', allocation_reversal: 'Zahlung zurückgenommen', reversal: 'Storno', receipt: 'Beleg', import: 'Import', donation: 'Spende' };
 const useAccounts = () => useQuery({ queryKey: ['ledger-accounts'], queryFn: () => api<Account[]>('/ledger/accounts') });
 const year = () => todayLocal().slice(0, 4);
 
