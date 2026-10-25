@@ -57,6 +57,8 @@ describe('collection runs', () => {
     const b = await debitor('Schulz', 'DE75512108001245126199', 1550);
     const c = (await admin.get('/collection-runs/candidates')).body;
     expect(c.map((x: { readiness: string }) => x.readiness)).toEqual(['ok', 'ok']);
+    expect((await admin.patch('/organization', { remittanceTemplate: 'Beitrag {{betrag}}' })).status).toBe(400);
+    expect((await admin.patch('/organization', { remittanceTemplate: 'Beitrag {{mitgliedsnummer}} {{zeitraum}} {{rechnungsnummer}}' })).status).toBe(200);
     const run = await admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: [a.invoiceId, b.invoiceId] });
     expect(run.status, JSON.stringify(run.body)).toBe(201);
     expect(run.body).toMatchObject({ status: 'generated', itemCount: 2, totalCents: 13550 });
@@ -68,6 +70,8 @@ describe('collection runs', () => {
 
     const file = await ctx.app.inject({ url: `/api/v1/collection-runs/${run.body.id}/files/1`, headers: { cookie: adminCookie } });
     expect(file.body).toContain('<MndtId>0001-1</MndtId>');
+    // Manual invoices have no fee period: the placeholder drops out without a double space.
+    expect(file.body).toMatch(/<Ustrd>Beitrag 0001 R-\d{4}-\d+<\/Ustrd>/);
     expect(file.body).toContain('<Cd>CORE</Cd>');
     const file2 = await ctx.app.inject({ url: `/api/v1/collection-runs/${run.body.id}/files/1`, headers: { cookie: adminCookie } });
     expect(file2.body).toBe(file.body);

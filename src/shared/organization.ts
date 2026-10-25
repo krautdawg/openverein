@@ -24,6 +24,7 @@ export const organization = z.object({
   dunningLevels: z.array(z.object({ level: z.number(), label: z.string(), days: z.number(), feeCents: z.number() })),
   creditorId: z.string().nullable(),
   prenotificationDays: z.number(),
+  remittanceTemplate: z.string(),
   mailFromName: z.string().nullable(),
   mailFromAddress: z.string().nullable(),
   mailReplyTo: z.string().nullable(),
@@ -60,6 +61,7 @@ export const organizationPatch = z.object({
   cancellationNumberPattern: numberPattern.optional(),
   paymentTermsDays: z.number().int().min(0).max(120).optional(),
   prenotificationDays: z.number().int().min(1).max(60).optional(),
+  remittanceTemplate: z.string().trim().min(1).max(140).refine((t) => [...t.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].every((m) => m[1]! in REMITTANCE_PLACEHOLDERS), 'Unbekannter Platzhalter. Erlaubt: {{rechnungsnummer}}, {{mitgliedsnummer}}, {{zeitraum}}, {{verein}}.').optional(),
   mailFromName: optText(100),
   mailFromAddress: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)).optional(),
   mailPerMinute: z.number().int().min(1).max(1000).optional(),
@@ -79,3 +81,10 @@ export const organizationPatch = z.object({
     .refine((ls) => ls.every((l, i) => i === 0 || (l.level > ls[i - 1]!.level && l.days > ls[i - 1]!.days)), 'Stufen aufsteigend nummerieren, jede Stufe mit mehr Tagen als die vorige.')
     .optional(),
 });
+
+/** Placeholders of the SEPA remittance text (Verwendungszweck); the bank shows at most 140 characters. */
+export const REMITTANCE_PLACEHOLDERS = { rechnungsnummer: 'Rechnungsnummer', mitgliedsnummer: 'Mitgliedsnummer', zeitraum: 'Beitragszeitraum, z. B. 01.01.2026–31.12.2026', verein: 'Name des Vereins' } as const;
+
+export function fillRemittance(template: string, values: Partial<Record<keyof typeof REMITTANCE_PLACEHOLDERS, string>>) {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => values[k as keyof typeof REMITTANCE_PLACEHOLDERS] ?? '').replace(/\s+/g, ' ').trim();
+}
