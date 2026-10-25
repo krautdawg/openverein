@@ -22,6 +22,7 @@ import { DonationReceipts, Donations, DonationSettingsPage } from './pages/Donat
 import { Households } from './pages/Households.tsx';
 import { CashBookPage, Receipts } from './pages/Receipts.tsx';
 import { Allowances } from './pages/Allowances.tsx';
+import { Budget } from './pages/Budget.tsx';
 import { Duplicates } from './pages/Duplicates.tsx';
 import { Census } from './pages/Census.tsx';
 import { HonoursPage } from './pages/Honours.tsx';
@@ -110,6 +111,7 @@ function AdminApp() {
         <Route path="/buchhaltung/belege" element={<Receipts me={me.data} />} />
         <Route path="/buchhaltung/kassenbuch" element={<CashBookPage me={me.data} />} />
         <Route path="/buchhaltung/pauschalen" element={<Allowances me={me.data} />} />
+        <Route path="/buchhaltung/haushaltsplan" element={<Budget me={me.data} />} />
         <Route path="/buchhaltung/:id" element={<Journal me={me.data} />} />
         <Route path="/spenden" element={<Donations me={me.data} />} />
         <Route path="/spenden/bestaetigungen" element={<DonationReceipts me={me.data} />} />

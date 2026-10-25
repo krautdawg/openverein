@@ -915,6 +915,14 @@ export interface Database {
   allowance_declaration: AllowanceDeclarationTable;
   webhook: WebhookTable;
   webhook_delivery: WebhookDeliveryTable;
+  budget_line: BudgetLineTable;
+}
+
+export interface BudgetLineTable {
+  organization_id: string;
+  year: number;
+  account_id: string;
+  planned_cents: number;
 }
 
 export interface WebhookTable {
