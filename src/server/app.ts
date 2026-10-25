@@ -35,6 +35,7 @@ import { viewRoutes } from './routes/views.ts';
 import { fullExportRoutes } from './routes/fullExport.ts';
 import { jobRoutes } from './routes/jobs.ts';
 import { reportRoutes } from './routes/reports.ts';
+import { workHourRoutes } from './routes/workHours.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -142,6 +143,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(fullExportRoutes);
       await api.register(jobRoutes);
       await api.register(reportRoutes);
+      await api.register(workHourRoutes);
     },
     { prefix: '/api/v1' },
   );
