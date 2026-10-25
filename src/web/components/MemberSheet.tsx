@@ -195,6 +195,7 @@ function MembershipSection({ m, canWrite, patch, onChanged }: { m: MemberDetail;
   const [error, setError] = useState<string>();
   const [hint, setHint] = useState<string>();
   const [proposal, setProposal] = useState<string>();
+  const proposalSeq = useRef(0);
 
   async function act(path: string, body: unknown = {}) {
     setError(undefined);
@@ -208,7 +209,10 @@ function MembershipSection({ m, canWrite, patch, onChanged }: { m: MemberDetail;
 
   async function proposeExit(noticeDate: string) {
     if (!noticeDate) return;
+    // Focus and change both ask; only the answer to the latest question may win (an older one can arrive later).
+    const seq = ++proposalSeq.current;
     const p = await api<{ exitDate: string; rule: string }>(`/members/exit-proposal?noticeDate=${noticeDate}`);
+    if (seq !== proposalSeq.current) return;
     setProposal(p.exitDate);
     setHint(`Frühester Termin laut Satzung (${p.rule}): ${formatDate(p.exitDate)}`);
   }

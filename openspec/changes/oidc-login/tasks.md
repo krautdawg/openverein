@@ -1,0 +1,3 @@
+- [x] settings, flow, refusal paths
+- [x] sign-in button, settings UI
+- [x] tests with a mock provider, e2e

@@ -27,6 +27,8 @@ export const config = {
   multiTenant: env.MULTI_TENANT === 'true',
   /** Secret for the operator API (header X-Operator-Token), at least 32 characters; only used with MULTI_TENANT. */
   operatorToken: env.OPERATOR_TOKEN ?? '',
+  /** OIDC issuers over plain http: only for development and tests. */
+  oidcAllowHttp: env.OIDC_ALLOW_HTTP === 'true',
 };
 if (config.multiTenant && config.operatorToken.length < 32) throw new Error('MULTI_TENANT=true braucht OPERATOR_TOKEN mit mindestens 32 Zeichen.');
 if (config.multiTenant && config.demoMode) throw new Error('DEMO_MODE und MULTI_TENANT schließen sich aus.');
