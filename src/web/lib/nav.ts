@@ -1,4 +1,4 @@
-import { BookOpen, CalendarDays, Coins, FileText, FolderOpen, HandHeart, Landmark, LayoutGrid, type LucideIcon, Mail, Settings, Shapes, Users, Vote } from 'lucide-react';
+import { BookOpen, CalendarDays, Coins, FileText, FolderOpen, HandHeart, Landmark, LayoutGrid, ListChecks, type LucideIcon, Mail, Settings, Shapes, Users, Vote } from 'lucide-react';
 
 export interface NavItem {
   label: string;
@@ -12,6 +12,7 @@ export interface NavItem {
 /** Main navigation. Each slice adds its module here; the command palette reads the same list. */
 export const nav: NavItem[] = [
   { label: 'Übersicht', path: '/', icon: LayoutGrid, keywords: 'start dashboard home' },
+  { label: 'Aufgaben', path: '/aufgaben', icon: ListChecks, keywords: 'todo erledigen zuständig frist tasks' },
   { label: 'Mitglieder', path: '/mitglieder', icon: Users, keywords: 'personen liste members', module: 'members' },
   { label: 'Gruppen', path: '/gruppen', icon: Shapes, keywords: 'abteilungen mannschaften sparten groups', module: 'groups' },
   { label: 'Termine', path: '/termine', icon: CalendarDays, keywords: 'kalender training spiel sitzung events', module: 'events' },

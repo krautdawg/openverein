@@ -893,6 +893,20 @@ export interface OfferLineTable {
   tax_rate: number | string;
 }
 
+export interface TaskTable {
+  id: Generated<string>;
+  organization_id: string;
+  title: string;
+  note: string | null;
+  due_on: string | null;
+  assignee_user_id: string | null;
+  member_id: string | null;
+  done_at: Date | null;
+  done_by: string | null;
+  created_by: string;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -983,6 +997,7 @@ export interface Database {
   contact_log: ContactLogTable;
   offer: OfferTable;
   offer_line: OfferLineTable;
+  task: TaskTable;
 }
 
 export interface InventoryItemTable {
