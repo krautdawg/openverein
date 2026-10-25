@@ -1,0 +1,3 @@
+- [x] columns, charging
+- [x] form and detail
+- [x] tests, e2e

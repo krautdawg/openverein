@@ -185,4 +185,22 @@ describe('events', () => {
     expect(lines.at(-1)).toBe('Anwesende je Termin;;1;2;0;3');
     expect((await ctx.app.inject({ url: `/api/v1/calendars/${calendarId}/attendance.csv?from=2026-01-01&to=2027-06-01`, headers: { cookie: adminCookie } })).statusCode).toBe(400);
   });
+
+  it('charges children up to the age limit the reduced fee, free places without an invoice', async () => {
+    await admin.patch('/organization', { street: 'Weg 1', postalCode: '12345', city: 'Musterstadt' });
+    const ev = (await admin.post('/events', { calendarId, title: 'Ferienfreizeit', startsAt: '2026-12-20T10:00', endsAt: '2026-12-20T16:00', priceCents: 3000, childPriceCents: 1000, childUpToAge: 13 })).body;
+    expect(ev.childPriceCents).toBe(1000);
+    expect((await admin.post('/events', { calendarId, title: 'x', startsAt: '2026-12-20T10:00', endsAt: '2026-12-20T11:00', priceCents: 3000, childPriceCents: 1000 })).status).toBe(409);
+    const kid = (await admin.post('/members', { firstName: 'Kai', lastName: 'Kind', birthDate: '2013-12-21', joinDate: '2020-01-01' })).body.id;
+    const adult = (await admin.post('/members', { firstName: 'Ada', lastName: 'Alt', birthDate: '1990-01-01', joinDate: '2020-01-01' })).body.id;
+    const k = await admin.put(`/events/${ev.eventId}/occurrences/2026-12-20/participants/${kid}`, { status: 'yes' });
+    const a = await admin.put(`/events/${ev.eventId}/occurrences/2026-12-20/participants/${adult}`, { status: 'yes' });
+    const invoiceOf = (body: { participants: { memberId: string; invoiceId: string | null }[] }, m: string) => body.participants.find((p) => p.memberId === m)!.invoiceId!;
+    // 12 years on the event day (13th birthday is the day after): reduced.
+    expect((await admin.get(`/invoices/${invoiceOf(k.body, kid)}`)).body.totalCents).toBe(1000);
+    expect((await admin.get(`/invoices/${invoiceOf(a.body, adult)}`)).body.totalCents).toBe(3000);
+    const free = (await admin.post('/events', { calendarId, title: 'Kinderfest', startsAt: '2026-12-21T10:00', endsAt: '2026-12-21T12:00', priceCents: 500, childPriceCents: 0, childUpToAge: 13 })).body;
+    const f = await admin.put(`/events/${free.eventId}/occurrences/2026-12-21/participants/${kid}`, { status: 'yes' });
+    expect(f.body.participants.find((p: { memberId: string }) => p.memberId === kid).invoiceId).toBeNull();
+  });
 });

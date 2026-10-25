@@ -165,6 +165,8 @@ function CreateEvent({ calendars, date, onClose, onCreated }: { calendars: Calen
       recurrence: repeat === 'none' ? null : { freq: repeat === 'monthly' ? 'MONTHLY' : 'WEEKLY', interval: repeat === 'biweekly' ? 2 : 1, byDay: repeat === 'monthly' ? [] : f.getAll('byDay'), until: f.get('until') || null },
       maxParticipants: f.get('max') ? Number(f.get('max')) : null,
       priceCents: f.get('priceCents') && f.get('priceCents') !== '0' ? Number(f.get('priceCents')) : null,
+      childPriceCents: f.get('childUpToAge') ? Number(f.get('childPriceCents') || 0) : null,
+      childUpToAge: f.get('childUpToAge') ? Number(f.get('childUpToAge')) : null,
     };
     setError(undefined);
     try {
@@ -217,6 +219,10 @@ function CreateEvent({ calendars, date, onClose, onCreated }: { calendars: Calen
         <div className="form-row">
           <Field label="Höchstens Teilnehmende" name="max" type="number" min={1} hint="Leer: unbegrenzt. Weitere Zusagen kommen auf die Warteliste." />
           <MoneyField label="Teilnahmegebühr (optional)" name="priceCents" hint="Mit Gebühr erhält jede Zusage eine Rechnung." />
+        </div>
+        <div className="form-row">
+          <MoneyField label="Ermäßigt für Kinder (optional)" name="childPriceCents" hint="0,00 heißt: für Kinder kostenlos." />
+          <Field label="bis einschließlich Alter" name="childUpToAge" type="number" min={0} max={25} hint="Es zählt das Alter am Tag des Termins." />
         </div>
         <div className="field"><label htmlFor="desc">Beschreibung</label><textarea id="desc" name="description" className="textarea" /></div>
         <div className="actions-row"><button className="btn btn-primary">Anlegen</button><button type="button" className="btn btn-ghost" onClick={onClose}>Abbrechen</button></div>
@@ -272,7 +278,7 @@ function OccurrenceSheet({ id, date, canWrite, onClose }: { id: string | null; d
               <dt>Wann</dt><dd>{longDate(o.date)}{!o.allDay && `, ${time(o.startsAt)}–${time(o.endsAt)} Uhr`}</dd>
               {o.location && (<><dt>Wo</dt><dd>{o.location}</dd></>)}
               {o.maxParticipants !== null && (<><dt>Plätze</dt><dd className="num">{o.counts.yes + o.counts.attended} von {o.maxParticipants} belegt{o.counts.waitlist > 0 && `, ${o.counts.waitlist} auf der Warteliste`}</dd></>)}
-              {o.priceCents ? (<><dt>Gebühr</dt><dd className="num">{euro(o.priceCents)} je Zusage (Rechnung automatisch)</dd></>) : null}
+              {o.priceCents ? (<><dt>Gebühr</dt><dd className="num">{euro(o.priceCents)} je Zusage (Rechnung automatisch){o.childUpToAge !== null && `, Kinder bis ${o.childUpToAge} Jahre ${o.childPriceCents ? euro(o.childPriceCents) : 'kostenlos'}`}</dd></>) : null}
             </dl>
             {o.description && <p style={{ marginTop: 'var(--s-4)', whiteSpace: 'pre-wrap', maxWidth: '65ch' }}>{o.description}</p>}
           </section>
