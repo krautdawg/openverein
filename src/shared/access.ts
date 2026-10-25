@@ -88,6 +88,13 @@ export const auditQuery = z.object({
 
 export const ACTION_LABEL: Record<string, string> = {
   'organization.setup': 'Verein eingerichtet',
+  'consent.granted': 'Einwilligung erfasst',
+  'consent.withdrawn': 'Einwilligung widerrufen',
+  'person.legal_hold': 'Löschsperre gesetzt',
+  'person.legal_hold_released': 'Löschsperre aufgehoben',
+  'person.anonymised': 'Anonymisiert',
+  'person.exported': 'Auskunft erstellt',
+  'person.created': 'Person angelegt',
   'organization.update': 'Vereinsdaten geändert',
   'auth.login': 'Angemeldet',
   'auth.login_failed': 'Anmeldung fehlgeschlagen',

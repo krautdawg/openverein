@@ -12,6 +12,7 @@ import { MemberFiles } from './MemberFiles.tsx';
 import { PortalCode } from './PortalCode.tsx';
 import { MemberMails } from './MemberMails.tsx';
 import { MemberMandate } from './MemberMandate.tsx';
+import { MemberPrivacy } from './MemberPrivacy.tsx';
 import { Sheet } from './Sheet.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 
@@ -113,6 +114,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
           )}
           {permissions.communication && permissions.communication !== 'none' && <MemberMails memberId={m.id} />}
           <MemberFiles memberId={m.id} canWrite={canWrite} />
+          <MemberPrivacy personId={m.personId} canWrite={canWrite} onAnonymised={() => void reload()} />
 
           <section className="sheet-section" aria-labelledby="s-history">
             <h3 id="s-history">Verlauf</h3>
