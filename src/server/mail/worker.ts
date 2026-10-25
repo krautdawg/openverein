@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
-import { fill, textToHtml, type PlaceholderValues } from '../../shared/mail.ts';
+import { customPlaceholders, fill, textToHtml, type PlaceholderValues } from '../../shared/mail.ts';
 import { blindIndex } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { storedPdf } from '../invoices/service.ts';
@@ -79,7 +79,7 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
       'delivery.id', 'delivery.email', 'delivery.attempts', 'delivery.invoice_id', 'delivery.organization_id', 'delivery.message_id',
       'message.subject', 'message.body', 'message.category', 'message.recipient_filter',
       'organization.name as org_name', 'organization.mail_from_name', 'organization.mail_from_address', 'organization.mail_reply_to',
-      'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'member.membership_number',
+      'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.custom', 'member.membership_number',
     ])
     .where('delivery.id', '=', id)
     .executeTakeFirstOrThrow();
@@ -99,6 +99,7 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
     name: d.kind === 'organisation' ? (d.company_name ?? '') : [d.first_name, d.last_name].filter(Boolean).join(' '),
     mitgliedsnummer: d.membership_number ?? '',
     verein: d.org_name,
+    ...customPlaceholders(await db.selectFrom('custom_field').select(['id', 'key', 'type', 'sensitive']).where('organization_id', '=', d.organization_id).where('archived_at', 'is', null).execute(), d.custom),
   };
   const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
   if (d.invoice_id) {

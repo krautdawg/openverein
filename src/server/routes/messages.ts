@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { resolveTxt } from 'node:dns/promises';
-import { fill, SYSTEM_TEMPLATES, type SystemTemplateKey } from '../../shared/mail.ts';
+import { customPlaceholders, fill, SYSTEM_TEMPLATES, type SystemTemplateKey } from '../../shared/mail.ts';
 import { displayName } from '../../shared/members.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
@@ -11,6 +11,7 @@ import { notFound, Problem } from '../http/problem.ts';
 import { deliveryFromToken, emailHash } from '../mail/worker.ts';
 import { mailer, senderOf } from '../mail/transport.ts';
 import { applyScope, orgToday, scopePredicate } from '../members/query.ts';
+import { fieldsFor } from '../members/custom.ts';
 import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 
 const tags = ['communication'];
@@ -118,10 +119,10 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'communication', 'write');
     const today = await orgToday(db, actor.organizationId);
     const m = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').innerJoin('organization', 'organization.id', 'member.organization_id')
-      .select(['person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'member.membership_number', 'organization.name as org'])
+      .select(['person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.custom', 'member.membership_number', 'organization.name as org'])
       .where('member.id', '=', req.body.memberId).where('member.organization_id', '=', actor.organizationId).where(applyScope(actor, today, 'read', 'communication')).executeTakeFirst();
     if (!m) throw notFound('Mitglied');
-    const values = { vorname: m.first_name ?? m.company_name ?? '', nachname: m.last_name ?? '', name: m.kind === 'organisation' ? (m.company_name ?? '') : [m.first_name, m.last_name].filter(Boolean).join(' '), mitgliedsnummer: m.membership_number, verein: m.org, rechnungsnummer: 'R-0000-00000', betrag: '0,00 €' };
+    const values = { vorname: m.first_name ?? m.company_name ?? '', nachname: m.last_name ?? '', name: m.kind === 'organisation' ? (m.company_name ?? '') : [m.first_name, m.last_name].filter(Boolean).join(' '), mitgliedsnummer: m.membership_number, verein: m.org, rechnungsnummer: 'R-0000-00000', betrag: '0,00 €', ...customPlaceholders(await fieldsFor(db, actor), m.custom) };
     return { subject: fill(req.body.subject, values), body: fill(req.body.body, values) };
   });
 

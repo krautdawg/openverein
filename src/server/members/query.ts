@@ -3,6 +3,7 @@ import type { Database, Db, MemberTable, PersonTable } from '../db.ts';
 import { todayIn } from '../../shared/dates.ts';
 import type { MemberDetail, MemberListItem } from '../../shared/members.ts';
 import { notFound } from '../http/problem.ts';
+import { fieldsFor, visibleValues } from './custom.ts';
 import { restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
 
 export async function orgToday(db: Db, organizationId: string) {
@@ -51,10 +52,11 @@ export const memberColumns = [
   'person.country',
   'person.preferred_channel',
   'person.note',
+  'person.custom',
 ] as const;
 
 type Row = Pick<Selectable<MemberTable>, 'id' | 'person_id' | 'membership_number' | 'status' | 'application_date' | 'join_date' | 'notice_date' | 'exit_date' | 'exit_reason'> &
-  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note'>;
+  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note' | 'custom'>;
 
 /** Current group badges for a set of members. */
 export async function currentGroups(db: Db, memberIds: string[], today: string) {
@@ -156,6 +158,7 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
     timeline: timeline.map((t) => ({ at: t.at.toISOString(), action: t.action, actor: t.actor_label, diff: maskDiff(t.diff, hidden) })),
     warnings,
     restricted: [...hidden],
+    custom: visibleValues(row.custom, await fieldsFor(db, actor)),
   };
 }
 

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
 import { PLACEHOLDERS } from '../../shared/mail.ts';
+import { useCustomFields } from '../components/CustomFields.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
@@ -63,6 +64,7 @@ export function Communication({ me }: { me: Me }) {
   }
   const messages = useQuery({ queryKey: ['messages'], queryFn: () => api<Message[]>('/messages'), refetchInterval: (q) => (q.state.data?.some((m) => m.status === 'sending') ? 3000 : false) });
 
+  const { data: customFields } = useCustomFields();
   function insert(key: string) {
     const el = textRef.current;
     const token = `{{${key}}}`;
@@ -152,6 +154,7 @@ export function Communication({ me }: { me: Me }) {
               <textarea id="body" ref={textRef} className="textarea" style={{ minHeight: 260 }} value={body} onChange={(e) => setBody(e.target.value)} />
               <div className="chips" aria-label="Platzhalter einfügen">
                 {(['vorname', 'nachname', 'name', 'mitgliedsnummer', 'verein'] as const).map((k) => <button key={k} type="button" className="pill pill-button" title={PLACEHOLDERS[k]} onClick={() => insert(k)}>{`{{${k}}}`}</button>)}
+                {customFields?.filter((f) => !f.archived && !f.sensitive).map((f) => <button key={f.id} type="button" className="pill pill-button" title={f.label} onClick={() => insert(`custom.${f.key}`)}>{`{{custom.${f.key}}}`}</button>)}
               </div>
             </div>
             <div className="actions-row">

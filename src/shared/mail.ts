@@ -1,3 +1,5 @@
+import { customText } from './customFields.ts';
+
 /** Placeholders a mail may use. Values come from the recipient; nothing else is reachable (no code, no paths). */
 export const PLACEHOLDERS = {
   vorname: 'Vorname',
@@ -15,11 +17,19 @@ export const PLACEHOLDERS = {
   entscheidung: 'Entscheidung mit Begründung (nur bei Änderungswünschen)',
   austritt: 'Austrittsdatum (nur bei Kündigungen)',
 } as const;
-export type PlaceholderValues = Partial<Record<keyof typeof PLACEHOLDERS, string>>;
+/** Fixed placeholders plus `custom.<key>` for the club's own (non-sensitive) fields. */
+export type PlaceholderValues = Partial<Record<keyof typeof PLACEHOLDERS, string>> & { [custom: `custom.${string}`]: string };
 
-/** Replaces {{vorname}} etc.; unknown placeholders stay visible so the author notices them in the preview. */
+/** Replaces {{vorname}}, {{custom.trikotgroesse}} etc.; unknown placeholders stay visible so the author notices them in the preview. */
 export function fill(template: string, values: PlaceholderValues) {
-  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (all, key: string) => (key in values ? (values[key as keyof PlaceholderValues] ?? '') : all));
+  return template.replace(/\{\{\s*([a-z_]+(?:\.[a-z0-9_]+)?)\s*\}\}/g, (all, key: string) => (key in values ? (values[key as keyof PlaceholderValues] ?? '') : all));
+}
+
+/** `custom.<key>` values of one person for mail placeholders; sensitive fields are never offered. */
+export function customPlaceholders(fields: { id: string; key: string; type: Parameters<typeof customText>[0]; sensitive: boolean }[], custom: Record<string, unknown> | null) {
+  const out: Record<`custom.${string}`, string> = {};
+  for (const f of fields) if (!f.sensitive) out[`custom.${f.key}`] = customText(f.type, custom?.[f.id]);
+  return out;
 }
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

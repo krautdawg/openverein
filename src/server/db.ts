@@ -126,6 +126,7 @@ export interface PersonTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   import_run_id: Generated<string | null>;
+  custom: Generated<Record<string, unknown>>;
   anonymised_at: Date | null;
   legal_hold_reason: string | null;
 }
@@ -869,9 +870,29 @@ export interface Database {
   donation: DonationTable;
   donation_receipt: DonationReceiptTable;
   donation_receipt_item: DonationReceiptItemTable;
+  custom_field: CustomFieldTable;
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
   idempotency_key: IdempotencyKeyTable;
+}
+
+export type CustomFieldType = 'text' | 'multiline' | 'number' | 'date' | 'checkbox' | 'select' | 'multiselect';
+export interface CustomFieldTable {
+  id: Generated<string>;
+  organization_id: string;
+  key: string;
+  label: string;
+  type: CustomFieldType;
+  options: Generated<string[]>;
+  required: Generated<boolean>;
+  position: Generated<number>;
+  visible_to_member: Generated<boolean>;
+  editable_by_member: Generated<boolean>;
+  needs_approval: Generated<boolean>;
+  sensitive: Generated<boolean>;
+  gdpr_relevant: Generated<boolean>;
+  archived_at: Date | null;
+  created_at: Generated<Date>;
 }
 
 export type ConsentPurpose = 'newsletter' | 'photos' | 'phone_list' | 'other';

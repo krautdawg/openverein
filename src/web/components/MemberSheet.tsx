@@ -13,6 +13,7 @@ import { PortalCode } from './PortalCode.tsx';
 import { MemberMails } from './MemberMails.tsx';
 import { MemberMandate } from './MemberMandate.tsx';
 import { MemberPrivacy } from './MemberPrivacy.tsx';
+import { MemberCustom } from './CustomFields.tsx';
 import { Sheet } from './Sheet.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 
@@ -106,6 +107,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
 
           <MembershipSection m={m} canWrite={canWrite} patch={patch} onChanged={refresh} />
           <GroupsSection m={m} canWrite={canWrite} onChanged={reload} />
+          <MemberCustom m={m} canWrite={canWrite} onChanged={refresh} />
           {permissions.sepa && permissions.sepa !== 'none' && (
             <MemberMandate memberId={m.id} holder={displayName(m).split(', ').reverse().join(' ')} canWrite={permissions.sepa === 'write'} />
           )}

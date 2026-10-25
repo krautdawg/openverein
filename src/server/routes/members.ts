@@ -23,6 +23,8 @@ import { forbidden, Problem } from '../http/problem.ts';
 import { nextNumber } from '../members/numbers.ts';
 import { applyScope, currentGroups, loadMemberRow, memberColumns, memberDetail, orgToday, toListItem } from '../members/query.ts';
 import { statusForJoin } from '../members/status.ts';
+import { fieldsFor, seesSensitive, writeCustom } from '../members/custom.ts';
+import { customText } from '../../shared/customFields.ts';
 import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 
 const idParam = z.object({ id: z.uuid() });
@@ -73,6 +75,16 @@ const listFilter = (q: z.infer<typeof memberListQuery>, actor: Actor, today: str
       sql<boolean>`exists (select 1 from group_membership gm where gm.member_id = member.id and gm.group_id = ${q.groupId}
         and gm.valid_from <= ${today}::date and (gm.valid_to is null or gm.valid_to >= ${today}::date))`,
     );
+  }
+  if (q.cf) {
+    const [id, value] = [q.cf.slice(0, 36), q.cf.slice(37)];
+    // Text fields match partly, the others exactly (checkbox: "true"/"false"; multiselect: one of the values).
+    query = query.where(sql<boolean>`exists (select 1 from custom_field f where f.id = ${id}::uuid and f.organization_id = member.organization_id and (f.sensitive = false or ${seesSensitive(actor)})
+      and case f.type
+        when 'text' then person.custom ->> f.id::text ilike '%' || ${value} || '%'
+        when 'multiline' then person.custom ->> f.id::text ilike '%' || ${value} || '%'
+        when 'multiselect' then person.custom -> f.id::text ? ${value}
+        else person.custom ->> f.id::text = ${value} end)`);
   }
   if (q.q) {
     const term = q.q.toLowerCase();
@@ -149,6 +161,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Eintritt', '', (r) => r.join_date],
       ['Austritt', '', (r) => r.exit_date],
       ['Gruppen', '', (r) => (groups.get(r.id) ?? []).map((g) => g.name).join(', ')],
+      ...(await fieldsFor(db, actor)).map((f): [string, string, (r: (typeof rows)[number]) => unknown] => [f.label, '', (r) => customText(f.type, (r.custom as Record<string, unknown>)[f.id])]),
     ];
     const visible = columns.filter(([, field]) => !field || !hidden.has(field));
     const lines = [visible.map(([h]) => h).join(';'), ...rows.map((r) => visible.map(([, , get]) => csvCell(get(r))).join(';'))];
@@ -200,6 +213,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
         throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'postalCode', message: postalProblem }] });
       }
       await db.transaction().execute(async (tx) => {
+        if (body.custom) await writeCustom(tx, actor, row.person_id, body.custom, 'patch');
         const person = personValues(body);
         if (Object.keys(person).length) {
           const before = await tx.selectFrom('person').selectAll().where('id', '=', row.person_id).forUpdate().executeTakeFirstOrThrow();
@@ -354,6 +368,8 @@ export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof m
     .values({ organization_id: actor.organizationId, ...(personValues(body) as { last_name: string }), import_run_id: importRunId })
     .returning('id')
     .executeTakeFirstOrThrow();
+  // Imports cannot know the club's required fields; everything else must fill them.
+  await writeCustom(tx, actor, person.id, body.custom, importRunId ? 'patch' : 'create');
   const status: MemberStatus = body.joinDate ? statusForJoin(body.joinDate, today) : 'applicant';
   const taken = async (n: string) => !!(await tx.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('membership_number', '=', n).executeTakeFirst());
   const number = body.membershipNumber ?? (await nextNumber(tx, actor.organizationId, 'member', org.member_number_pattern, body.joinDate ?? today, taken));
