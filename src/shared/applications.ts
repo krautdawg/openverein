@@ -41,6 +41,8 @@ export const publicForm = z.object({
   title: z.string(),
   intro: z.string().nullable(),
   clubName: z.string(),
+  /** set on the public demo: the form shows a fixed banner (no real data, please) */
+  isDemo: z.boolean(),
   groups: z.array(z.object({ id: z.uuid(), name: z.string() })),
   feePlans: z.array(z.object({ id: z.uuid(), name: z.string(), amountCents: z.number(), interval: z.string() })),
   askMandate: z.boolean(),

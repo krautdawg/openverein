@@ -37,6 +37,13 @@ describe('demo mode', () => {
       expect((await admin.post('/api-tokens', { name: 'x', roleId: '01a00000-0000-7000-8000-000000000000' })).status).toBe(403);
       expect((await admin.post('/users', { name: 'X', email: 'x@example.org', grants: [] })).status).toBe(403);
       expect((await admin.get('/users')).status).toBe(200);
+      // Every byte upload and every import is locked, whatever its route (Codex review of #11).
+      const raw = (url: string) => ctx.app.inject({ method: 'POST', url: `/api/v1${url}`, headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-name': 'a.pdf' }, payload: 'x' });
+      expect((await raw('/files')).statusCode).toBe(403);
+      expect((await raw('/receipts/files')).statusCode).toBe(403);
+      expect((await raw('/portal/expenses/files')).statusCode).toBe(403);
+      const cal = (await admin.post('/calendars', { name: 'K' })).body.id;
+      expect((await admin.post(`/calendars/${cal}/import`, { content: 'BEGIN:VCALENDAR' })).status).toBe(403);
       // Percent-encoded paths route to the same handler and must hit the same lock.
       expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/%75sers', headers: { cookie }, payload: { name: 'X', email: 'x@example.org', grants: [] } })).statusCode).toBe(403);
       // Nobody but the demo seed may run setup on a demo instance.
@@ -50,5 +57,17 @@ describe('demo mode', () => {
   it('keeps the migration ledger when wiping', async () => {
     await wipe(ctx.db);
     await expect(migrate(testDbUrl, () => {})).resolves.not.toThrow();
+  });
+
+  it('validates the reset interval and keeps the last reset across restarts', async () => {
+    const { demoResetHours } = await import('../src/server/config.ts');
+    expect(demoResetHours(undefined)).toBe(24);
+    expect(demoResetHours('0')).toBe(0);
+    expect(() => demoResetHours('24h')).toThrow(/ganze Zahl/);
+    expect(() => demoResetHours('1000')).toThrow();
+    const { markDemoReset, resetDemoIfDue } = await import('../src/server/demo/reset.ts');
+    await markDemoReset(ctx.db);
+    expect(await resetDemoIfDue(ctx.db, 24)).toBe(false);
+    expect(await resetDemoIfDue(ctx.db, 0)).toBe(false);
   });
 });

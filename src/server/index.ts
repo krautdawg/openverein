@@ -39,8 +39,15 @@ if (config.demoMode) {
     process.exit(1);
   }
   const { seedDemo } = await import('./demo/seed.ts');
-  if (!org) await seedDemo(db);
-  if (config.demoResetHours > 0) setInterval(() => void seedDemo(db, { reset: true }).then(() => app.log.info('demo reset'), (err) => app.log.error(err)), config.demoResetHours * 3_600_000).unref();
+  const { markDemoReset, resetDemoIfDue } = await import('./demo/reset.ts');
+  if (!org) {
+    await seedDemo(db);
+    await markDemoReset(db);
+  }
+  // The last reset is stored, so restarts cannot postpone the next one; checked at start and every ten minutes.
+  const check = () => void resetDemoIfDue(db, config.demoResetHours).then((done) => done && app.log.info('demo reset'), (err) => app.log.error(err));
+  check();
+  setInterval(check, 10 * 60_000).unref();
 }
 
 await app.listen({ port: config.port, host: '0.0.0.0' });

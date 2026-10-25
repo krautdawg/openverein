@@ -192,7 +192,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/portal/me', { schema: { tags, summary: 'Meine Mitgliedschaften (alle unter meiner E-Mail-Adresse)', security: [] } }, async (req, reply) => {
     const u = await portalUser(req, reply);
-    const org = await db.selectFrom('organization').select(['name', 'email', 'notice_weeks', 'exit_at']).where('id', '=', u.organizationId).executeTakeFirstOrThrow();
+    const org = await db.selectFrom('organization').select(['name', 'email', 'notice_weeks', 'exit_at', 'is_demo']).where('id', '=', u.organizationId).executeTakeFirstOrThrow();
     const today = await orgToday(db, u.organizationId);
     const ids = u.members.map((m) => m.memberId);
     const groups = ids.length
@@ -205,7 +205,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     return {
       email: u.email,
       // The contact shows if it is on for any of the memberships under this address.
-      club: { name: org.name, email: u.members.some((m) => m.features.contact) ? org.email : null },
+      club: { name: org.name, email: u.members.some((m) => m.features.contact) ? org.email : null, isDemo: org.is_demo },
       members: u.members.map((m) => ({
         memberId: m.memberId,
         /** managed as the household's payer, not the member's own address */

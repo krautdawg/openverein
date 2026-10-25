@@ -101,9 +101,9 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/public/forms/:slug', { schema: { tags, summary: 'Aufnahmeformular (öffentlich)', security: [], params: z.object({ slug: z.string().max(60) }), response: { 200: publicForm } } }, async (req) => {
     const f = await loadForm(req.params.slug);
-    const org = await db.selectFrom('organization').select(['name', 'creditor_id']).where('id', '=', f.organization_id).executeTakeFirstOrThrow();
+    const org = await db.selectFrom('organization').select(['name', 'creditor_id', 'is_demo']).where('id', '=', f.organization_id).executeTakeFirstOrThrow();
     const { groups, feePlans } = await formChoices(f.organization_id, f.group_ids, f.fee_plan_ids);
-    return { title: f.title, intro: f.intro, clubName: org.name, groups, feePlans, askMandate: f.ask_mandate && !!org.creditor_id, creditorId: org.creditor_id, consentText: f.consent_text, privacyUrl: f.privacy_url, token: formToken(f.slug) };
+    return { title: f.title, intro: f.intro, clubName: org.name, isDemo: org.is_demo, groups, feePlans, askMandate: f.ask_mandate && !!org.creditor_id, creditorId: org.creditor_id, consentText: f.consent_text, privacyUrl: f.privacy_url, token: formToken(f.slug) };
   });
 
   app.post(

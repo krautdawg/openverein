@@ -233,7 +233,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
         email: hidden.has('email') ? null : r.email,
         address: [r.street, [r.postal_code, r.city].filter(Boolean).join(' ')].filter(Boolean).join(', '),
       })),
-      { club: org, title: 'Mitgliederliste', date: today.split('-').reverse().join('.'), showPhone: !hidden.has('phone'), showEmail: !hidden.has('email') },
+      { club: org, title: 'Mitgliederliste', date: today.split('-').reverse().join('.'), showPhone: !hidden.has('phone'), showEmail: !hidden.has('email'), demo: (await db.selectFrom('organization').select('is_demo').where('id', '=', actor.organizationId).executeTakeFirstOrThrow()).is_demo },
     );
     await audit(db, actor.organizationId, actor, { action: 'member.export', entityType: 'member', diff: { format: 'pdf', filter: req.query, rows: rows.length } });
     return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="mitglieder-${today}.pdf"`).header('cache-control', 'private, no-store').send(pdf);

@@ -11,7 +11,7 @@ export const config = {
   trustProxy: (env.TRUST_PROXY ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   demoMode: env.DEMO_MODE === 'true',
   // Hours between demo resets; 0 = never. Capped at 24 days (setInterval's limit).
-  demoResetHours: Math.min(Math.max(Number(env.DEMO_RESET_HOURS ?? 24) || 0, 0), 24 * 24),
+  demoResetHours: demoResetHours(env.DEMO_RESET_HOURS),
   // Public address of this installation, used in links inside e-mails.
   publicUrl: (env.PUBLIC_URL ?? `http://localhost:${env.PORT ?? 3300}`).replace(/\/$/, ''),
   // Uploaded files, stored by SHA-256 (content-addressed). Mount a volume here in production.
@@ -24,3 +24,10 @@ export const config = {
   webhooksAllowPrivate: env.WEBHOOKS_ALLOW_PRIVATE === 'true',
   webDist: env.WEB_DIST ?? new URL('../../dist/web', import.meta.url).pathname,
 };
+
+/** Whole hours between demo resets, 0 to switch them off; anything else stops the start (a typo must not mean "never"). */
+export function demoResetHours(v: string | undefined) {
+  if (v === undefined || v === '') return 24;
+  if (!/^\d+$/.test(v.trim()) || Number(v) > 24 * 24) throw new Error(`DEMO_RESET_HOURS muss eine ganze Zahl von 0 bis 576 sein, nicht „${v}“.`);
+  return Number(v);
+}
