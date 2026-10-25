@@ -910,6 +910,13 @@ export interface Database {
   assembly_item: AssemblyItemTable;
   assembly_attendance: AssemblyAttendanceTable;
   article: ArticleTable;
+  instance_setting: InstanceSettingTable;
+}
+
+export interface InstanceSettingTable {
+  key: string;
+  value: string;
+  updated_at: Generated<Date>;
 }
 
 export interface ArticleTable {

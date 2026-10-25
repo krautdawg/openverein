@@ -1,6 +1,7 @@
 import { buildApp } from './app.ts';
 import { config } from './config.ts';
 import { assertDataKey } from './crypto.ts';
+import { verifyDataKey } from './keyCheck.ts';
 import { createDb } from './db.ts';
 import { sweepFiles } from './files/store.ts';
 import { pruneSignIns } from './routes/portal.ts';
@@ -16,6 +17,12 @@ import { pruneIdempotencyKeys } from './http/idempotency.ts';
 assertDataKey();
 await migrate(config.databaseUrl);
 const db = createDb(config.databaseUrl);
+try {
+  await verifyDataKey(db);
+} catch (err) {
+  console.error((err as Error).message);
+  process.exit(1);
+}
 const app = await buildApp(db, { logger: true });
 // A restored older backup must not bring erased persons back: replay the erasure log before accepting requests.
 const replayed = await replayErasures(db, app.log);
