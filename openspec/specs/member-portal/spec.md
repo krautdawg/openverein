@@ -148,3 +148,10 @@ The system SHALL show a member, in the portal, the values of custom fields the c
 - **WHEN** a member with a shirt size (visible to members) and an internal note opens the portal
 - **THEN** the shirt size is shown and the internal note is not
 
+### Requirement: Expense claims from the portal
+The system SHALL let members submit expense claims with a receipt file in the portal, and let the treasurer accept a claim into an open receipt (with that file) or reject it with a reason the member sees.
+
+#### Scenario: Accepted claim
+- **WHEN** the treasurer accepts a claim of 12,80 € and chooses an expense account
+- **THEN** an open receipt of 12,80 € with the member's receipt file exists, and the member sees the claim as accepted
+
