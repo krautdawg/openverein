@@ -205,3 +205,10 @@ The system SHALL list for a chosen year the current members' membership annivers
 - **WHEN** a member joined on 1 May 2002
 - **THEN** the 2027 list shows them on 01.05. with 25 years of membership
 
+### Requirement: Printable lists and vCards
+The system SHALL export the current filtered member list as a printable PDF and as vCard 4.0, leaving out fields the user's roles restrict.
+
+#### Scenario: Tax adviser exports vCards
+- **WHEN** a user whose role hides e-mail, phone and birth date exports vCards
+- **THEN** the cards contain names and addresses but no e-mail, phone or birthday
+
