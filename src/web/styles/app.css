@@ -683,3 +683,16 @@ input[type='range'] { accent-color: var(--accent); }
 td[data-over] { color: var(--danger); font-weight: 600; }
 .checks { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); }
 .checks legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--s-2); width: 100%; }
+
+/* Budget: plan vs. actual as a court line under the row. */
+.budget-wrap .table + .table { border-top: 1px solid var(--line); }
+.budget tfoot th, .budget tfoot td { font-weight: 600; border-top: 1px solid var(--line); }
+.budget-line { display: block; width: 120px; height: 2px; background: var(--line); }
+.budget-line span { display: block; height: 100%; background: var(--ink-3); }
+.budget-line[data-over] span { background: var(--danger); }
+.budget { table-layout: fixed; }
+.budget .c-plan { width: 140px; }
+.budget .c-ist { width: 120px; }
+.budget .c-diff { width: 140px; }
+.budget .c-bar { width: 160px; }
+@media (max-width: 600px) { .budget .c-plan { width: 120px; } .budget .c-ist { width: 96px; } .budget col.hide-sm { width: 0; } }
