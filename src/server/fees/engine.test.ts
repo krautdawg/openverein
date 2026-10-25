@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { addDays } from '../../shared/dates.ts';
-import { assess, periodContaining, uncovered, type Assignment, type PlanVersion } from './engine.ts';
+import { ageOn, assess, periodContaining, uncovered, type Assignment, type PlanVersion } from './engine.ts';
 
 const plan = (over: Partial<PlanVersion> = {}): PlanVersion => ({ validFrom: '2000-01-01', amountCents: 12000, intervalMonths: 12, anchor: 'calendar', proration: 'month', admissionFeeCents: 0, ...over });
 const assignment = (over: Partial<Assignment> = {}): Assignment => ({
@@ -22,6 +22,26 @@ describe('periods', () => {
 });
 
 describe('assess', () => {
+  it('picks the age bracket by the age at the start of each period; an individual amount wins', () => {
+    const brackets = { ageBrackets: [{ upToAge: 17, amountCents: 6000 }] };
+    const yearly = (birthDate: string) => run([assignment({ validFrom: '2026-01-01' })], [plan(brackets)], { birthDate }).lines.map((l) => l.amountCents);
+    expect(yearly('2010-06-01')).toEqual([6000]);
+    expect(yearly('2008-06-01')).toEqual([6000]);
+    expect(yearly('2008-01-01')).toEqual([12000]);
+    expect(run([assignment({ validFrom: '2026-01-01' })], [plan(brackets)]).lines[0]!.amountCents).toBe(12000);
+    expect(run([assignment({ validFrom: '2026-01-01', overrideCents: 1000 })], [plan(brackets)], { birthDate: '2010-06-01' }).lines[0]!.amountCents).toBe(1000);
+    // Monthly: the 18th birthday on 15 March moves the April period to the adult amount.
+    const monthly = run([assignment({ validFrom: '2026-01-01' })], [plan({ amountCents: 1000, intervalMonths: 1, ageBrackets: [{ upToAge: 17, amountCents: 500 }] })], { birthDate: '2008-03-15', until: '2026-04-30' });
+    expect(monthly.lines.map((l) => l.amountCents)).toEqual([500, 500, 500, 1000]);
+    expect(monthly.lines[0]!.explanation).toContain('Altersstufe bis 17 Jahre');
+  });
+
+  it('counts completed years, 29 February from 1 March', () => {
+    expect(ageOn('2000-02-29', '2026-02-28')).toBe(25);
+    expect(ageOn('2000-02-29', '2026-03-01')).toBe(26);
+    expect(ageOn('2008-03-15', '2026-03-15')).toBe(18);
+  });
+
   it('splits a prorated period where a new price starts (mid-month: from the next month)', () => {
     const { lines } = run([assignment({ validFrom: '2026-01-01' })], [plan({ validFrom: '2000-01-01', amountCents: 12000 }), plan({ validFrom: '2026-07-15', amountCents: 24000 })]);
     expect(lines.map((l) => [l.periodStart, l.periodEnd, l.amountCents])).toEqual([['2026-01-01', '2026-07-31', 7000], ['2026-08-01', '2026-12-31', 10000]]);

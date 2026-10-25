@@ -13,6 +13,8 @@ export interface PlanVersion {
   anchor: 'calendar' | 'entry';
   proration: 'none' | 'month';
   admissionFeeCents: number;
+  /** ascending by age; the first bracket the member's age at period start fits sets the amount */
+  ageBrackets?: { upToAge: number; amountCents: number }[];
 }
 
 export interface Assignment {
@@ -70,9 +72,17 @@ export interface AssessInput {
   /** today in the club's time zone: periods that already ended are catch-up lines */
   today: string;
   membershipNumber: string;
+  /** for age brackets; without it the version's amount applies */
+  birthDate?: string | null;
 }
 
 export const slotOf = (a: Pick<Assignment, 'isMain' | 'planId'>) => (a.isMain ? 'main' : `plan:${a.planId}`);
+
+/** Completed years of life on `date` (birthday on 29 February counts from 1 March in other years). */
+export function ageOn(birthDate: string, date: string) {
+  const years = Number(date.slice(0, 4)) - Number(birthDate.slice(0, 4));
+  return date.slice(5) >= birthDate.slice(5) ? years : years - 1;
+}
 
 function versionAt(versions: PlanVersion[], date: string) {
   let found: PlanVersion | undefined;
@@ -186,7 +196,12 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
     for (let guard = 0; guard < 1000 && cursor <= input.until && (!last || cursor <= last); guard++) {
       const v = versionAt(versions, cursor);
       if (!v) break;
-      const full = a.overrideCents ?? v.amountCents;
+      // An individual amount wins; otherwise age brackets decide by the age at the start of the period.
+      const ageFull = (periodStart: string) => {
+        const bracket = input.birthDate && v.ageBrackets?.length ? v.ageBrackets.find((b) => ageOn(input.birthDate!, periodStart) <= b.upToAge) : undefined;
+        return { amount: a.overrideCents ?? bracket?.amountCents ?? v.amountCents, bracket: a.overrideCents === null ? bracket : undefined };
+      };
+      const full = ageFull(cursor).amount;
 
       if (v.intervalMonths === null) {
         // One-off: billed exactly once, on the assignment's start.
@@ -206,22 +221,23 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
       if (parts.length === 0) {
         skipped.push({ slot, periodStart: cursor, periodEnd: segEnd, reason: 'Zeitraum bereits berechnet.' });
       }
+      const { amount: periodFull, bracket } = ageFull(ps);
       for (const [s, e] of parts) {
         const whole = s === ps && e === pe;
         const trimmedByBilling = s !== cursor || e !== segEnd;
-        let amount = full;
-        let why = `${euro(full)} je ${n === 1 ? 'Monat' : `${n} Monate`}`;
+        let amount = periodFull;
+        let why = `${euro(periodFull)} je ${n === 1 ? 'Monat' : `${n} Monate`}${bracket ? ` (Altersstufe bis ${bracket.upToAge} Jahre)` : ''}`;
         if (!whole && (v.proration === 'month' || trimmedByBilling)) {
           // A month already (partly) billed in this slot, e.g. at a mid-month plan switch, is not charged again.
           const billedMonths = new Set(billed.flatMap((b) => monthsOf(b.start, b.end)));
           const months = Math.min(monthsOf(s, e).filter((m) => !billedMonths.has(m)).length, n);
-          amount = Math.round((full * months) / n);
+          amount = Math.round((periodFull * months) / n);
           why += `, anteilig ${months} von ${n} Monaten`;
         } else if (!whole) {
           why += ', voller Beitrag (keine anteilige Berechnung)';
         }
         if (a.overrideCents !== null) why += ', individueller Betrag';
-        lines.push(line(a, slot, s, e, amount, full, why + '.'));
+        lines.push(line(a, slot, s, e, amount, periodFull, why + '.'));
       }
       cursor = change ?? addDays(pe, 1);
     }

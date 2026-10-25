@@ -327,4 +327,19 @@ describe('review fixes', () => {
     await admin.put('/fee-schedule', { day: null, leadDays: 30 });
     expect((await admin.get('/fee-schedule')).body).toMatchObject({ day: null, setBy: null });
   });
+
+  it('bills children the age-bracket amount and makes the preview stale when the birth date changes', async () => {
+    const plan = await admin.post('/fee-plans', { name: 'Alle', version: { validFrom: '2020-01-01', amountCents: 12000, intervalMonths: 12, ageBrackets: [{ upToAge: 17, amountCents: 6000 }] } });
+    expect(plan.status, JSON.stringify(plan.body)).toBe(201);
+    expect(plan.body.current.ageBrackets).toEqual([{ upToAge: 17, amountCents: 6000 }]);
+    expect((await admin.post('/fee-plans', { name: 'Falsch', version: { validFrom: '2020-01-01', amountCents: 1, intervalMonths: 12, ageBrackets: [{ upToAge: 17, amountCents: 1 }, { upToAge: 10, amountCents: 1 }] } })).status).toBe(400);
+    const kid = (await admin.post('/members', { firstName: 'Kim', lastName: 'Kind', birthDate: '2015-05-05', joinDate: '2026-01-01' })).body.id;
+    await admin.patch(`/members/${kid}/payment-method`, { paymentMethod: 'transfer' });
+    await admin.post(`/members/${kid}/fee-assignments`, { feePlanId: plan.body.id, validFrom: '2026-01-01' });
+    const run = await admin.post('/fee-runs', { until: '2026-12-31' });
+    expect(run.body.members[0].totalCents).toBe(6000);
+    await admin.patch(`/members/${kid}`, { birthDate: '1990-05-05' });
+    expect((await admin.post(`/fee-runs/${run.body.id}/post`, {})).status).toBe(409);
+    expect((await admin.post('/fee-runs', { until: '2026-12-31' })).body.members[0].totalCents).toBe(12000);
+  });
 });

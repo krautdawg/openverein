@@ -16,6 +16,11 @@ export const versionInput = z.object({
   anchor: z.enum(['calendar', 'entry']).default('calendar'),
   proration: z.enum(['none', 'month']).default('month'),
   admissionFeeCents: cents.default(0),
+  /** Age-based amounts: up to (and including) an age, ascending; older members pay amountCents. */
+  ageBrackets: z.array(z.object({ upToAge: z.number().int().min(0).max(120), amountCents: cents }))
+    .max(10)
+    .refine((bs) => bs.every((b, i) => i === 0 || b.upToAge > bs[i - 1]!.upToAge), 'Altersstufen aufsteigend und ohne doppelte Alter angeben.')
+    .default([]),
 });
 
 export const planCreate = z.object({

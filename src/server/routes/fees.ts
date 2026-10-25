@@ -103,7 +103,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
     return plans.map((p) => {
       const vs = versions
         .filter((v) => v.fee_plan_id === p.id)
-        .map((v) => ({ id: v.id, validFrom: v.valid_from, amountCents: v.amount_cents, intervalMonths: v.interval_months, anchor: v.anchor, proration: v.proration, admissionFeeCents: v.admission_fee_cents }));
+        .map((v) => ({ id: v.id, validFrom: v.valid_from, amountCents: v.amount_cents, intervalMonths: v.interval_months, anchor: v.anchor, proration: v.proration, admissionFeeCents: v.admission_fee_cents, ageBrackets: v.age_brackets as { upToAge: number; amountCents: number }[] }));
       const current = [...vs].reverse().find((v) => v.validFrom <= today) ?? vs[0] ?? null;
       return { id: p.id, name: p.name, lineText: p.line_text, status: p.status, versions: vs, current, assignedMembers: counts.find((c) => c.fee_plan_id === p.id)?.n ?? 0 };
     });
@@ -136,7 +136,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
   async function insertVersion(tx: Db, actor: Actor, planId: string, v: z.infer<typeof versionInput>) {
     await tx
       .insertInto('fee_plan_version')
-      .values({ organization_id: actor.organizationId, fee_plan_id: planId, valid_from: v.validFrom, amount_cents: v.amountCents, interval_months: v.intervalMonths, anchor: v.anchor, proration: v.proration, admission_fee_cents: v.admissionFeeCents })
+      .values({ organization_id: actor.organizationId, fee_plan_id: planId, valid_from: v.validFrom, amount_cents: v.amountCents, interval_months: v.intervalMonths, anchor: v.anchor, proration: v.proration, admission_fee_cents: v.admissionFeeCents, age_brackets: JSON.stringify(v.ageBrackets) })
       .execute();
   }
 
@@ -302,7 +302,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
       const { members, versions } = await loadInputs(db, actor.organizationId, { memberIds: [req.params.id], today });
       const m = members[0];
       if (!m) return { lines: [], skipped: [], totalCents: 0 };
-      const r = assess({ assignments: m.assignments, versions, billed: m.billed, until: req.query.until, exitDate: m.exitDate, today, membershipNumber: m.membershipNumber });
+      const r = assess({ assignments: m.assignments, versions, billed: m.billed, until: req.query.until, exitDate: m.exitDate, today, membershipNumber: m.membershipNumber, birthDate: m.birthDate });
       return { lines: r.lines, skipped: r.skipped, totalCents: r.lines.reduce((s, l) => s + l.amountCents, 0) };
     },
   );
