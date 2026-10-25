@@ -1,0 +1,3 @@
+- [x] shared euer/balances functions
+- [x] PDF
+- [x] link and test

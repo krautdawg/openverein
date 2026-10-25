@@ -32,3 +32,14 @@ describe('budget', () => {
     expect((await auditor.put('/ledger/budget', { year: 2026, lines: [{ accountId: acc('4600'), plannedCents: 1 }] })).status).toBe(403);
   });
 });
+
+describe('treasurer report', () => {
+  it('renders the year as PDF for readers of the books', async () => {
+    await admin.post('/ledger/bookings', { kind: 'income', date: '2026-02-01', text: 'Zuschuss', moneyAccountId: acc('1100'), lines: [{ grossCents: 50000, accountId: acc('4600') }] });
+    const pdf = await ctx.app.inject({ url: '/api/v1/ledger/reports/treasurer.pdf?year=2026', headers: { cookie } });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    const lead = await userWithRole(ctx.app, cookie, 'Abteilungsleitung', null);
+    expect((await ctx.app.inject({ url: '/api/v1/ledger/reports/treasurer.pdf?year=2026', headers: { cookie: lead } })).statusCode).toBe(403);
+  });
+});
