@@ -8,11 +8,11 @@ Licence: [AGPL-3.0](LICENSE). Status: early development, built slice by slice (s
 
 | Area | Highlights |
 |---|---|
-| Members | Dated group memberships, households with a payer and family discount, custom fields, duplicates, saved views, bulk actions, age-based group change, census for the sports federation, honours, work hours, PDF and vCard lists |
-| Money | Effective-dated fees with a mandatory run preview, invoices and dunning, SEPA direct debit and credit transfers, CAMT import with matching, XRechnung out and in (ZUGFeRD/UBL/CII), article catalogue, letters as one duplex PDF |
-| Books | Cash-basis EÜR on an append-only balanced journal (GoBD lock date, reversals), receipts and cash book, DATEV export, budget vs. actual, volunteer allowances, donations and BMF receipts (money and in kind) |
-| Club life | Events with RSVP, waitlist and attendance, public calendar widget, mail with templates and delivery log, documents, general assemblies and board meetings with minutes |
-| Portal | Member self-service: data changes, invoices with GiroCode, documents, expense claims, household proxy for the payer |
+| Members | Dated group memberships, households with a payer and family discount, custom fields, duplicates, saved views, bulk actions, age-based group change, census for the sports federation, honours register and greeting mails, contact log, data-quality warnings, work hours, membership certificates, PDF and vCard lists |
+| Money | Effective-dated fees with age brackets, a mandatory run preview and an optional monthly automatic preview, offers convertible into invoices, invoices with default texts and net or gross prices, dunning with printed letters, SEPA direct debit (remittance template) and credit transfers, CAMT import with matching, XRechnung out and in (ZUGFeRD/UBL/CII), article catalogue, letters as one duplex PDF |
+| Books | Cash-basis EÜR on an append-only balanced journal (GoBD lock date, reversals), receipts and cash book, bank movements booked in bulk, own tax rates, DATEV export, treasurer's report PDF, budget vs. actual, volunteer allowances, donations and BMF receipts (money and in kind) sent by mail or letter |
+| Club life | Events with RSVP, waitlist and attendance lists for grants, ICS feed and import, public calendar widget, mail with templates and delivery log, documents with folder access, inventory and lending, polls, tasks, general assemblies and board meetings with minutes |
+| Portal | Member self-service: data changes, invoices with GiroCode, documents, polls, expense claims, household proxy for the payer, functions switchable per club and group |
 | Platform | Roles with division scope and field restrictions, TOTP for finance, API tokens and OpenAPI, signed webhooks, background jobs, full export, GDPR tooling, `ovctl` for install, backup, restore and update |
 
 ## Run it locally
