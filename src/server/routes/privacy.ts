@@ -12,7 +12,7 @@ import { anonymise, anonymiseBlockers, recordErasureFile } from '../gdpr/service
 import { notFound, Problem } from '../http/problem.ts';
 import { emailHash } from '../mail/worker.ts';
 import { orgToday } from '../members/query.ts';
-import { requireClubWide, requireStepUp } from '../policy.ts';
+import { isClubAdmin, requireClubWide, requireStepUp } from '../policy.ts';
 
 const tags = ['privacy'];
 const idParam = z.object({ id: z.uuid() });
@@ -131,6 +131,8 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/persons/:id/export', { schema: { tags, summary: 'Auskunft nach Art. 15 DSGVO: ZIP mit daten.json und auskunft.pdf; der Abruf wird protokolliert', params: idParam } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'read');
+    // Art. 15 must be complete (finances, notes, private contact entries), so only a club-wide admin may run it.
+    if (!isClubAdmin(actor)) throw new Problem(403, 'forbidden', 'Die Auskunft nach Art. 15 erstellen nur Admins.', 'Sie enthält alle Daten der Person, auch solche, die Deine Rolle nicht sieht.', { permission: 'admin' });
     const p = await personOf(actor.organizationId, req.params.id);
     const members = await db.selectFrom('member').selectAll().where('person_id', '=', p.id).execute();
     const memberIds = members.map((m) => m.id).concat(['00000000-0000-0000-0000-000000000000']);

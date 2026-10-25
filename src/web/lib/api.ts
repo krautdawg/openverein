@@ -50,7 +50,8 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     throw new ApiError({ type: 'network', title: 'Keine Verbindung zum Server. Bitte prüfe Deine Internetverbindung.', status: 0 });
   }
   // The server answered: the outcome is known (a stored success or a failure that freed the key).
-  if (sig && res.status !== 409) openKeys.delete(sig);
+  // A 5xx leaves the outcome open (the write may have committed): keep the key, so a retry cannot book twice.
+  if (sig && res.status !== 409 && res.status < 500) openKeys.delete(sig);
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({ title: 'Keine Antwort vom Server.', status: res.status, type: 'network' }));
   if (!res.ok) {

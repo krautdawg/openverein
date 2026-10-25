@@ -128,14 +128,18 @@ export const exportRoutes: FastifyPluginAsyncZod = async (app) => {
       const month = (await db.selectFrom('ledger_setting').select('fiscal_year_start_month').where('organization_id', '=', actor.organizationId).executeTakeFirst())?.fiscal_year_start_month ?? 1;
       const { start: from, end: to } = fiscalYear(`${req.query.year}-${String(month).padStart(2, '0')}-01`, month);
       const org = await db.selectFrom('organization').select(['name', 'city']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
-      const entries = await db.selectFrom('journal_entry').selectAll().where('organization_id', '=', actor.organizationId).where('entry_date', '>=', from).where('entry_date', '<=', to).orderBy('number').execute();
-      const reversed = new Map((await db.selectFrom('journal_entry as e').innerJoin('journal_entry as o', 'o.id', 'e.reverses_id').select(['o.id', 'o.number']).where('e.organization_id', '=', actor.organizationId).where('e.entry_date', '>=', from).where('e.entry_date', '<=', to).execute()).map((e) => [e.id, e.number]));
-      const lines = await db.selectFrom('journal_line').innerJoin('journal_entry', 'journal_entry.id', 'journal_line.entry_id').innerJoin('ledger_account', 'ledger_account.id', 'journal_line.account_id').leftJoin('cost_center', 'cost_center.id', 'journal_line.cost_center_id').leftJoin('tax_rate', 'tax_rate.id', 'journal_line.tax_rate_id')
-        .select(['journal_line.entry_id', 'ledger_account.number', 'journal_line.debit_cents', 'journal_line.credit_cents', 'journal_line.sphere', 'cost_center.code as cc', 'tax_rate.label as rate', 'journal_line.text'])
-        .where('journal_entry.organization_id', '=', actor.organizationId).where('journal_entry.entry_date', '>=', from).where('journal_entry.entry_date', '<=', to)
-        .orderBy('journal_entry.number').orderBy('journal_line.id').execute();
-      const accounts = await db.selectFrom('ledger_account').selectAll().where('organization_id', '=', actor.organizationId).orderBy('number').execute();
-      const invoices = await db.selectFrom('invoice').innerJoin('person', 'person.id', 'invoice.recipient_person_id').select(['invoice.number', 'invoice.kind', 'invoice.issue_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.status', 'person.id as person', 'person.first_name', 'person.last_name', 'person.company_name']).where('invoice.organization_id', '=', actor.organizationId).where('invoice.issue_date', '>=', from).where('invoice.issue_date', '<=', to).orderBy('invoice.number').execute();
+      // One snapshot: an entry posted meanwhile must not leave lines without their entry number.
+      const { entries, reversed, lines, accounts, invoices } = await db.transaction().setIsolationLevel('repeatable read').setAccessMode('read only').execute(async (tx) => {
+        const entries = await tx.selectFrom('journal_entry').selectAll().where('organization_id', '=', actor.organizationId).where('entry_date', '>=', from).where('entry_date', '<=', to).orderBy('number').execute();
+        const reversed = new Map((await tx.selectFrom('journal_entry as e').innerJoin('journal_entry as o', 'o.id', 'e.reverses_id').select(['o.id', 'o.number']).where('e.organization_id', '=', actor.organizationId).where('e.entry_date', '>=', from).where('e.entry_date', '<=', to).execute()).map((e) => [e.id, e.number]));
+        const lines = await tx.selectFrom('journal_line').innerJoin('journal_entry', 'journal_entry.id', 'journal_line.entry_id').innerJoin('ledger_account', 'ledger_account.id', 'journal_line.account_id').leftJoin('cost_center', 'cost_center.id', 'journal_line.cost_center_id').leftJoin('tax_rate', 'tax_rate.id', 'journal_line.tax_rate_id')
+          .select(['journal_line.entry_id', 'ledger_account.number', 'journal_line.debit_cents', 'journal_line.credit_cents', 'journal_line.sphere', 'cost_center.code as cc', 'tax_rate.label as rate', 'journal_line.text'])
+          .where('journal_entry.organization_id', '=', actor.organizationId).where('journal_entry.entry_date', '>=', from).where('journal_entry.entry_date', '<=', to)
+          .orderBy('journal_entry.number').orderBy('journal_line.id').execute();
+        const accounts = await tx.selectFrom('ledger_account').selectAll().where('organization_id', '=', actor.organizationId).orderBy('number').execute();
+        const invoices = await tx.selectFrom('invoice').innerJoin('person', 'person.id', 'invoice.recipient_person_id').select(['invoice.number', 'invoice.kind', 'invoice.issue_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.status', 'person.id as person', 'person.first_name', 'person.last_name', 'person.company_name']).where('invoice.organization_id', '=', actor.organizationId).where('invoice.issue_date', '>=', from).where('invoice.issue_date', '<=', to).orderBy('invoice.number').execute();
+        return { entries, reversed, lines, accounts, invoices };
+      });
       const numberOf = new Map(entries.map((e) => [e.id, e.number]));
       const debtors = [...new Map(invoices.map((i) => [i.person, [i.person, i.company_name ?? [i.first_name, i.last_name].filter(Boolean).join(' ')]])).values()];
 

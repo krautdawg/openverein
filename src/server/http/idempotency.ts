@@ -24,6 +24,7 @@ export const MONEY_ROUTES = new Set(
     '/receipts',
     '/receipts/self-issued',
     '/receipts/:id/pay',
+    '/allowances/payments',
   ].map((r) => `/api/v1${r}`),
 );
 const TTL_HOURS = 24;
@@ -53,6 +54,8 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
       const prior = await db.selectFrom('idempotency_key').selectAll().where('organization_id', '=', req.actor.organizationId).where('actor', '=', actor).where('key', '=', key).executeTakeFirstOrThrow();
       if (prior.route !== route || prior.request_hash !== hash) throw new Problem(422, 'idempotency-key-reused', 'Dieser Idempotency-Key gehört zu einer anderen Anfrage.');
       if (prior.status_code === null) throw new Problem(409, 'idempotency-in-progress', 'Diese Anfrage wird gerade bearbeitet oder ihr Ergebnis ist unklar.', 'Prüfe, ob die Buchung angekommen ist, bevor Du es noch einmal versuchst; eine neue Anfrage braucht dann einen neuen Schlüssel.');
+      // The stored answer was dropped by an anonymisation: the request ran, but its response is gone.
+      if (prior.response === null) throw new Problem(409, 'idempotency-already-done', 'Diese Anfrage wurde schon ausgeführt.', 'Lade die Seite neu, um das Ergebnis zu sehen.');
       reply.header('idempotent-replayed', 'true');
       return reply.status(prior.status_code).type(prior.content_type ?? 'application/json').send(prior.response);
     }
