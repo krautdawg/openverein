@@ -15,7 +15,7 @@ test('donations: exemption data, record a donation from a non-member, issue a re
   await page.getByRole('link', { name: 'Spenden', exact: true }).first().click();
   await page.getByRole('button', { name: 'Spende erfassen' }).click();
   const sheet = page.getByRole('dialog', { name: 'Spende erfassen' });
-  await sheet.getByRole('button', { name: /Kein Mitglied/ }).click();
+  await sheet.getByRole('button', { name: /Neu: Name/ }).click();
   await sheet.getByLabel('Vorname').fill('Bernd');
   await sheet.getByLabel('Nachname').fill('Krause');
   await sheet.getByLabel('Straße und Hausnummer').fill('Bäckerweg 3');
@@ -26,6 +26,6 @@ test('donations: exemption data, record a donation from a non-member, issue a re
   await sheet.getByRole('button', { name: 'Erfassen' }).click();
   const row = page.getByRole('row', { name: /Bernd Krause/ });
   await expect(row).toContainText('250,00');
-  await row.getByRole('button', { name: 'Bestätigen' }).click();
+  await row.getByRole('button', { name: /bestätigen$/ }).click();
   await expect(row.getByRole('link', { name: /^ZB-\d{4}-0001$/ })).toBeVisible();
 });

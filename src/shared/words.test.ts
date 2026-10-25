@@ -11,4 +11,8 @@ it('writes German numbers in words', () => {
   expect(numberInWords(1_000_001)).toBe('einemillioneins');
   expect(euroInWords(1250)).toBe('zwölf Euro und fünfzig Cent');
   expect(euroInWords(30000)).toBe('dreihundert Euro');
+  expect(numberInWords(101_000)).toBe('einhunderteintausend');
+  expect(numberInWords(301_001)).toBe('dreihunderteintausendeins');
+  expect(euroInWords(101)).toBe('ein Euro und ein Cent');
+  expect(euroInWords(10_100)).toBe('einhundertein Euro');
 });

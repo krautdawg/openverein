@@ -22,6 +22,9 @@ create table donation (
   waiver boolean not null default false,
   note text,
   journal_entry_id uuid references journal_entry(id),
+  -- Wrong donations are voided, never deleted: they may have been on a (cancelled) receipt.
+  voided_at timestamptz,
+  void_reason text,
   created_by uuid references app_user(id),
   created_at timestamptz not null default now()
 );
@@ -60,12 +63,24 @@ create unique index donation_receipt_item_live on donation_receipt_item (donatio
 create function donation_receipt_frozen() returns trigger language plpgsql as $$
 begin
   if tg_op = 'DELETE' or old.status = 'cancelled'
+     or (new.status = 'issued' and (new.cancel_reason is not null or new.cancelled_at is not null))
      or (to_jsonb(new) - array['status', 'cancel_reason', 'cancelled_at']) is distinct from (to_jsonb(old) - array['status', 'cancel_reason', 'cancelled_at']) then
     raise exception 'donation receipts are immutable; cancel and reissue' using errcode = 'check_violation', constraint = 'donation_receipt_frozen';
   end if;
   return new;
 end $$;
 create trigger donation_receipt_frozen before update or delete on donation_receipt for each row execute function donation_receipt_frozen();
+
+-- A receipt item goes dead only together with its receipt's cancellation.
+create function donation_receipt_item_guard() returns trigger language plpgsql as $$
+begin
+  if tg_op = 'DELETE' or (old.live and not new.live and not exists (select 1 from donation_receipt where id = old.receipt_id and status = 'cancelled'))
+     or (not old.live and new.live) or new.receipt_id <> old.receipt_id or new.donation_id <> old.donation_id then
+    raise exception 'receipt items follow their receipt' using errcode = 'check_violation', constraint = 'donation_receipt_frozen';
+  end if;
+  return new;
+end $$;
+create trigger donation_receipt_item_guard before update or delete on donation_receipt_item for each row execute function donation_receipt_item_guard();
 
 -- Donations on a valid receipt cannot change.
 create function donation_frozen() returns trigger language plpgsql as $$

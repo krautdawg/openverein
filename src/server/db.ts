@@ -877,6 +877,8 @@ export interface DonationTable {
   waiver: Generated<boolean>;
   note: string | null;
   journal_entry_id: string | null;
+  voided_at: Date | null;
+  void_reason: string | null;
   created_by: string | null;
   created_at: Generated<Date>;
 }

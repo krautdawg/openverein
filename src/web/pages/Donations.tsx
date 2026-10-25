@@ -6,7 +6,6 @@ import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
 import type { Donation, DonationSettings, Receipt } from '../../shared/donations.ts';
 import { euro } from '../../shared/fees.ts';
-import { displayName, type MemberListItem } from '../../shared/members.ts';
 import { Field } from '../components/Field.tsx';
 import { MoneyField } from '../components/MoneyField.tsx';
 import { PageHead } from '../components/PageHead.tsx';
@@ -15,6 +14,7 @@ import { api, ApiError } from '../lib/api.ts';
 import { todayLocal } from '../lib/hooks.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
+interface Donor { personId: string; name: string; city: string | null; membershipNumber: string | null }
 interface Account { id: string; number: string; name: string; kind: string; retired: boolean; hidden: boolean }
 
 const problemText = (e: ApiError) => e.problem.errors?.map((x) => x.message).join(' ') ?? [e.problem.title, e.problem.detail].filter(Boolean).join(' ');
@@ -51,6 +51,8 @@ export function Donations({ me }: { me: Me }) {
   const { year, picker } = useYear();
   const list = useQuery({ queryKey: ['donations', year], queryFn: () => api<Donation[]>(`/donations?year=${year}`) });
   const [creating, setCreating] = useState(false);
+  const [voiding, setVoiding] = useState<Donation | null>(null);
+  const [voidReason, setVoidReason] = useState('');
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
   const canWrite = me.permissions.donations === 'write';
   const open = list.data?.filter((d) => !d.receipt) ?? [];
@@ -64,6 +66,19 @@ export function Donations({ me }: { me: Me }) {
       await qc.invalidateQueries({ queryKey: ['donations'] });
       await qc.invalidateQueries({ queryKey: ['receipts'] });
     } catch (err) {
+      if (err instanceof ApiError) setMessage({ ok: false, text: problemText(err) });
+    }
+  }
+  async function voidDonation() {
+    if (!voiding) return;
+    setMessage(undefined);
+    try {
+      await api(`/donations/${voiding.id}/void`, { method: 'POST', body: { reason: voidReason } });
+      setVoiding(null);
+      setVoidReason('');
+      await qc.invalidateQueries({ queryKey: ['donations'] });
+    } catch (err) {
+      setVoiding(null);
       if (err instanceof ApiError) setMessage({ ok: false, text: problemText(err) });
     }
   }
@@ -100,7 +115,7 @@ export function Donations({ me }: { me: Me }) {
                   <td><span className="name">{d.donorName}</span>{d.waiver && <span className="meta"> · Aufwandsspende</span>}</td>
                   <td className="num">{euro(d.amountCents)}</td>
                   <td className="hide-sm num">{d.journalNumber ? `Nr. ${d.journalNumber}` : '–'}</td>
-                  <td>{d.receipt ? <a href={`/api/v1/donation-receipts/${d.receipt.id}/pdf`} target="_blank" rel="noreferrer">{d.receipt.number}</a> : canWrite ? <button className="btn btn-ghost" onClick={() => void single(d)}>Bestätigen</button> : <span className="muted">offen</span>}</td>
+                  <td>{d.receipt ? <a href={`/api/v1/donation-receipts/${d.receipt.id}/pdf`} target="_blank" rel="noreferrer">{d.receipt.number}</a> : canWrite ? <span style={{ display: 'inline-flex', gap: 'var(--s-1)' }}><button className="btn btn-ghost" aria-label={`Spende von ${d.donorName} vom ${formatDate(d.date)} bestätigen`} onClick={() => void single(d)}>Bestätigen</button><button className="btn btn-ghost" aria-label={`Spende von ${d.donorName} vom ${formatDate(d.date)} ungültig machen`} onClick={() => setVoiding(d)}>Ungültig …</button></span> : <span className="muted">offen</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -108,6 +123,15 @@ export function Donations({ me }: { me: Me }) {
         )}
       </div>
       {creating && <CreateDonation onClose={() => setCreating(false)} />}
+      {voiding && (
+        <Sheet title="Spende ungültig machen" open onClose={() => setVoiding(null)}>
+          <form className="form" noValidate onSubmit={(e) => { e.preventDefault(); void voidDonation(); }}>
+            <p>{voiding.donorName}, {formatDate(voiding.date)}, {euro(voiding.amountCents)}. Die Spende bleibt zur Nachvollziehbarkeit gespeichert, erscheint aber nicht mehr in Listen und Bestätigungen.{voiding.journalNumber ? ` Buchung Nr. ${voiding.journalNumber} wird storniert.` : ''}</p>
+            <div className="field"><label htmlFor="void-reason">Grund</label><textarea id="void-reason" className="textarea" value={voidReason} onChange={(e) => setVoidReason(e.target.value)} /></div>
+            <div className="actions-row"><button className="btn btn-danger" disabled={voidReason.trim().length < 5}>Ungültig machen</button><button type="button" className="btn btn-ghost" onClick={() => setVoiding(null)}>Abbrechen</button></div>
+          </form>
+        </Sheet>
+      )}
     </DonationsLayout>
   );
 }
@@ -115,10 +139,10 @@ export function Donations({ me }: { me: Me }) {
 function CreateDonation({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const accounts = useQuery({ queryKey: ['ledger-accounts'], queryFn: () => api<Account[]>('/ledger/accounts') });
-  const [member, setMember] = useState<MemberListItem | null>(null);
+  const [member, setMember] = useState<Donor | null>(null);
   const [newDonor, setNewDonor] = useState(false);
   const [term, setTerm] = useState('');
-  const found = useQuery({ queryKey: ['member-pick', term], queryFn: () => api<{ items: MemberListItem[] }>(`/members?q=${encodeURIComponent(term)}&limit=6`), enabled: term.length >= 2 && !member });
+  const found = useQuery({ queryKey: ['donor-pick', term], queryFn: () => api<Donor[]>(`/donations/donors?q=${encodeURIComponent(term)}`), enabled: term.trim().length >= 2 && !member });
   const [waiver, setWaiver] = useState(false);
   const [error, setError] = useState<ApiError>();
   const usable = accounts.data?.filter((a) => !a.retired && !a.hidden) ?? [];
@@ -154,11 +178,11 @@ function CreateDonation({ onClose }: { onClose: () => void }) {
       <form className="form" noValidate onSubmit={(e) => void submit(e)}>
         {error && <div className="alert alert-error" role="alert">{problemText(error)}</div>}
         {member ? (
-          <div className="field"><span className="label">Spender:in</span><div className="inline-edit">{displayName(member)} <span className="muted">Nr. {member.membershipNumber}</span><button type="button" className="btn btn-ghost" onClick={() => setMember(null)}>ändern</button></div></div>
+          <div className="field"><span className="label">Spender:in</span><div className="inline-edit">{member.name} <span className="muted">{member.membershipNumber ? `Nr. ${member.membershipNumber}` : member.city}</span><button type="button" className="btn btn-ghost" onClick={() => setMember(null)}>ändern</button></div></div>
         ) : newDonor ? (
           <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 'var(--s-3)' }}>
             <legend className="label" style={{ marginBottom: 'var(--s-1)' }}>Neue Spender:in</legend>
-            <p className="muted" style={{ margin: 0 }}>Name und Anschrift stehen auf der Bestätigung. <button type="button" className="link-btn" onClick={() => setNewDonor(false)}>Doch ein Mitglied suchen</button></p>
+            <p className="muted" style={{ margin: 0 }}>Name und Anschrift stehen auf der Bestätigung. <button type="button" className="link-btn" onClick={() => setNewDonor(false)}>Doch suchen</button></p>
             <div className="field"><label htmlFor="kind">Art</label><select id="kind" name="kind" className="select"><option value="natural">Person</option><option value="organisation">Firma oder Organisation</option></select></div>
             <div className="form-row"><Field label="Vorname" name="firstName" autoComplete="off" /><Field label="Nachname" name="lastName" autoComplete="off" /></div>
             <Field label="Firma oder Organisation" name="companyName" hint="Nur bei Firmen und Organisationen." />
@@ -168,10 +192,10 @@ function CreateDonation({ onClose }: { onClose: () => void }) {
           </fieldset>
         ) : (
           <div className="field">
-            <label htmlFor="pick">Spender:in (Mitglied suchen)</label>
+            <label htmlFor="pick">Spender:in suchen (Mitglieder und frühere Spender:innen)</label>
             <input id="pick" className="input" autoFocus value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Name oder Nummer" />
-            <ul className="timeline">{found.data?.items.map((m) => <li key={m.id} style={{ gridTemplateColumns: '1fr auto' }}><span>{displayName(m)}</span><button type="button" className="btn btn-ghost" onClick={() => setMember(m)}>wählen</button></li>)}</ul>
-            <button type="button" className="btn btn-ghost" style={{ justifySelf: 'start' }} onClick={() => setNewDonor(true)}>Kein Mitglied: Name und Anschrift eingeben</button>
+            <ul className="timeline">{found.data?.map((m) => <li key={m.personId} style={{ gridTemplateColumns: '1fr auto' }}><span>{m.name} <span className="meta">{m.membershipNumber ? `Nr. ${m.membershipNumber}` : m.city}</span></span><button type="button" className="btn btn-ghost" aria-label={`${m.name} wählen`} onClick={() => setMember(m)}>wählen</button></li>)}</ul>
+            <button type="button" className="btn btn-ghost" style={{ justifySelf: 'start' }} onClick={() => setNewDonor(true)}>Neu: Name und Anschrift eingeben</button>
           </div>
         )}
         <div className="form-row">

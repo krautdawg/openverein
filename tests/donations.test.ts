@@ -7,7 +7,8 @@ afterAll(() => ctx.close());
 let admin: ReturnType<typeof client>;
 let cookie: string;
 let acc: (n: string) => string;
-const settings = { kind: 'freistellung', office: 'Musterstadt', taxNumber: '12/345/67890', date: '2025-05-01', period: '2021–2023', purposes: 'des Sports (§ 52 Abs. 2 Satz 1 Nr. 21 AO)', signer: 'Erika Mustermann, Kassenwartin' };
+// A notice from last year keeps the tests valid in later years.
+const settings = { kind: 'freistellung', office: 'Musterstadt', taxNumber: '12/345/67890', date: `${new Date().getFullYear() - 1}-05-01`, period: '2021–2023', purposes: 'des Sports (§ 52 Abs. 2 Satz 1 Nr. 21 AO)', signer: 'Erika Mustermann, Kassenwartin' };
 const donor = { lastName: 'Krause', firstName: 'Bernd', street: 'Bäckerweg 3', postalCode: '12345', city: 'Musterstadt' };
 
 beforeEach(async () => {
@@ -34,11 +35,27 @@ describe('donations', () => {
     expect(pdf.rawPayload.subarray(0, 4).toString()).toBe('%PDF');
     // No second receipt for the same donation, no deleting it, no editing the receipt.
     expect((await issue()).status).toBe(409);
-    expect((await admin.del(`/donations/${d.body.id}`)).status).toBe(409);
+    expect((await admin.post(`/donations/${d.body.id}/void`, { reason: 'falsch erfasst' })).status).toBe(409);
     await expect(ctx.db.updateTable('donation_receipt').set({ total_cents: 1 }).execute()).rejects.toThrow(/immutable/);
     // Cancel, then the donation can be confirmed again.
     expect((await admin.post(`/donation-receipts/${r.body.id}/cancel`, { reason: 'Name falsch geschrieben' })).body.status).toBe('cancelled');
     expect((await issue()).status).toBe(201);
+  });
+
+  it('voids a wrong donation after its receipt was cancelled, reverses its booking, and finds past donors', async () => {
+    await admin.put('/donations/settings', settings);
+    const d = await admin.post('/donations', { donor, date: '2026-03-05', amountCents: 100000, moneyAccountId: acc('1100'), incomeAccountId: acc('4100') });
+    const r = await admin.post('/donation-receipts', { personId: d.body.personId, donationIds: [d.body.id] });
+    await admin.post(`/donation-receipts/${r.body.id}/cancel`, { reason: 'Betrag falsch erfasst' });
+    expect((await admin.post(`/donations/${d.body.id}/void`, { reason: 'Betrag falsch erfasst' })).status).toBe(204);
+    expect((await admin.get('/donations?year=2026')).body).toHaveLength(0);
+    expect((await admin.post('/donation-receipts/annual', { year: 2026 })).body.issued).toBe(0);
+    const journal = (await admin.get('/ledger/entries?from=2026-01-01&to=2030-12-31')).body as { source: string; reversedBy: number | null }[];
+    expect(journal.find((e) => e.source === 'donation')!.reversedBy).not.toBeNull();
+    expect((await admin.get('/donations/donors?q=krau')).body).toEqual([expect.objectContaining({ personId: d.body.personId, name: 'Bernd Krause' })]);
+    // Donation postings are corrected at the donation.
+    const entry = (await admin.get('/ledger/entries?from=2026-01-01&to=2030-12-31')).body.find((e: { source: string }) => e.source === 'donation');
+    expect((await admin.post(`/ledger/entries/${entry.id}/reverse`, {})).status).toBe(409);
   });
 
   it('runs the annual receipts as collective receipts per donor and skips donors without address', async () => {

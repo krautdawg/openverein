@@ -48,7 +48,8 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
       .leftJoin('donation_receipt_item as i', (j) => j.onRef('i.donation_id', '=', 'donation.id').on('i.live', '=', true))
       .leftJoin('donation_receipt as r', 'r.id', 'i.receipt_id')
       .select(['donation.id', 'donation.person_id', 'donation.donated_on', 'donation.amount_cents', 'donation.waiver', 'donation.note', 'journal_entry.number as journal', 'r.id as receipt_id', 'r.number as receipt_number', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
-      .where('donation.organization_id', '=', organizationId);
+      .where('donation.organization_id', '=', organizationId)
+      .where('donation.voided_at', 'is', null);
     if (filter.year) q = q.where('donation.donated_on', '>=', `${filter.year}-01-01`).where('donation.donated_on', '<=', `${filter.year}-12-31`);
     if (filter.ids) q = q.where('donation.id', 'in', filter.ids);
     const rows = await q.orderBy('donation.donated_on', 'desc').orderBy('donation.id', 'desc').execute();
@@ -76,6 +77,7 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
         const d = b.donor!;
         if (d.kind === 'organisation' ? !d.companyName : !d.lastName) throw invalid('donor', 'Bitte einen Namen angeben.');
         personId = (await tx.insertInto('person').values({ organization_id: actor.organizationId, kind: d.kind, first_name: d.firstName ?? null, last_name: d.lastName ?? null, company_name: d.companyName ?? null, street: d.street, postal_code: d.postalCode, city: d.city, email: d.email ?? null }).returning('id').executeTakeFirstOrThrow()).id;
+        await audit(tx, actor.organizationId, actor, { action: 'person.created', entityType: 'person', entityId: personId, diff: { source: [null, 'donation'] } });
       }
       let entryId: string | null = null;
       if (b.moneyAccountId) {
@@ -99,18 +101,39 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     return (await donationsDto(actor.organizationId, { ids: [id] }))[0]!;
   });
 
-  app.delete('/donations/:id', { schema: { tags, summary: 'Spende löschen (nur ohne gültige Bestätigung; die Buchung wird storniert)', params: idParam, body: z.object({}).optional() } }, async (req, reply) => {
+  app.post('/donations/:id/void', { schema: { tags, summary: 'Falsch erfasste Spende ungültig machen (ohne gültige Bestätigung); eine Buchung dazu wird storniert', params: idParam, body: z.object({ reason: z.string().trim().min(5).max(300) }) } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'donations', 'write');
     await db.transaction().execute(async (tx) => {
       const d = await tx.selectFrom('donation').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
-      if (!d) throw notFound('Spende');
-      if (await tx.selectFrom('donation_receipt_item').select('donation_id').where('donation_id', '=', d.id).executeTakeFirst()) throw new Problem(409, 'on-receipt', 'Für diese Spende wurde schon eine Bestätigung ausgestellt.', 'Storniere die Bestätigung; die Spende bleibt dann zur Nachvollziehbarkeit erhalten.');
-      if (d.journal_entry_id) await reverseEntry(tx, actor.organizationId, d.journal_entry_id, await orgToday(tx, actor.organizationId), actor.userId);
-      await tx.deleteFrom('donation').where('id', '=', d.id).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'donation.deleted', entityType: 'donation', entityId: d.id, diff: { amountCents: [d.amount_cents, null] } });
+      if (!d || d.voided_at) throw notFound('Spende');
+      if (await tx.selectFrom('donation_receipt_item').select('donation_id').where('donation_id', '=', d.id).where('live', '=', true).executeTakeFirst()) throw new Problem(409, 'on-receipt', 'Für diese Spende gibt es eine gültige Bestätigung.', 'Storniere zuerst die Bestätigung.');
+      if (d.journal_entry_id && !(await tx.selectFrom('journal_entry').select('id').where('reverses_id', '=', d.journal_entry_id).executeTakeFirst())) {
+        await lockJournal(tx, actor.organizationId);
+        await reverseEntry(tx, actor.organizationId, d.journal_entry_id, await orgToday(tx, actor.organizationId), actor.userId);
+      }
+      await tx.updateTable('donation').set({ voided_at: new Date(), void_reason: req.body.reason }).where('id', '=', d.id).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'donation.voided', entityType: 'donation', entityId: d.id, diff: { amountCents: [d.amount_cents, null], reason: [null, req.body.reason] } });
     });
     return reply.status(204).send();
+  });
+
+  app.get('/donations/donors', { schema: { tags, summary: 'Spender:innen suchen: frühere Spender:innen und Mitglieder', querystring: z.object({ q: z.string().trim().min(2).max(100) }), response: { 200: z.array(z.object({ personId: z.uuid(), name: z.string(), city: z.string().nullable(), membershipNumber: z.string().nullable() })) } } }, async (req) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'donations', 'read');
+    const like = `%${req.query.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    const rows = await db
+      .selectFrom('person')
+      .leftJoin('member', 'member.person_id', 'person.id')
+      .select(['person.id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.city', 'member.membership_number'])
+      .where('person.organization_id', '=', actor.organizationId)
+      .where('person.status', '=', 'active')
+      .where((eb) => eb.or([eb.exists(eb.selectFrom('donation').select('donation.id').whereRef('donation.person_id', '=', 'person.id')), eb('member.id', 'is not', null)]))
+      .where(sql<boolean>`unaccent(concat_ws(' ', person.first_name, person.last_name, person.company_name, member.membership_number)) ilike unaccent(${like})`)
+      .orderBy('person.last_name')
+      .limit(8)
+      .execute();
+    return rows.map((r) => ({ personId: r.id, name: nameOf(r), city: r.city, membershipNumber: r.membership_number }));
   });
 
   // ---------- Receipts ----------
@@ -132,13 +155,14 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
   async function issue(tx: Db, actor: Actor, personId: string, donationIds: string[]) {
     const org = await tx.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
     const today = await orgToday(tx, actor.organizationId);
-    if (!org.exemption_kind || !org.exemption_office || !org.exemption_tax_number || !org.exemption_date || !org.exemption_purposes) throw new Problem(409, 'exemption-missing', 'Die Angaben zur Steuerbegünstigung fehlen.', 'Trag Finanzamt, Steuernummer, Bescheid und Zwecke unter Spenden → Einstellungen ein.');
+    if (!org.exemption_kind || !org.exemption_office || !org.exemption_tax_number || !org.exemption_date || !org.exemption_purposes || (org.exemption_kind === 'freistellung' && !org.exemption_period)) throw new Problem(409, 'exemption-missing', 'Die Angaben zur Steuerbegünstigung fehlen.', 'Trag Finanzamt, Steuernummer, Bescheid, Veranlagungszeitraum und Zwecke unter Spenden → Einstellungen ein.');
+    if (!org.city) throw new Problem(409, 'address-missing', 'Die Anschrift des Vereins fehlt.', 'Trag sie unter Einstellungen → Verein ein; der Ort steht neben der Unterschrift.');
     // § 63 Abs. 5 AO: no receipts on a notice older than five years (exemption) or three years (§ 60a assessment).
     if (org.exemption_date <= yearsBefore(today, org.exemption_kind === 'freistellung' ? 5 : 3)) throw new Problem(409, 'exemption-expired', 'Der Bescheid ist zu alt für Zuwendungsbestätigungen (§ 63 Abs. 5 AO).', 'Trag den aktuellen Bescheid ein.');
     const person = await tx.selectFrom('person').selectAll().where('id', '=', personId).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!person) throw notFound('Person');
     if (!person.street || !person.postal_code || !person.city) throw new Problem(409, 'address-missing', `Für ${nameOf(person)} fehlt die Anschrift.`, 'Eine Zuwendungsbestätigung braucht Name und Anschrift.');
-    const items = await tx.selectFrom('donation').selectAll().where('id', 'in', donationIds).where('person_id', '=', personId).where('organization_id', '=', actor.organizationId).forUpdate().execute();
+    const items = await tx.selectFrom('donation').selectAll().where('id', 'in', donationIds).where('person_id', '=', personId).where('organization_id', '=', actor.organizationId).where('voided_at', 'is', null).orderBy('id').forUpdate().execute();
     if (items.length !== donationIds.length || !items.length) throw invalid('donationIds', 'Spenden nicht gefunden oder von einer anderen Person.');
     if (new Set(items.map((i) => i.donated_on.slice(0, 4))).size > 1) throw invalid('donationIds', 'Eine Sammelbestätigung gilt für ein Kalenderjahr.');
     const number = await nextNumber(tx, actor.organizationId, 'donation_receipt', 'ZB-{YYYY}-{seq:4}', today);
