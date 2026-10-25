@@ -71,4 +71,23 @@ describe('member lists', () => {
     expect(limited.body).not.toContain('BDAY');
     expect(limited.body).not.toContain('TEL');
   });
+
+  it('records awarded honours and sends opted-in greetings once per year', async () => {
+    const { runGreetings } = await import('../src/server/members/greetings.ts');
+    const { orgToday } = await import('../src/server/members/query.ts');
+    const org = (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
+    const today = await orgToday(ctx.db, org);
+    const year = Number(today.slice(0, 4));
+    // Joined exactly 25 years ago today, born 30 years ago today.
+    const m = (await admin.post('/members', { firstName: 'Greta', lastName: 'Glückwunsch', email: 'greta@example.org', birthDate: `${year - 30}${today.slice(4)}`, joinDate: `${year - 25}${today.slice(4)}` })).body.id;
+    expect(await runGreetings(ctx.db)).toBe(0);
+    await admin.patch('/organization', { birthdayGreetings: 'round', anniversaryGreetings: true });
+    expect(await runGreetings(ctx.db)).toBe(2);
+    expect(await runGreetings(ctx.db)).toBe(0);
+    const h = await admin.post(`/members/${m}/honours`, { title: 'Silberne Ehrennadel', awardedOn: `${year}-03-14`, decision: 'Vorstandsbeschluss vom 01.02.' });
+    expect(h.status, JSON.stringify(h.body)).toBe(201);
+    const report = (await admin.get(`/reports/honours?year=${year}`)).body;
+    expect(report.awarded).toEqual([expect.objectContaining({ memberId: m, title: 'Silberne Ehrennadel' })]);
+    expect((await admin.del(`/members/${m}/honours/${h.body.id}`)).status).toBe(204);
+  });
 });

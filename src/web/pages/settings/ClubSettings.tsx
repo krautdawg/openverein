@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '../../../shared/auth.ts';
 import { PORTAL_FEATURE_KEYS, PORTAL_FEATURES, type Organization } from '../../../shared/organization.ts';
@@ -126,6 +127,18 @@ export function ClubSettings({ me }: { me: Me }) {
               </select>
             </div>
             <p className="meta">So steht es meist in der Satzung. OpenVerein schlägt damit das Austrittsdatum vor.</p>
+          </dd>
+          <dt>Glückwünsche</dt>
+          <dd>
+            <div className="inline-edit" style={{ flexWrap: 'wrap' }}>
+              <select className="select" aria-label="Geburtstagsgrüße per E-Mail" disabled={!canWrite} value={org.birthdayGreetings} onChange={(e) => void save({ birthdayGreetings: e.target.value as Organization['birthdayGreetings'] })}>
+                <option value="off">keine Geburtstagsgrüße</option>
+                <option value="round">zu runden Geburtstagen</option>
+                <option value="all">zu jedem Geburtstag</option>
+              </select>
+              <label className="check"><input type="checkbox" disabled={!canWrite} checked={org.anniversaryGreetings} onChange={(e) => void save({ anniversaryGreetings: e.target.checked })} /> zu Vereinsjubiläen</label>
+            </div>
+            <p className="meta">Per E-Mail am Tag selbst, an aktive Mitglieder mit E-Mail-Adresse. Jubiläen ab 10 Jahren, alle 5 Jahre. Die Texte änderst Du unter <Link to="/einstellungen/email" style={{ whiteSpace: 'nowrap' }}>Einstellungen → E-Mail → Texte</Link>.</p>
           </dd>
         </dl>
       </section>

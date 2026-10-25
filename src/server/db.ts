@@ -70,6 +70,8 @@ export interface OrganizationTable {
   fee_schedule_user_id: string | null;
   fee_schedule_last_run: string | null;
   offer_number_pattern: Generated<string>;
+  birthday_greetings: Generated<'off' | 'round' | 'all'>;
+  anniversary_greetings: Generated<boolean>;
 }
 
 export interface AppUserTable {
@@ -907,6 +909,25 @@ export interface TaskTable {
   created_at: Generated<Date>;
 }
 
+export interface GreetingSentTable {
+  organization_id: string;
+  person_id: string;
+  kind: 'birthday' | 'anniversary';
+  year: number;
+  sent_at: Generated<Date>;
+}
+
+export interface HonourTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  title: string;
+  awarded_on: string;
+  decision: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -998,6 +1019,8 @@ export interface Database {
   offer: OfferTable;
   offer_line: OfferLineTable;
   task: TaskTable;
+  greeting_sent: GreetingSentTable;
+  honour: HonourTable;
 }
 
 export interface InventoryItemTable {
