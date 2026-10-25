@@ -21,6 +21,9 @@ export const MONEY_ROUTES = new Set(
     '/donations',
     '/donation-receipts',
     '/donation-receipts/annual',
+    '/receipts',
+    '/receipts/self-issued',
+    '/receipts/:id/pay',
   ].map((r) => `/api/v1${r}`),
 );
 const TTL_HOURS = 24;

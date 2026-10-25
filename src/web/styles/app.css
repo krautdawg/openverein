@@ -365,8 +365,11 @@ dialog::backdrop { background: rgb(20 32 46 / 0.35); }
 .table .name { font-weight: 600; color: var(--ink); }
 .table .groups { display: flex; gap: var(--s-1) var(--s-3); flex-wrap: wrap; }
 .table-foot { display: flex; justify-content: space-between; align-items: center; padding: var(--s-3) 0; color: var(--ink-3); font-size: var(--text-sm); }
+/* Columns only phones get (a combined amount instead of two). */
+.show-sm { display: none; }
 @media (max-width: 760px) {
   .hide-sm { display: none; }
+  .show-sm { display: table-cell; }
   /* Status chips keep their words on phones too (colour alone carries no meaning), just smaller. */
   .label-sm { font-size: var(--text-xs); white-space: normal; }
   .status:has(.label-sm) { align-items: baseline; }
@@ -581,3 +584,5 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 
 .booking-line { border: 0; border-top: 1px solid var(--line); padding: var(--s-3) 0 0; margin: 0; display: grid; gap: var(--s-3); min-width: 0; }
 .link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.dropzone { display: grid; gap: var(--s-2); justify-items: start; padding: var(--s-4); border: 1px dashed var(--line-strong, var(--line)); border-radius: var(--radius); background: var(--surface); }
+.dropzone p { margin: 0; font-size: var(--text-sm); }

@@ -878,6 +878,8 @@ export interface Database {
   idempotency_key: IdempotencyKeyTable;
   household: HouseholdTable;
   household_rule: HouseholdRuleTable;
+  receipt: ReceiptTable;
+  receipt_line: ReceiptLineTable;
 }
 
 export interface HouseholdTable {
@@ -898,6 +900,40 @@ export interface HouseholdRuleTable {
   percent_bp: number | null;
   cap_cents: number | null;
   created_at: Generated<Date>;
+}
+
+export interface ReceiptTable {
+  id: Generated<string>;
+  organization_id: string;
+  supplier: string;
+  number: string | null;
+  receipt_date: string;
+  due_date: string | null;
+  status: Generated<'open' | 'paid' | 'void'>;
+  total_cents: number;
+  file_id: string | null;
+  self_issued: Generated<boolean>;
+  self_reason: string | null;
+  paid_on: string | null;
+  money_account_id: string | null;
+  journal_entry_id: string | null;
+  void_reason: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ReceiptLineTable {
+  id: Generated<string>;
+  receipt_id: string;
+  position: number;
+  text: string | null;
+  gross_cents: number;
+  account_id: string;
+  tax_rate_id: string | null;
+  sphere: Sphere | null;
+  cost_center_id: string | null;
 }
 
 export type CustomFieldType = 'text' | 'multiline' | 'number' | 'date' | 'checkbox' | 'select' | 'multiselect';

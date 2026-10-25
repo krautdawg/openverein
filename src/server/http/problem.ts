@@ -30,6 +30,7 @@ export const CONSTRAINT_MESSAGES: Record<string, string> = {
   donation_on_receipt: 'Diese Spende steht auf einer gültigen Zuwendungsbestätigung. Storniere zuerst die Bestätigung.',
   donation_receipt_item_live: 'Für diese Spende gibt es schon eine gültige Zuwendungsbestätigung.',
   donation_receipt_frozen: 'Ausgestellte Zuwendungsbestätigungen werden nicht geändert, nur einmal storniert.',
+  receipt_frozen: 'Der Beleg ist bezahlt und gebucht. Korrigiere mit Storno der Zahlung.',
   ledger_period_locked: 'Dieser Zeitraum ist abgeschlossen (GoBD). Buchungen und Zahlungen mit diesem Datum sind gesperrt.',
 };
 

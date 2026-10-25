@@ -6,9 +6,9 @@ import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
-import { assertCashNotNegative, lockJournal, postEntry, reverseEntry, splitGross, syncAllocations, unpostedPayments, type Line } from '../ledger/service.ts';
+import { assertCashNotNegative, bookingLines, lockJournal, postEntry, reverseEntry, syncAllocations, unpostedPayments } from '../ledger/service.ts';
 import { orgToday } from '../members/query.ts';
-import { requireClubWide, requireStepUp, type Actor } from '../policy.ts';
+import { requireClubWide, requireStepUp } from '../policy.ts';
 
 const tags = ['ledger'];
 const idParam = z.object({ id: z.uuid() });
@@ -208,32 +208,6 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     return entriesDto(actor.organizationId, ids);
   });
 
-  /** Lines for an income or expense booking: money against net per account, tax per rate on the rate's account. */
-  async function bookingLines(tx: Db, actor: Actor, b: Extract<z.infer<typeof bookingInput>, { kind: 'income' | 'expense' }>) {
-    const accounts = await accountsOf(tx, actor.organizationId);
-    const rates = await tx.selectFrom('tax_rate').selectAll().where('organization_id', '=', actor.organizationId).execute();
-    const money = accounts.find((a) => a.id === b.moneyAccountId && a.kind === 'money' && !a.retired_at);
-    if (!money) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'moneyAccountId', message: 'Bitte ein Geldkonto (Kasse oder Bank) wählen.' }] });
-    const lines: Line[] = [];
-    let total = 0;
-    for (const [i, l] of b.lines.entries()) {
-      const acc = accounts.find((a) => a.id === l.accountId);
-      if (!acc || acc.retired_at || acc.kind !== b.kind) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.accountId`, message: b.kind === 'income' ? 'Bitte ein Einnahmenkonto wählen.' : 'Bitte ein Ausgabenkonto wählen.' }] });
-      const rate = l.taxRateId ? rates.find((r) => r.id === l.taxRateId) : null;
-      if (l.taxRateId && (!rate || rate.valid_from > b.date || (rate.valid_to && rate.valid_to < b.date))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.taxRateId`, message: 'Dieser Steuersatz galt an dem Tag nicht.' }] });
-      const sph = l.sphere ?? acc.default_sphere;
-      const { net, tax } = splitGross(l.grossCents, rate?.rate_bp ?? 0);
-      // Input tax is only refundable in the taxable spheres; elsewhere the gross amount is the expense.
-      const taxAccount = b.kind === 'income' ? rate?.output_account_id : sph === 'zweck' || sph === 'wirtschaft' ? rate?.input_account_id : null;
-      const side = (c: number) => (b.kind === 'income' ? { creditCents: c } : { debitCents: c });
-      lines.push({ accountId: acc.id, ...side(tax && taxAccount ? net : l.grossCents), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate?.id ?? null, text: l.text ?? null });
-      if (tax && taxAccount) lines.push({ accountId: taxAccount, ...side(tax), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate!.id, text: l.text ?? null });
-      total += l.grossCents;
-    }
-    lines.unshift({ accountId: money.id, ...(b.kind === 'income' ? { debitCents: total } : { creditCents: total }), sphere: lines[0]!.sphere });
-    return { lines, money, total };
-  }
-
   app.post('/ledger/bookings', { schema: { tags, summary: 'Einnahme, Ausgabe oder Umbuchung zwischen eigenen Konten buchen (auch mit mehreren Steuersätzen)', body: bookingInput, response: { 201: journalEntry } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
@@ -263,7 +237,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
         await audit(tx, actor.organizationId, actor, { action: 'ledger.transfer', entityType: 'journal_entry', entityId: e.id, diff: { amountCents: [null, b.amountCents] } });
         return e.id;
       }
-      const { lines, money, total } = await bookingLines(tx, actor, b);
+      const { lines, money, total } = await bookingLines(tx, actor.organizationId, b);
       if (b.kind === 'expense' && money.id === settings.cash_account_id) await assertCashNotNegative(tx, actor.organizationId, money.id, b.date, -total);
       const e = await postEntry(tx, actor.organizationId, { date: b.date, text: b.text, source: 'manual', createdBy: actor.userId, lines });
       await audit(tx, actor.organizationId, actor, { action: `ledger.${b.kind}`, entityType: 'journal_entry', entityId: e.id, diff: { totalCents: [null, total] } });
