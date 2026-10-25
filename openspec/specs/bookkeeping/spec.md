@@ -2,7 +2,6 @@
 
 ## Purpose
 The bookkeeping capability covers the cash-basis EÜR on a balanced append-only journal with SKR accounts, tax spheres, cost centres and tax rates, bank and cash accounts with cash book, receipts, the GoBD period lock with reversal corrections, EÜR and ledger reports with the tax-audit export, DATEV EXTF export, outgoing e-invoices, and donations with BMF donation receipts (B M20, M21, M22, M23, M24, M25, M26, M43). All amounts are integer cents. Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Chart of accounts
 The system SHALL ship SKR 42 and SKR 49 as versioned templates, allow custom accounts, and allow used accounts only to be retired, not deleted, so that old reports stay reproducible.
@@ -164,3 +163,18 @@ The system SHALL issue single receipts and annual collective receipts with annex
 #### Scenario: Cancel and reissue
 - **WHEN** a receipt with a wrong address is cancelled
 - **THEN** it keeps its number and PDF with status cancelled, and the reissue gets a new number
+
+### Requirement: Neutral default chart with DATEV mapping
+The system SHALL seed each club with a small neutral chart of accounts (money, transit, tax, income and expense accounts with a default sphere) and let every account carry the account number of the tax adviser's DATEV chart; the warning panel SHALL list used accounts without a DATEV number.
+
+#### Scenario: Missing DATEV number
+- **WHEN** an account with postings in the report range has no DATEV number
+- **THEN** the EÜR warning panel shows how many accounts lack it and links to the chart
+
+### Requirement: Payments post through an idempotent sync
+The system SHALL post each confirmed payment allocation exactly once and each reversed allocation's posting exactly once as a reversal, before any journal read, report or lock change.
+
+#### Scenario: Payment reversed
+- **WHEN** a cash payment of 60 € is reversed
+- **THEN** the journal shows the original posting and one reversal entry, and the original stays unchanged
+
