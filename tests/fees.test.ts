@@ -291,4 +291,20 @@ describe('review fixes', () => {
     await admin.post(`/invoices/${open.body.id}/payments`, { amountCents: 4000, bookedOn: '2026-03-01', method: 'transfer' });
     expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/dunning-letters.pdf', headers: { cookie: adminCookie, 'content-type': 'application/json' }, payload: { invoiceIds: [open.body.id] } })).statusCode).toBe(409);
   });
+
+  it('fills the club default texts at issue, freezes them, and stores net prices gross', async () => {
+    const { memberId } = await setup({ join: '2026-01-01' });
+    await admin.patch('/organization', { invoiceCoverTemplate: 'Hallo {{vorname}}, hier Deine Rechnung {{rechnungsnummer}}.', invoiceClosingTemplate: 'Bitte zahle {{betrag}} bis {{faellig}}. {{unbekannt}}' });
+    const inv = await admin.post('/invoices', { memberId, dueDate: '2026-07-01', lines: [{ text: 'Trikot', unitCents: 4202, taxRate: 19, net: true }] });
+    expect(inv.body.lines[0]).toMatchObject({ unitCents: 5000, totalCents: 5000 });
+    expect((await admin.post(`/invoices/${inv.body.id}/issue`, { issueDate: '2026-06-01' })).status).toBe(200);
+    const d = (await admin.get(`/invoices/${inv.body.id}`)).body;
+    expect(d.coverText).toBe(`Hallo Eva, hier Deine Rechnung ${d.number}.`);
+    expect(d.closingText).toMatch(/^Bitte zahle 50,00\s€ bis 01\.07\.2026\. \{\{unbekannt\}\}$/);
+    await expect(ctx.db.updateTable('invoice').set({ closing_text: 'geändert' }).where('id', '=', inv.body.id).execute()).rejects.toThrow(/immutable/);
+    // An own text wins over the default.
+    const own = await admin.post('/invoices', { memberId, closingText: 'Danke!', lines: [{ text: 'x', unitCents: 100 }] });
+    await admin.post(`/invoices/${own.body.id}/issue`, {});
+    expect((await admin.get(`/invoices/${own.body.id}`)).body.closingText).toBe('Danke!');
+  });
 });
