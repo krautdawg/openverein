@@ -570,3 +570,11 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .field-error { font-size: var(--text-xs); color: var(--danger); font-weight: 600; margin: 0; }
 .apply-consent .check input { flex: none; margin-top: 3px; }
 .apply-block .check { min-height: 40px; }
+
+/* Step-up prompt: one small centred dialog, the only modal in the app (it interrupts on purpose). */
+.stepup { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s-5); width: min(400px, calc(100vw - 32px)); box-shadow: var(--shadow-pop); background: var(--surface); color: var(--ink); }
+.stepup::backdrop { background: rgb(20 32 46 / 0.35); }
+.stepup h2 { font-family: var(--font-display); font-size: var(--text-xl); margin: 0 0 var(--s-2); }
+.mfa-banner { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); align-items: center; padding: var(--s-2) var(--s-4); background: var(--warn-soft); color: var(--ink); font-size: var(--text-sm); border-bottom: 1px solid var(--line); }
+.recovery-codes { columns: 2; margin: var(--s-3) 0 0; padding-left: 1.4em; font-variant-numeric: tabular-nums; }
+.recovery-codes code { font-size: var(--text-sm); }

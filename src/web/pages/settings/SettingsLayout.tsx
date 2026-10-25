@@ -5,6 +5,7 @@ import { PageHead } from '../../components/PageHead.tsx';
 export function SettingsLayout({ me }: { me: Me }) {
   const tabs = [
     { to: '/einstellungen', label: 'Verein', show: true },
+    { to: '/einstellungen/sicherheit', label: 'Sicherheit', show: true },
     { to: '/einstellungen/email', label: 'E-Mail', show: me.permissions.communication !== 'none' },
     { to: '/einstellungen/aufnahme', label: 'Aufnahme', show: me.permissions.members !== 'none' },
     { to: '/einstellungen/import', label: 'Import', show: me.permissions.imports !== 'none' && me.permissions.imports !== undefined },

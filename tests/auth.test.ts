@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import { migrate } from '../src/server/migrate.ts';
-import { setupClub, testApp, reset } from './helpers.ts';
+import { reset, setupClub, testApp, totpNow } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
@@ -27,9 +27,14 @@ describe('first-run setup', () => {
 
 describe('login', () => {
   it('logs in case-insensitively and returns the session user', async () => {
-    await setupClub(ctx.app);
-    const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: 'ERIKA@example.org', password: 'korrekt-pferd-batterie' } });
-    expect(res.statusCode).toBe(200);
+    const { totp } = await setupClub(ctx.app);
+    const first = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: 'ERIKA@example.org', password: 'korrekt-pferd-batterie' } });
+    expect(first.statusCode).toBe(200);
+    // With TOTP set up, the password alone yields a ticket, not a session.
+    expect(first.json().totpRequired).toBe(true);
+    expect(first.cookies.find((c) => c.name === 'ov_session')).toBeUndefined();
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login/totp', payload: { ticket: first.json().ticket, code: totpNow(totp.secret, 1) } });
+    expect(res.statusCode, res.body).toBe(200);
     const cookie = res.cookies.find((c) => c.name === 'ov_session')!;
     expect(cookie.httpOnly).toBe(true);
     const me = await ctx.app.inject({ url: '/api/v1/auth/me', headers: { cookie: `ov_session=${cookie.value}` } });

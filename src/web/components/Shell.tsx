@@ -7,6 +7,7 @@ import { nav } from '../lib/nav.ts';
 import type { Command } from '../lib/commands.ts';
 import type { Me } from '../../shared/auth.ts';
 import { CommandPalette } from './CommandPalette.tsx';
+import { StepUpPrompt } from './StepUp.tsx';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -77,6 +78,12 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
           <strong>{me.organization.name}</strong>
           <button className="icon-btn" aria-label="Suchen" onClick={() => setPaletteOpen(true)}><Search size={20} /></button>
         </header>
+        {me.mfa.required && !me.mfa.enrolled && (
+          <div className="mfa-banner" role="note">
+            <span>Für Finanzdaten brauchst Du die Anmeldung mit zweitem Faktor.</span>
+            <NavLink to="/einstellungen/sicherheit">Jetzt einrichten</NavLink>
+          </div>
+        )}
         {demo && (
           <div className="demo-banner" role="note">
             <strong>Demo</strong> Alle Personen und Zahlen hier sind erfunden. Die Daten werden regelmäßig zurückgesetzt.
@@ -86,6 +93,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
           <Outlet />
         </main>
       </div>
+      <StepUpPrompt />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} go={navigate} />
     </div>
   );

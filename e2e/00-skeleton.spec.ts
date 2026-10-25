@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { codeAt, currentStep } from '../src/server/auth/totp.ts';
+import { saveAdmin } from './helpers.ts';
 
 test('first run: set up the club, use the command palette, rename the club, log out and back in', async ({ page }) => {
   await page.goto('/');
@@ -28,4 +30,15 @@ test('first run: set up the club, use the command palette, rename the club, log 
   await page.getByLabel('Passwort').fill('korrekt-pferd-batterie');
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Erika');
+
+  // Admins hold finance rights: the banner asks for the second factor until it is set up.
+  await expect(page.getByRole('note').filter({ hasText: 'zweitem Faktor' })).toBeVisible();
+  await page.getByRole('link', { name: 'Jetzt einrichten' }).click();
+  await page.getByRole('button', { name: 'Jetzt einrichten' }).click();
+  const secret = (await page.locator('code.token-once').innerText()).replace(/\s+/g, '');
+  await page.getByLabel('2. Code aus der App').fill(codeAt(secret, currentStep()));
+  await page.getByRole('button', { name: 'Bestätigen' }).click();
+  await expect(page.getByText('Wiederherstellungscodes')).toBeVisible();
+  await expect(page.locator('.recovery-codes li')).toHaveCount(10);
+  saveAdmin({ secret, cookies: (await page.context().cookies()).filter((c) => c.name === 'ov_session') });
 });

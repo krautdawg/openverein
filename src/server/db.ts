@@ -59,6 +59,9 @@ export interface AppUserTable {
   invite_expires_at: Date | null;
   created_at: Timestamp;
   updated_at: Timestamp;
+  totp_secret_encrypted: string | null;
+  totp_enabled_at: Date | null;
+  totp_last_step: number | null;
 }
 
 export interface SessionTable {
@@ -68,6 +71,7 @@ export interface SessionTable {
   last_seen_at: Timestamp;
   expires_at: Date;
   user_agent: string | null;
+  mfa_at: Date | null;
 }
 
 export interface AuditEventTable {
@@ -690,6 +694,13 @@ export interface ImportRunTable {
   rolled_back_at: Date | null;
 }
 
+export interface TotpRecoveryCodeTable {
+  id: Generated<string>;
+  user_id: string;
+  code_hash: string;
+  used_at: Date | null;
+}
+
 export interface SuppressionTable {
   id: Generated<string>;
   organization_id: string;
@@ -744,6 +755,7 @@ export interface Database {
   application_form: ApplicationFormTable;
   application: ApplicationTable;
   import_run: ImportRunTable;
+  totp_recovery_code: TotpRecoveryCodeTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

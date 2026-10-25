@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AppUser, Db } from '../db.ts';
 import { config } from '../config.ts';
 import { Problem, unauthorized } from '../http/problem.ts';
-import { loadGrants, type Actor } from '../policy.ts';
+import { loadGrants, mfaRequired, type Actor } from '../policy.ts';
 
 export const SESSION_COOKIE = 'ov_session';
 const IDLE_MS = 8 * 60 * 60 * 1000; // admin idle timeout (spec auth: 8 h)
@@ -14,11 +14,11 @@ export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex'
  * Inserts a session row inside the caller's transaction and returns the raw token.
  * Set the cookie only after the transaction committed (setSessionCookie).
  */
-export async function insertSession(tx: Db, userId: string, userAgent?: string) {
+export async function insertSession(tx: Db, userId: string, userAgent?: string, mfa = false) {
   const token = randomBytes(32).toString('base64url');
   await tx
     .insertInto('session')
-    .values({ token_hash: sha256(token), user_id: userId, expires_at: new Date(Date.now() + IDLE_MS), user_agent: userAgent?.slice(0, 300) ?? null })
+    .values({ token_hash: sha256(token), user_id: userId, expires_at: new Date(Date.now() + IDLE_MS), user_agent: userAgent?.slice(0, 300) ?? null, mfa_at: mfa ? new Date() : null })
     .execute();
   return token;
 }
@@ -39,7 +39,11 @@ export async function actorFromRequest(db: Db, req: FastifyRequest, reply: Fasti
   if (auth?.startsWith('Bearer ')) return tokenActor(db, auth.slice(7).trim());
   const user = await userFromCookie(db, req, reply);
   if (!user) return null;
-  return { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: user.organization_id, grants: await loadGrants(db, user.id) };
+  const grants = await loadGrants(db, user.id);
+  // The demo club has one shared account without a second factor.
+  const demo = config.demoMode || user.is_demo;
+  const mfa = { required: !demo && mfaRequired(grants), enrolled: demo || !!user.totp_enabled_at, at: demo ? new Date() : user.mfa_at };
+  return { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: user.organization_id, grants, mfa };
 }
 
 async function tokenActor(db: Db, token: string): Promise<Actor> {
@@ -67,7 +71,7 @@ async function tokenActor(db: Db, token: string): Promise<Actor> {
 }
 
 /** Resolves the session cookie to an active user, slides the idle timeout and refreshes the cookie. */
-async function userFromCookie(db: Db, req: FastifyRequest, reply: FastifyReply): Promise<AppUser | null> {
+async function userFromCookie(db: Db, req: FastifyRequest, reply: FastifyReply): Promise<(AppUser & { mfa_at: Date | null; is_demo: boolean }) | null> {
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return null;
   const hashed = sha256(token);
@@ -75,6 +79,8 @@ async function userFromCookie(db: Db, req: FastifyRequest, reply: FastifyReply):
     .selectFrom('session')
     .innerJoin('app_user', 'app_user.id', 'session.user_id')
     .selectAll('app_user')
+    .innerJoin('organization', 'organization.id', 'app_user.organization_id')
+    .select(['session.mfa_at', 'organization.is_demo'])
     .where('session.token_hash', '=', hashed)
     .where('session.expires_at', '>', new Date())
     .where('app_user.status', '=', 'active')
