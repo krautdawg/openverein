@@ -20,6 +20,7 @@ import { Documents } from './pages/Documents.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
+import { SecuritySettings } from './pages/settings/SecuritySettings.tsx';
 import { Applications } from './pages/Applications.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
@@ -103,6 +104,7 @@ function AdminApp() {
           <Route path="email" element={<MailSettings me={me.data} />} />
           <Route path="aufnahme" element={<ApplicationSettings me={me.data} />} />
           <Route path="import" element={<ImportSettings me={me.data} />} />
+          <Route path="sicherheit" element={<SecuritySettings me={me.data} />} />
           <Route path="zugaenge" element={<Users me={me.data} />} />
           <Route path="rollen" element={<Roles me={me.data} />} />
           <Route path="api" element={<ApiTokens me={me.data} />} />

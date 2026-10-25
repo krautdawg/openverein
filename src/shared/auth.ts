@@ -24,7 +24,18 @@ export const me = z.object({
   /** Effective level per module, so the UI can hide what the user may not use. The API enforces it regardless. */
   permissions: z.record(z.string(), levelSchema),
   roles: z.array(z.string()),
+  /** Second factor: required for finance roles; enrolled once set up. */
+  mfa: z.object({ required: z.boolean(), enrolled: z.boolean() }),
 });
+
+/** Answer of a password login when the account uses TOTP: no session yet, only a short-lived ticket. */
+export const loginTicket = z.object({ totpRequired: z.literal(true), ticket: z.string() });
+/** A six-digit code, or a recovery code in any case, with or without dashes (normalised to "abcd-efgh-jkmn"). */
+export const totpCode = z
+  .string()
+  .trim()
+  .transform((v) => (/^\d{6}$/.test(v) ? v : v.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/^(.{4})(.{4})(.{4})$/, '$1-$2-$3')))
+  .pipe(z.string().regex(/^(\d{6}|[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4})$/, 'Sechs Ziffern aus der App oder ein Wiederherstellungscode.'));
 
 export const acceptInviteBody = z.object({
   token: z.string().min(20).max(200),

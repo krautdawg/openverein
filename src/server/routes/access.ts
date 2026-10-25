@@ -23,7 +23,7 @@ import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, Level } from '../db.ts';
 import { CONSTRAINT_MESSAGES, forbidden, notFound, Problem } from '../http/problem.ts';
 import { maskDiff } from '../members/query.ts';
-import { level, loadGrants, MODULES, requirePermission, RESTRICTABLE_FIELDS, restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { type Actor, level, loadGrants, MODULES, requirePermission, requireStepUp, RESTRICTABLE_FIELDS, restrictedFields, scopeOf } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.role_organization_id_name_key = 'Eine Rolle mit diesem Namen gibt es schon.';
 
@@ -99,6 +99,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       status: u.status,
       invited: !u.password_hash,
       lastLoginAt: u.last_login_at?.toISOString() ?? null,
+      totpEnabled: !!u.totp_enabled_at,
       grants: grants.map((g) => ({ id: g.id, roleId: g.role_id, roleName: g.name, scopeGroupIds: g.scope_group_ids })),
     };
   }
@@ -149,6 +150,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/roles', { schema: { tags: ['access'], summary: 'Eigene Rolle anlegen (z. B. als Kopie einer eingebauten)', body: roleCreate, response: { 201: role } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const fields = req.body.restrictedFields.filter((f) => (RESTRICTABLE_FIELDS as readonly string[]).includes(f));
     assertNotAbove(actor, req.body.permissions, null, fields);
@@ -168,6 +170,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.patch('/roles/:id', { schema: { tags: ['access'], summary: 'Eigene Rolle ändern (eingebaute Rollen sind unveränderlich)', params: idParam, body: roleCreate.partial(), response: { 200: role } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     const before = (await rolesById(actor)).get(req.params.id);
     if (!before) throw notFound('Rolle');
     if (before.builtin_key) throw new Problem(409, 'builtin-role', 'Eingebaute Rollen lassen sich nicht ändern. Lege eine Kopie an.');
@@ -191,6 +194,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.delete('/roles/:id', { schema: { tags: ['access'], summary: 'Eigene Rolle löschen, wenn sie niemandem zugewiesen ist', params: idParam, body: z.object({}).optional(), response: { 204: z.null() } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const r = (await rolesById(actor)).get(req.params.id);
     if (!r) throw notFound('Rolle');
@@ -218,6 +222,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/users', { schema: { tags: ['access'], summary: 'Zugang anlegen und Einladungslink erzeugen (Link wird nur einmal angezeigt)', body: userCreate, response: { 201: inviteResult } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     await checkGrants(actor, req.body.grants);
     const result = await db.transaction().execute(async (tx) => {
@@ -235,6 +240,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/users/:id/invite', { schema: { tags: ['access'], summary: 'Neuen Einladungslink erzeugen (der alte wird ungültig)', params: idParam, body: z.object({}).optional(), response: { 200: inviteResult } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
     // An invitation is not a password reset: once the user has set a password, no new link.
@@ -248,9 +254,28 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     return { user: await userDto(u.id), ...invite, mailed: await sendInvite(actor, u.email, u.name, invite.inviteToken) };
   });
 
+  app.post('/users/:id/totp/reset', { schema: { tags: ['access'], summary: 'Zweiten Faktor eines Zugangs zurücksetzen (Handy verloren); die Person richtet ihn neu ein', params: idParam, body: z.object({}).optional(), response: { 200: user } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
+    assertHuman(actor);
+    const u = await loadUser(actor, req.params.id);
+    await assertCanManage(actor, u.id);
+    if (u.id === actor.userId) throw new Problem(409, 'self-reset', 'Deinen eigenen zweiten Faktor richtest Du unter Sicherheit neu ein.');
+    await db.transaction().execute(async (tx) => {
+      await tx.updateTable('app_user').set({ totp_secret_encrypted: null, totp_enabled_at: null, totp_last_step: null, updated_at: new Date() }).where('id', '=', u.id).execute();
+      await tx.deleteFrom('totp_recovery_code').where('user_id', '=', u.id).execute();
+      // Sessions confirmed with the old factor end too.
+      await tx.deleteFrom('session').where('user_id', '=', u.id).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'auth.totp_reset', entityType: 'app_user', entityId: u.id });
+    });
+    return userDto(u.id);
+  });
+
   app.patch('/users/:id', { schema: { tags: ['access'], summary: 'Zugang ändern: Name, sperren/entsperren, Rollen', params: idParam, body: userPatch, response: { 200: user } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
     await assertCanManage(actor, u.id);
@@ -326,6 +351,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const actor = requireActor(req);
       requirePermission(actor, 'api', 'write');
+      requireStepUp(actor);
       requirePermission(actor, 'settings', 'write');
       // Tokens cannot create tokens: a leaked key must not be able to mint more keys.
       if (actor.kind === 'token') throw forbidden('api:write (nur angemeldete Zugänge)');

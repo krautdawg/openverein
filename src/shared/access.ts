@@ -45,6 +45,7 @@ export const user = z.object({
   status: z.enum(['active', 'disabled']),
   invited: z.boolean(),
   lastLoginAt: z.string().nullable(),
+  totpEnabled: z.boolean(),
   grants: z.array(z.object({ id: z.uuid(), roleId: z.uuid(), roleName: z.string(), scopeGroupIds: z.array(z.uuid()).nullable() })),
 });
 export type User = z.infer<typeof user>;

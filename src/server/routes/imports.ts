@@ -10,7 +10,7 @@ import { blindIndex } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { orgToday } from '../members/query.ts';
-import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 import { insertMember } from './members.ts';
 import { insertMandate } from './sepa.ts';
 
@@ -86,7 +86,8 @@ export const importRoutes: FastifyPluginAsyncZod = async (app) => {
       const col = FIELD_OF[t];
       if (col && hidden.has(col)) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', `Die Spalte „${TARGETS[t].label}“ darfst Du nicht sehen, also auch nicht importieren.`, { permission: `members.field.${col}` });
     }
-    if (mapped.has('iban') && !can(actor, 'sepa', 'write')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Mandate importieren darf nur, wer Mandate erfassen darf. Ordne die Bankspalten „nicht übernehmen“ zu.', { permission: 'sepa:write' });
+    // Same gate as entering a mandate by hand, including the second factor.
+    if (mapped.has('iban')) requirePermission(actor, 'sepa', 'write');
 
     const today = await orgToday(q, actor.organizationId);
     const groups = await q.selectFrom('club_group').select(['id', 'name', 'archived_at']).where('organization_id', '=', actor.organizationId).execute();

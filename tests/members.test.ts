@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { refreshMemberStatuses } from '../src/server/members/status.ts';
-import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
+import { client, enrollTotp, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
@@ -224,7 +224,9 @@ describe('no privilege escalation', () => {
     expect(custom.status).toBe(201);
     const created = await admin.post('/users', { name: 'Sabine Schrift', email: 'sabine@example.org', grants: [{ roleId: custom.body.id }] });
     const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
-    const clerk = client(ctx.app, { cookie: `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}` });
+    const clerkCookie = `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
+    await enrollTotp(ctx.app, clerkCookie); // changing users and roles needs the second factor
+    const clerk = client(ctx.app, { cookie: clerkCookie });
     const me = (await clerk.get('/auth/me')).body;
     expect((await clerk.patch(`/users/${me.id}`, { grants: [{ roleId: adminRole.id }] })).status).toBe(403);
     expect((await clerk.post('/roles', { name: 'Hintertür', permissions: { ...all, ledger: 'write' } })).status).toBe(403);
@@ -240,7 +242,9 @@ describe('review fixes', () => {
     const clerkRole = await admin.post('/roles', { name: 'Schriftführung', permissions: { ...all, settings: 'write' } });
     const created = await admin.post('/users', { name: 'Sabine', email: 'sabine@example.org', grants: [{ roleId: clerkRole.body.id }] });
     const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
-    const clerk = client(ctx.app, { cookie: `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}` });
+    const clerkCookie = `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
+    await enrollTotp(ctx.app, clerkCookie);
+    const clerk = client(ctx.app, { cookie: clerkCookie });
     const me = (await admin.get('/auth/me')).body;
     expect((await clerk.post(`/users/${me.id}/invite`)).status).toBe(409);
     expect((await clerk.patch(`/users/${me.id}`, { status: 'disabled' })).status).toBe(403);
@@ -258,7 +262,9 @@ describe('review fixes', () => {
     const custom = await admin.post('/roles', { name: 'Trainer plus', permissions: { ...trainer.permissions, settings: 'write' }, restrictedFields: ['note'] });
     const created = await admin.post('/users', { name: 'Tom', email: 'tom@example.org', grants: [{ roleId: custom.body.id }] });
     const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
-    const tom = client(ctx.app, { cookie: `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}` });
+    const tomCookie = `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
+    await enrollTotp(ctx.app, tomCookie);
+    const tom = client(ctx.app, { cookie: tomCookie });
     expect((await tom.post('/roles', { name: 'Alles sehen', permissions: trainer.permissions, restrictedFields: [] })).status).toBe(403);
   });
 

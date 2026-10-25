@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { acceptInviteBody, loginBody, me, setupBody } from '../../shared/auth.ts';
+import { acceptInviteBody, loginBody, loginTicket, me, setupBody, totpCode } from '../../shared/auth.ts';
 import { config } from '../config.ts';
 import { DEMO_SEED_KEY } from '../demo/login.ts';
 import { audit } from '../audit.ts';
@@ -9,7 +9,9 @@ import { hashPassword, passwordProblem, verifyPassword } from '../auth/password.
 import { destroySession, insertSession, requireActor, setSessionCookie, sha256 } from '../auth/session.ts';
 import type { AppUser, Db } from '../db.ts';
 import { Problem } from '../http/problem.ts';
-import { level, loadGrants, MODULES, type Grant } from '../policy.ts';
+import { blindIndex, decrypt, encrypt } from '../crypto.ts';
+import { level, loadGrants, mfaRequired, MODULES, requireStepUp, type Grant } from '../policy.ts';
+import { newSecret, otpauthUri, recoveryCodes, verifyCode } from '../auth/totp.ts';
 
 const MAX_FAILS = 5;
 // A real hash so unknown e-mails, locked accounts and wrong passwords all cost one Argon2 verification.
@@ -28,7 +30,32 @@ async function meOf(db: Db, user: AppUser, grants?: Grant[]) {
     organization: { id: org.id, name: org.name, isDemo: org.is_demo },
     permissions: Object.fromEntries(MODULES.map((m) => [m, level(actor, m)])),
     roles: g.map((x) => x.roleName),
+    mfa: { required: !config.demoMode && !org.is_demo && mfaRequired(g), enrolled: config.demoMode || org.is_demo || !!user.totp_enabled_at },
   };
+}
+
+// Sign-in ticket between password and code: user id and expiry, signed. Valid five minutes.
+const ticketFor = (userId: string) => {
+  const exp = Date.now() + 5 * 60_000;
+  return `${userId}.${exp}.${blindIndex(`login-ticket:${userId}:${exp}`).slice(0, 32)}`;
+};
+function userOfTicket(ticket: string) {
+  const [id, exp, mac] = ticket.split('.');
+  if (!id || !exp || !mac || Number(exp) < Date.now()) return null;
+  return blindIndex(`login-ticket:${id}:${exp}`).slice(0, 32) === mac ? id : null;
+}
+
+/** Checks a TOTP code (no replay of the same step) or burns a recovery code. Returns what matched. */
+export async function checkSecondFactor(tx: Db, user: AppUser, code: string): Promise<'totp' | 'recovery' | null> {
+  if (!user.totp_secret_encrypted || !user.totp_enabled_at) return null;
+  if (/^\d{6}$/.test(code)) {
+    const step = verifyCode(decrypt(user.totp_secret_encrypted), code);
+    if (step === null || (user.totp_last_step !== null && step <= user.totp_last_step)) return null;
+    await tx.updateTable('app_user').set({ totp_last_step: step }).where('id', '=', user.id).execute();
+    return 'totp';
+  }
+  const r = await tx.updateTable('totp_recovery_code').set({ used_at: new Date() }).where('user_id', '=', user.id).where('code_hash', '=', blindIndex(`recovery:${code.toLowerCase()}`)).where('used_at', 'is', null).returning('id').executeTakeFirst();
+  return r ? 'recovery' : null;
 }
 
 const userActor = (u: AppUser) => ({ userId: u.id, name: u.name });
@@ -79,7 +106,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/auth/login',
-    { ...limited, schema: { ...publicRoute, tags: ['auth'], summary: 'Mit E-Mail und Passwort anmelden', body: loginBody, response: { 200: me } } },
+    { ...limited, schema: { ...publicRoute, tags: ['auth'], summary: 'Mit E-Mail und Passwort anmelden (mit zweitem Faktor: erst ein Ticket, dann /auth/login/totp)', body: loginBody, response: { 200: z.union([me, loginTicket]) } } },
     async (req, reply) => {
       // One transaction with the account row locked: concurrent guesses are serialised, so the
       // lockout counts every attempt. Failures commit their counter before the 401 is thrown.
@@ -102,16 +129,135 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           await audit(tx, user.organization_id, null, { action: locked ? 'auth.login_locked' : 'auth.login_failed', entityType: 'app_user', entityId: user.id });
           return null;
         }
+        // With a second factor the password alone opens nothing; the counter resets only after the code.
+        if (user.totp_enabled_at && !config.demoMode) return { user, ticket: ticketFor(user.id), token: null };
         await tx.updateTable('app_user').set({ failed_logins: 0, locked_until: null, last_login_at: new Date() }).where('id', '=', user.id).execute();
         await audit(tx, user.organization_id, userActor(user), { action: 'auth.login', entityType: 'app_user', entityId: user.id });
-        return { user, token: await insertSession(tx, user.id, req.headers['user-agent']) };
+        return { user, ticket: null, token: await insertSession(tx, user.id, req.headers['user-agent']) };
       });
       // Locked, unknown and wrong-password attempts get the same answer.
       if (!outcome) throw invalidCredentials();
+      if (outcome.ticket) return { totpRequired: true as const, ticket: outcome.ticket };
+      setSessionCookie(reply, outcome.token!);
+      return meOf(db, outcome.user);
+    },
+  );
+
+  app.post(
+    '/auth/login/totp',
+    { ...limited, schema: { ...publicRoute, tags: ['auth'], summary: 'Anmeldung mit Code aus der Authenticator-App (oder Wiederherstellungscode) abschließen', body: z.object({ ticket: z.string().max(200), code: totpCode }), response: { 200: me } } },
+    async (req, reply) => {
+      const userId = userOfTicket(req.body.ticket);
+      if (!userId) throw new Problem(401, 'ticket-expired', 'Die Anmeldung ist abgelaufen. Bitte gib Dein Passwort noch einmal ein.');
+      const outcome = await db.transaction().execute(async (tx) => {
+        const user = await tx.selectFrom('app_user').selectAll().where('id', '=', userId).where('status', '=', 'active').forUpdate().executeTakeFirst();
+        if (!user) return null;
+        if (user.locked_until && user.locked_until > new Date()) return null;
+        const used = await checkSecondFactor(tx, user, req.body.code);
+        if (!used) {
+          // Wrong codes count toward the same progressive lockout as wrong passwords.
+          const fails = user.failed_logins + 1;
+          const lockedUntil = fails >= MAX_FAILS ? new Date(Date.now() + Math.min(60, 2 ** (fails - MAX_FAILS)) * 60_000) : user.locked_until;
+          await tx.updateTable('app_user').set({ failed_logins: fails, locked_until: lockedUntil }).where('id', '=', user.id).execute();
+          await audit(tx, user.organization_id, null, { action: 'auth.totp_failed', entityType: 'app_user', entityId: user.id });
+          return null;
+        }
+        await tx.updateTable('app_user').set({ failed_logins: 0, locked_until: null, last_login_at: new Date() }).where('id', '=', user.id).execute();
+        await audit(tx, user.organization_id, userActor(user), { action: used === 'recovery' ? 'auth.login_recovery_code' : 'auth.login', entityType: 'app_user', entityId: user.id });
+        return { user, token: await insertSession(tx, user.id, req.headers['user-agent'], true) };
+      });
+      if (!outcome) throw new Problem(401, 'invalid-code', 'Der Code stimmt nicht.');
       setSessionCookie(reply, outcome.token);
       return meOf(db, outcome.user);
     },
   );
+
+  // ---------- Second factor of the signed-in user ----------
+
+  const currentSession = (req: { cookies: Record<string, string | undefined> }) => sha256(req.cookies.ov_session ?? '');
+
+  app.post('/auth/totp/setup', { ...limited, schema: { tags: ['auth'], summary: 'Zweiten Faktor einrichten: neues Geheimnis für die Authenticator-App (noch nicht aktiv). Beim ersten Mal mit Passwort.', body: z.object({ password: z.string().max(128).optional() }).optional(), response: { 200: z.object({ secret: z.string(), uri: z.string() }) } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    // Replacing an active factor needs a fresh confirmation with the old one; a first setup needs the password,
+    // so a stolen session alone cannot attach the attacker's phone.
+    if (actor.mfa?.enrolled) requireStepUp(actor);
+    else {
+      const row = await db.selectFrom('app_user').select('password_hash').where('id', '=', actor.id).executeTakeFirstOrThrow();
+      if (!row.password_hash || !req.body?.password || !(await verifyPassword(row.password_hash, req.body.password))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'password', message: 'Bitte bestätige mit Deinem Passwort.' }] });
+    }
+    const user = await db.selectFrom('app_user').innerJoin('organization', 'organization.id', 'app_user.organization_id').select(['app_user.email', 'organization.name as org']).where('app_user.id', '=', actor.id).executeTakeFirstOrThrow();
+    const secret = newSecret();
+    // Stored as pending: the active secret keeps working until /auth/totp/enable confirms a code for the new one.
+    await db.updateTable('app_user').set({ totp_pending_secret_encrypted: encrypt(secret) }).where('id', '=', actor.id).execute();
+    return { secret, uri: otpauthUri(secret, user.email, `OpenVerein ${user.org}`) };
+  });
+
+  app.post('/auth/totp/enable', { schema: { tags: ['auth'], summary: 'Zweiten Faktor mit einem Code bestätigen; gibt zehn Wiederherstellungscodes einmalig aus', body: z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Sechs Ziffern aus der App.') }), response: { 200: z.object({ recoveryCodes: z.array(z.string()) }) } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    const codes = recoveryCodes();
+    await db.transaction().execute(async (tx) => {
+      const user = await tx.selectFrom('app_user').selectAll().where('id', '=', actor.id).forUpdate().executeTakeFirstOrThrow();
+      if (!user.totp_pending_secret_encrypted) throw new Problem(409, 'no-setup', 'Starte die Einrichtung zuerst.');
+      const secret = decrypt(user.totp_pending_secret_encrypted);
+      const step = verifyCode(secret, req.body.code);
+      if (step === null) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'code', message: 'Der Code stimmt nicht. Prüf die Uhrzeit auf dem Handy.' }] });
+      await tx.updateTable('app_user').set({ totp_secret_encrypted: encrypt(secret), totp_pending_secret_encrypted: null, totp_enabled_at: new Date(), totp_last_step: step }).where('id', '=', user.id).execute();
+      // Sessions that only ever passed the password end here; this one is now confirmed.
+      await tx.deleteFrom('session').where('user_id', '=', user.id).where('token_hash', '!=', currentSession(req)).execute();
+      await tx.deleteFrom('totp_recovery_code').where('user_id', '=', user.id).execute();
+      await tx.insertInto('totp_recovery_code').values(codes.map((c) => ({ user_id: user.id, code_hash: blindIndex(`recovery:${c}`) }))).execute();
+      await tx.updateTable('session').set({ mfa_at: new Date() }).where('token_hash', '=', currentSession(req)).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'auth.totp_enabled', entityType: 'app_user', entityId: user.id });
+    });
+    return { recoveryCodes: codes };
+  });
+
+  app.post('/auth/step-up', { ...limited, schema: { tags: ['auth'], summary: 'Kritische Aktion mit Code bestätigen (gilt zehn Minuten)', body: z.object({ code: totpCode }), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    const ok = await db.transaction().execute(async (tx) => {
+      const user = await tx.selectFrom('app_user').selectAll().where('id', '=', actor.id).forUpdate().executeTakeFirstOrThrow();
+      const used = await checkSecondFactor(tx, user, req.body.code);
+      await audit(tx, actor.organizationId, actor, { action: used ? `auth.step_up${used === 'recovery' ? '_recovery_code' : ''}` : 'auth.step_up_failed', entityType: 'app_user', entityId: user.id });
+      if (used) {
+        await tx.updateTable('app_user').set({ failed_logins: 0 }).where('id', '=', user.id).execute();
+        await tx.updateTable('session').set({ mfa_at: new Date() }).where('token_hash', '=', currentSession(req)).execute();
+        return 'ok' as const;
+      }
+      // Wrong codes count like wrong sign-ins: a stolen session cannot guess its way to critical actions.
+      const fails = user.failed_logins + 1;
+      if (fails >= MAX_FAILS) {
+        await tx.updateTable('app_user').set({ failed_logins: fails, locked_until: new Date(Date.now() + Math.min(60, 2 ** (fails - MAX_FAILS)) * 60_000) }).where('id', '=', user.id).execute();
+        await tx.deleteFrom('session').where('token_hash', '=', currentSession(req)).execute();
+        return 'locked' as const;
+      }
+      await tx.updateTable('app_user').set({ failed_logins: fails }).where('id', '=', user.id).execute();
+      return 'wrong' as const;
+    });
+    if (ok === 'locked') throw new Problem(401, 'locked', 'Zu viele falsche Codes. Du wurdest abgemeldet; melde Dich später wieder an.');
+    if (ok === 'wrong') throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'code', message: 'Der Code stimmt nicht.' }] });
+    return { ok: true };
+  });
+
+  app.get('/auth/sessions', { schema: { tags: ['auth'], summary: 'Meine aktiven Anmeldungen', response: { 200: z.array(z.object({ id: z.string(), current: z.boolean(), userAgent: z.string().nullable(), createdAt: z.string(), lastSeenAt: z.string() })) } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') return [];
+    const rows = await db.selectFrom('session').select(['token_hash', 'user_agent', 'created_at', 'last_seen_at']).where('user_id', '=', actor.id).where('expires_at', '>', new Date()).orderBy('last_seen_at', 'desc').execute();
+    return rows.map((r) => ({ id: r.token_hash.slice(0, 12), current: r.token_hash === currentSession(req), userAgent: r.user_agent, createdAt: r.created_at.toISOString(), lastSeenAt: r.last_seen_at.toISOString() }));
+  });
+
+  app.post('/auth/sessions/revoke-others', { schema: { tags: ['auth'], summary: 'Alle anderen Anmeldungen beenden', body: z.object({}).optional(), response: { 200: z.object({ revoked: z.number() }) } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    const revoked = await db.transaction().execute(async (tx) => {
+      const r = await tx.deleteFrom('session').where('user_id', '=', actor.id).where('token_hash', '!=', currentSession(req)).executeTakeFirst();
+      await audit(tx, actor.organizationId, actor, { action: 'auth.sessions_revoked', entityType: 'app_user', entityId: actor.id });
+      return Number(r.numDeletedRows);
+    });
+    return { revoked };
+  });
 
   app.post(
     '/auth/logout',

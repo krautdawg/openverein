@@ -14,6 +14,7 @@ export function Login() {
   const { data: cfg } = useInstanceConfig();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [ticket, setTicket] = useState<string>();
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -21,13 +22,40 @@ export function Login() {
     setBusy(true);
     setError(undefined);
     try {
-      setMe(await api<Me>('/auth/login', { method: 'POST', body: { email: form.get('email'), password: form.get('password') } }));
+      if (ticket) {
+        setMe(await api<Me>('/auth/login/totp', { method: 'POST', body: { ticket, code: String(form.get('code') ?? '').trim().toLowerCase() } }));
+        navigate('/');
+        return;
+      }
+      const r = await api<Me | { totpRequired: true; ticket: string }>('/auth/login', { method: 'POST', body: { email: form.get('email'), password: form.get('password') } });
+      if ('totpRequired' in r) {
+        setTicket(r.ticket);
+        return;
+      }
+      setMe(r);
       navigate('/');
     } catch (err) {
+      // An expired ticket means: start again with the password.
+      if (err instanceof ApiError && err.problem.type.endsWith('/ticket-expired')) setTicket(undefined);
       setError(err instanceof ApiError ? err.problem.title : 'Keine Verbindung zum Server.');
     } finally {
       setBusy(false);
     }
+  }
+
+  if (ticket) {
+    return (
+      <AuthLayout>
+        <h1>Bestätigen</h1>
+        <p>Gib den Code aus Deiner Authenticator-App ein. Ohne Handy geht auch einer Deiner Wiederherstellungscodes.</p>
+        <form className="form" onSubmit={submit} noValidate>
+          {error && <div className="alert alert-error" role="alert">{error}</div>}
+          <Field label="Code" name="code" inputMode="numeric" autoComplete="one-time-code" autoFocus required />
+          <button className="btn btn-primary btn-block" aria-busy={busy} disabled={busy}>Anmelden</button>
+          <button type="button" className="btn btn-ghost btn-block" onClick={() => { setTicket(undefined); setError(undefined); }}>Zurück</button>
+        </form>
+      </AuthLayout>
+    );
   }
 
   return (

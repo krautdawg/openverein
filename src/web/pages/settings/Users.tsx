@@ -139,7 +139,7 @@ function UserSheet({ user, roles, me, onClose }: { user: User | null; roles: Rol
           {error && <div className="alert alert-error" role="alert">{error}</div>}
           {invite && <OneTimeLink token={invite} />}
           <section className="sheet-section">
-            <p className="muted">{user.email}{user.lastLoginAt && ` · zuletzt angemeldet ${new Date(user.lastLoginAt).toLocaleString('de-DE')}`}</p>
+            <p className="muted">{user.email}{user.lastLoginAt && ` · zuletzt angemeldet ${new Date(user.lastLoginAt).toLocaleString('de-DE')}`} · zweiter Faktor {user.totpEnabled ? 'eingerichtet' : 'nicht eingerichtet'}</p>
             {canWrite && (
               <form className="inline-form" onSubmit={(e) => { e.preventDefault(); void patch({ grants: [grantFrom(new FormData(e.currentTarget))] }); }} aria-label="Rolle ändern" key={user.id}>
                 <GrantPicker roles={roles} defaultRole={user.grants[0]?.roleId} defaultScope={user.grants[0]?.scopeGroupIds} />
@@ -150,6 +150,7 @@ function UserSheet({ user, roles, me, onClose }: { user: User | null; roles: Rol
               <div className="actions-row">
                 {user.id !== me.id && <button className="btn" onClick={() => void patch({ status: user.status === 'active' ? 'disabled' : 'active' })}>{user.status === 'active' ? 'Zugang sperren' : 'Zugang entsperren'}</button>}
                 {user.invited && <button className="btn" onClick={async () => setInvite((await api<{ inviteToken: string }>(`/users/${user.id}/invite`, { method: 'POST' })).inviteToken)}>Neuen Einladungslink</button>}
+                {user.totpEnabled && user.id !== me.id && <button className="btn" onClick={async () => { try { await api(`/users/${user.id}/totp/reset`, { method: 'POST' }); setError(undefined); await qc.invalidateQueries({ queryKey: ['users'] }); } catch (e) { setError(e instanceof ApiError ? (e.problem.detail ?? e.problem.title) : String(e)); } }}>Zweiten Faktor zurücksetzen</button>}
               </div>
             )}
           </section>

@@ -13,7 +13,7 @@ import { notFound, Problem } from '../http/problem.ts';
 import { applicationPdf } from '../applications/pdf.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { orgToday } from '../members/query.ts';
-import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 import { insertMember } from './members.ts';
 import { insertMandate } from './sepa.ts';
 
@@ -317,7 +317,8 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
       const result = await db.transaction().execute(async (tx) => {
         const a = await loadNew(tx, actor, req.params.id);
         const data = a.payload as ApplicationData;
-        if (a.iban_encrypted && (!can(actor, 'sepa', 'write') || restrictedFields(actor).has('iban'))) {
+        if (a.iban_encrypted) requirePermission(actor, 'sepa', 'write');
+        if (a.iban_encrypted && restrictedFields(actor).has('iban')) {
           throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Der Antrag enthält ein SEPA-Mandat; aufnehmen kann nur, wer Mandate erfassen darf.', { permission: 'sepa:write' });
         }
         if (!req.body?.ignoreDuplicates) {

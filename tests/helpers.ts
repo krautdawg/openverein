@@ -1,3 +1,4 @@
+import { codeAt, currentStep } from '../src/server/auth/totp.ts';
 import { MIGRATIONS_TABLE } from '../src/server/migrate.ts';
 import { sql } from 'kysely';
 import { buildApp } from '../src/server/app.ts';
@@ -36,9 +37,24 @@ export async function setupClub(app: App, overrides: Partial<{ clubName: string;
     payload: { clubName: 'TSV Musterstadt 1890 e.V.', name: 'Erika Mustermann', email: 'erika@example.org', password: 'korrekt-pferd-batterie', ...overrides },
   });
   if (res.statusCode !== 201) throw new Error(`setup failed: ${res.body}`);
-  const cookie = res.cookies.find((c) => c.name === 'ov_session');
-  return { cookie: `ov_session=${cookie!.value}`, me: res.json() };
+  const cookie = `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
+  // Admins hold finance write rights, so they use TOTP; enrolling also confirms the session for ten minutes.
+  const totp = await enrollTotp(app, cookie, overrides.password ?? 'korrekt-pferd-batterie');
+  return { cookie, me: res.json(), totp };
 }
+
+/** Sets up TOTP for the signed-in user; returns the secret and the recovery codes. */
+export async function enrollTotp(app: App, cookie: string, password = 'ein-sehr-langes-passwort') {
+  const setup = await app.inject({ method: 'POST', url: '/api/v1/auth/totp/setup', headers: { cookie }, payload: { password } });
+  if (setup.statusCode !== 200) throw new Error(`totp setup failed: ${setup.body}`);
+  const secret = setup.json().secret as string;
+  const enable = await app.inject({ method: 'POST', url: '/api/v1/auth/totp/enable', headers: { cookie }, payload: { code: codeAt(secret, currentStep()) } });
+  if (enable.statusCode !== 200) throw new Error(`totp enable failed: ${enable.body}`);
+  return { secret, recoveryCodes: enable.json().recoveryCodes as string[] };
+}
+
+/** The TOTP code for the next time step (codes may not repeat within a step). */
+export const totpNow = (secret: string, offset = 0) => codeAt(secret, currentStep() + offset);
 
 /** JSON request helper bound to a cookie or bearer token. */
 export function client(app: App, auth: { cookie?: string; token?: string }) {
@@ -65,5 +81,7 @@ export async function userWithRole(app: App, adminCookie: string, builtinName: s
   if (created.status !== 201) throw new Error(JSON.stringify(created.body));
   const res = await app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: created.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
   if (res.statusCode !== 200) throw new Error(res.body);
-  return `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
+  const cookie = `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
+  if (res.json().mfa?.required) await enrollTotp(app, cookie);
+  return cookie;
 }

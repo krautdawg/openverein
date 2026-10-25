@@ -9,7 +9,7 @@ import { blindIndex, decrypt, encrypt, maskIban } from '../crypto.ts';
 import type { Db, SepaMandateTable } from '../db.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
-import { can, requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { type Actor, can, requirePermission, requireStepUp, restrictedFields, scopeOf } from '../policy.ts';
 import { isValidCreditorId } from '../../shared/iban.ts';
 import { addBusinessDays, isTargetDay, pain001, pain008, splitIntoFiles } from '../sepa/pain.ts';
 import { addDays } from '../../shared/dates.ts';
@@ -215,6 +215,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const actor = requireActor(req);
       requireClubWide(actor, 'write');
+      requireStepUp(actor);
       if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Die SEPA-Datei enthält IBANs, die Du nicht sehen darfst.', { permission: 'members.field.iban' });
       const today = await orgToday(db, actor.organizationId);
       const { kind, bankAccountId, collectionDate, invoiceIds } = req.body;
@@ -375,6 +376,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       requireClubWide(actor, 'write');
+      requireStepUp(actor);
       await db.transaction().execute(async (tx) => {
         const r = await tx.selectFrom('collection_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!r) throw notFound('Einzug');
