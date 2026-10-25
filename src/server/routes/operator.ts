@@ -7,7 +7,9 @@ import { sha256 } from '../auth/session.ts';
 import { config } from '../config.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { sendSystemMail } from '../mail/system.ts';
+import { buildFullExport } from '../exports/full.ts';
 import { baseUrlOf } from '../tenant.ts';
+import { purgeTenant } from '../tenantPurge.ts';
 import { createClub } from './auth.ts';
 
 const tags = ['operator'];
@@ -67,5 +69,25 @@ export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
       return r;
     });
     return r;
+  });
+
+  // ---------- A club leaves (AVV section 6): hand over the export, then delete everything ----------
+
+  app.get('/operator/tenants/:id/export.zip', { schema: { tags, summary: 'Gesamtexport eines Vereins zur Übergabe (Betreiber)', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
+    const o = await db.selectFrom('organization').select(['id', 'hostname']).where('id', '=', req.params.id).executeTakeFirst();
+    if (!o) throw notFound('Verein');
+    const { file } = await buildFullExport(db, o.id);
+    req.log.warn({ organizationId: o.id }, 'operator downloaded full export');
+    return reply.header('content-type', 'application/zip').header('content-disposition', `attachment; filename="openverein-${o.hostname ?? o.id}.zip"`).send(file);
+  });
+
+  app.delete('/operator/tenants/:id', { schema: { tags, summary: 'Verein mit allen Daten endgültig löschen; zur Bestätigung den Hostnamen angeben (Betreiber)', security: [], params: z.object({ id: z.uuid() }), body: z.object({ confirmHostname: z.string().trim().toLowerCase() }), response: { 200: z.object({ deleted: z.record(z.string(), z.number()) }) } } }, async (req) => {
+    const o = await db.selectFrom('organization').select(['id', 'hostname']).where('id', '=', req.params.id).executeTakeFirst();
+    if (!o) throw notFound('Verein');
+    if (!o.hostname || req.body.confirmHostname !== o.hostname) throw new Problem(400, 'validation', 'Zur Bestätigung den Hostnamen des Vereins angeben.', undefined, { errors: [{ field: 'confirmHostname', message: 'Stimmt nicht mit dem Hostnamen überein.' }] });
+    const deleted = await purgeTenant(db, o.id);
+    // The club's own audit log is gone with it; the operator's log keeps the fact.
+    req.log.warn({ organizationId: o.id, hostname: o.hostname, deleted }, 'operator deleted club');
+    return { deleted };
   });
 };
