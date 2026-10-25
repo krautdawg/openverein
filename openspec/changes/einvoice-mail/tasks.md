@@ -1,0 +1,3 @@
+- [x] Route to BT-49 mailbox
+- [x] Attach XML
+- [x] Test via Mailpit

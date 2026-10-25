@@ -178,7 +178,8 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       let q = db
         .selectFrom('invoice')
         .innerJoin('person', 'person.id', 'invoice.recipient_person_id')
-        .select(['invoice.id', 'invoice.number', 'invoice.member_id', 'invoice.status', 'invoice.recipient_person_id', 'person.email', 'person.preferred_channel', 'invoice.recipient'])
+        .leftJoin('invoice_einvoice', 'invoice_einvoice.invoice_id', 'invoice.id')
+        .select(['invoice.id', 'invoice.number', 'invoice.member_id', 'invoice.status', 'invoice.recipient_person_id', 'person.email', 'person.preferred_channel', 'person.einvoice_address', 'invoice.recipient', 'invoice_einvoice.invoice_id as einvoiced'])
         .where('invoice.organization_id', '=', actor.organizationId)
         .where('invoice.kind', '!=', 'cancellation');
       q = req.body.feeRunId ? q.where('invoice.fee_run_id', '=', req.body.feeRunId) : q.where('invoice.id', 'in', req.body.invoiceIds!);
@@ -201,9 +202,12 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         const name = (r.recipient as { recipient: { name: string } } | null)?.recipient.name ?? '';
         if (r.status === 'draft' || r.status === 'cancelled' || !r.number) continue;
-        const reason = r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !r.email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(r.email)) ? 'Adresse unzustellbar' : null;
+        // An e-invoice goes to the recipient's e-invoice mailbox (BT-49) when that is an e-mail address; a letter cannot carry it.
+        const einvoiceTo = r.einvoiced && r.einvoice_address?.includes('@') ? r.einvoice_address : null;
+        const email = einvoiceTo ?? r.email;
+        const reason = !einvoiceTo && r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(email)) ? 'Adresse unzustellbar' : null;
         if (reason) toPrint.push({ invoiceId: r.id, number: r.number, name, reason });
-        else send.push({ personId: r.recipient_person_id, memberId: r.member_id, email: r.email!, invoiceId: r.id });
+        else send.push({ personId: r.recipient_person_id, memberId: r.member_id, email: email!, invoiceId: r.id });
       }
       // One delivery per person and message: several invoices for one person go out as separate messages.
       const batches: (typeof send)[] = [];

@@ -1,7 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { client, reset, setupClub, testApp } from './helpers.ts';
+import { processQueue } from '../src/server/mail/worker.ts';
 import { vatGroup } from '../src/server/invoices/xrechnung.ts';
 
+const MAILPIT = process.env.MAILPIT_URL ?? 'http://localhost:18025';
 const ctx = await testApp();
 afterAll(() => ctx.close());
 
@@ -39,5 +41,15 @@ describe('e-invoices', () => {
     expect(xml.body).toContain('<ram:BuyerReference>04011000-12345-67</ram:BuyerReference>');
     expect(xml.body).toContain('<ram:DuePayableAmount>119.00</ram:DuePayableAmount>');
     await expect(ctx.db.updateTable('invoice_einvoice').set({ sha256: 'x' }).execute()).rejects.toThrow();
+
+    // Mailed to the e-invoice address (the city has no ordinary e-mail here), with PDF and XML attached.
+    const sent = await admin.post('/invoices/send-mail', { invoiceIds: [draft.id] });
+    expect(sent.status, JSON.stringify(sent.body)).toBe(201);
+    expect(sent.body.toPrint).toEqual([]);
+    await processQueue(ctx.db);
+    const found = (await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent('to:rechnung@lindenhof.example')}`)).json()).messages as { ID: string; Attachments: number }[];
+    expect(found[0]!.Attachments).toBe(2);
+    const msg = await (await fetch(`${MAILPIT}/api/v1/message/${found[0]!.ID}`)).json() as { Attachments: { FileName: string }[] };
+    expect(msg.Attachments.map((x) => x.FileName).sort()).toEqual([`${issued.body.number}.pdf`, `${issued.body.number}.xml`]);
   });
 });

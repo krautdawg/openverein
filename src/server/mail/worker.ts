@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
 import { customPlaceholders, fill, textToHtml, type PlaceholderValues } from '../../shared/mail.ts';
-import { blindIndex } from '../crypto.ts';
+import { blindIndex, decryptBytes } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { storedPdf } from '../invoices/service.ts';
 import { mailer, senderOf } from './transport.ts';
@@ -116,6 +116,9 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
     values.mahnstufe = dun?.label ?? 'Zahlungserinnerung';
     const { pdf, number } = await storedPdf(db, d.organization_id, d.invoice_id);
     attachments.push({ filename: `${number}.pdf`, content: pdf, contentType: 'application/pdf' });
+    // E-invoice recipients get the XRechnung next to the PDF; the XML is the legally relevant document for them.
+    const e = await db.selectFrom('invoice_einvoice').select('xml').where('invoice_id', '=', d.invoice_id).executeTakeFirst();
+    if (e) attachments.push({ filename: `${number}.xml`, content: decryptBytes(e.xml), contentType: 'application/xml' });
   }
   let text = fill(d.body, values);
   const unsubscribe = d.category === 'newsletter' && baseUrl ? `${baseUrl}/abmelden#${unsubscribeToken(d.id)}` : null;
