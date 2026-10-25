@@ -185,3 +185,10 @@ The system SHALL export each journal entry as DATEV rows of one account against 
 - **WHEN** an expense of 119 € with 19 % VAT is exported
 - **THEN** the batch contains one row of 100 € to the expense account and one row of 19 € to the input-tax account, both against the bank account
 
+### Requirement: Cancelled receipts free their donations
+The system SHALL keep a cancelled donation receipt with its reason and stored PDF, and SHALL let its donations be put on a new receipt with a new number.
+
+#### Scenario: Reissue after cancellation
+- **WHEN** a receipt is cancelled with the reason "Name falsch geschrieben"
+- **THEN** the receipt shows as cancelled and a new receipt for the same donation can be issued
+
