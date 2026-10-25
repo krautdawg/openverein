@@ -21,3 +21,7 @@ alter table group_membership add column import_run_id uuid references import_run
 alter table sepa_mandate add column import_run_id uuid references import_run(id);
 create index person_import_idx on person (import_run_id) where import_run_id is not null;
 create index member_import_idx on member (import_run_id) where import_run_id is not null;
+create index club_group_import_idx on club_group (import_run_id) where import_run_id is not null;
+create index group_membership_import_idx on group_membership (import_run_id) where import_run_id is not null;
+create index sepa_mandate_import_idx on sepa_mandate (import_run_id) where import_run_id is not null;
+create index import_run_sha_idx on import_run (organization_id, file_sha256);

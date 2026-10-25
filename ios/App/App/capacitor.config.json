@@ -1,0 +1,9 @@
+{
+	"appId": "org.openverein.app",
+	"appName": "OpenVerein",
+	"webDir": "dist/web",
+	"android": {
+		"allowMixedContent": false
+	},
+	"packageClassList": []
+}

@@ -49,6 +49,11 @@ export function errorHandler(err: FastifyError, req: FastifyRequest, reply: Fast
     req.log.info({ constraint: pg.constraint, code: pg.code }, 'constraint violation');
     return sendProblem(reply, conflict(CONSTRAINT_MESSAGES[pg.constraint ?? ''] ?? 'Diese Angaben kollidieren mit einem vorhandenen Eintrag.'), req.url);
   }
+  // A row still referenced elsewhere: a conflict for the user, never a crash.
+  if (pg.code === '23503') {
+    req.log.info({ constraint: pg.constraint, code: pg.code }, 'foreign key violation');
+    return sendProblem(reply, conflict('Darauf bauen noch andere Daten auf.'), req.url);
+  }
   if (err.statusCode && err.statusCode < 500) {
     return sendProblem(reply, new Problem(err.statusCode, 'http-' + err.statusCode, err.message), req.url);
   }

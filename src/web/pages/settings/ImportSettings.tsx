@@ -12,12 +12,18 @@ interface Preview {
   rows: { line: number; action: 'create' | 'update' | 'skip' | 'error'; name: string; messages: string[] }[];
   counts: { create: number; update: number; skip: number; error: number };
   newGroups: string[];
+  planHash: string;
+  alreadyImportedAt: string | null;
 }
-interface Run { id: string; fileName: string | null; preset: string | null; counts: Record<string, number>; createdAt: string; rolledBackAt: string | null }
+interface Run { id: string; fileName: string | null; preset: string | null; counts: Record<string, number>; createdAt: string; rolledBackAt: string | null; rows?: Preview['rows'] }
 
 /** Exports from easyVerein and Excel are often Windows-1252; UTF-8 is tried first and must decode cleanly. */
 async function readText(file: File) {
   const buf = await file.arrayBuffer();
+  const b = new Uint8Array(buf.slice(0, 2));
+  // Excel's "Unicode-Text" is UTF-16 with a byte-order mark.
+  if (b[0] === 0xff && b[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf);
+  if (b[0] === 0xfe && b[1] === 0xff) return new TextDecoder('utf-16be').decode(buf);
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(buf);
   } catch {
@@ -36,13 +42,17 @@ export function ImportSettings({ me }: { me: Me }) {
   const [preset, setPreset] = useState<'easyverein' | 'generic'>('easyverein');
   const [matchKey, setMatchKey] = useState<keyof typeof MATCH>('number');
   const [mapping, setMapping] = useState<Record<string, Target | null>>();
+  const [headers, setHeaders] = useState<string[]>([]);
   const [preview, setPreview] = useState<Preview>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<string>();
   const [confirmRollback, setConfirmRollback] = useState<string | null>(null);
 
-  const body = () => ({ fileName: file!.name, content: file!.content, preset, matchKey, mapping });
+  const body = () => ({ fileName: file!.name, content: file!.content, preset, matchKey, mapping, planHash: preview?.planHash });
+  const [report, setReport] = useState<Preview['rows']>([]);
+  // Any change after a dry run invalidates it: the import must run on exactly what was shown.
+  const invalidate = () => setPreview(undefined);
   const fail = (err: unknown) => setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
 
   async function run(dry: boolean) {
@@ -53,9 +63,11 @@ export function ImportSettings({ me }: { me: Me }) {
         const p = await api<Preview>('/imports/members/preview', { method: 'POST', body: body() });
         setPreview(p);
         setMapping(p.mapping);
+        setHeaders(p.headers);
       } else {
         const r = await api<Run>('/imports/members', { method: 'POST', body: body() });
         setDone(`Importiert: ${r.counts.create ?? 0} neu, ${r.counts.update ?? 0} aktualisiert, ${r.counts.error ?? 0} Zeilen mit Fehlern übersprungen.`);
+        setReport(r.rows ?? []);
         setPreview(undefined);
         setFile(undefined);
         setMapping(undefined);
@@ -71,7 +83,7 @@ export function ImportSettings({ me }: { me: Me }) {
     setError(undefined);
     try {
       await api(`/imports/${id}/rollback`, { method: 'POST' });
-      await Promise.all([qc.invalidateQueries({ queryKey: ['imports'] }), qc.invalidateQueries({ queryKey: ['members'] })]);
+      await Promise.all([qc.invalidateQueries({ queryKey: ['imports'] }), qc.invalidateQueries({ queryKey: ['members'] }), qc.invalidateQueries({ queryKey: ['groups'] })]);
     } catch (err) {
       fail(err);
     }
@@ -86,6 +98,11 @@ export function ImportSettings({ me }: { me: Me }) {
           Aus easyVerein: Mitglieder → Import/Export → „Mitgliederdaten aller Tabelleneinträge exportieren“ als CSV. Andere Programme gehen auch, solange es eine CSV-Datei mit Kopfzeile ist. Erst kommt ein Probelauf; geschrieben wird nur, was Du dann bestätigst.
         </p>
         {done && <div className="alert alert-ok" role="status">{done}</div>}
+        {report.length > 0 && (
+          <ul className="timeline" aria-label="Bericht" style={{ maxWidth: 720, marginBottom: 'var(--s-4)' }}>
+            {report.map((r) => <li key={r.line} style={{ gridTemplateColumns: 'auto 1fr' }}><span className="meta num">Zeile {r.line}</span><span><span className="name">{r.name}</span><div className="meta">{r.messages.join(' ')}</div></span></li>)}
+          </ul>
+        )}
         {error && <div className="alert alert-error" role="alert">{error}</div>}
         {canWrite && (
           <div className="inline-form" style={{ maxWidth: 720 }}>
@@ -96,7 +113,7 @@ export function ImportSettings({ me }: { me: Me }) {
               </div>
               <div className="field">
                 <label htmlFor="imp-preset">Herkunft</label>
-                <select id="imp-preset" className="select" value={preset} onChange={(e) => setPreset(e.target.value as typeof preset)}>
+                <select id="imp-preset" className="select" value={preset} onChange={(e) => { setPreset(e.target.value as typeof preset); invalidate(); }}>
                   <option value="easyverein">easyVerein</option>
                   <option value="generic">Andere Tabelle</option>
                 </select>
@@ -104,7 +121,7 @@ export function ImportSettings({ me }: { me: Me }) {
             </div>
             <div className="field">
               <label htmlFor="imp-match">Vorhandene Mitglieder erkennen an</label>
-              <select id="imp-match" className="select" value={matchKey} onChange={(e) => setMatchKey(e.target.value as keyof typeof MATCH)}>
+              <select id="imp-match" className="select" value={matchKey} onChange={(e) => { setMatchKey(e.target.value as keyof typeof MATCH); invalidate(); }}>
                 {Object.entries(MATCH).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
@@ -115,7 +132,7 @@ export function ImportSettings({ me }: { me: Me }) {
         )}
       </section>
 
-      {preview && mapping && (
+      {mapping && (
         <section className="section" aria-labelledby="map">
           <h2 id="map">Spalten</h2>
           <p className="muted" style={{ marginBottom: 'var(--s-3)' }}>Erkannte Spalten sind zugeordnet. Prüf sie und wiederhole den Probelauf, wenn Du etwas änderst.</p>
@@ -123,11 +140,11 @@ export function ImportSettings({ me }: { me: Me }) {
             <table className="table" aria-label="Spaltenzuordnung">
               <thead><tr><th scope="col">Spalte in der Datei</th><th scope="col">wird zu</th></tr></thead>
               <tbody>
-                {preview.headers.map((h) => (
+                {headers.map((h) => (
                   <tr key={h}>
                     <td>{h}</td>
                     <td>
-                      <select className="select" aria-label={`Ziel für ${h}`} value={mapping[h] ?? ''} onChange={(e) => setMapping({ ...mapping, [h]: (e.target.value || null) as Target | null })}>
+                      <select className="select" aria-label={`Ziel für ${h}`} value={mapping[h] ?? ''} onChange={(e) => { setMapping({ ...mapping, [h]: (e.target.value || null) as Target | null }); invalidate(); }}>
                         <option value="">nicht übernehmen</option>
                         {(Object.keys(TARGETS) as Target[]).map((t) => <option key={t} value={t}>{TARGETS[t].label}</option>)}
                       </select>
@@ -138,7 +155,10 @@ export function ImportSettings({ me }: { me: Me }) {
             </table>
           </div>
 
+          {!preview && <div className="actions-row"><button className="btn btn-primary" disabled={busy} onClick={() => void run(true)}>Probelauf mit dieser Zuordnung</button></div>}
+          {preview && (<>
           <h2 style={{ marginTop: 'var(--s-6)' }}>Probelauf</h2>
+          {preview.alreadyImportedAt && <div className="alert alert-warn" role="status">Diese Datei wurde am {new Date(preview.alreadyImportedAt).toLocaleString('de-DE')} schon importiert. Ein zweiter Lauf aktualisiert nur, was sich geändert hat.</div>}
           <dl className="figures" style={{ marginTop: 'var(--s-3)' }}>
             <div><dt>neu</dt><dd>{preview.counts.create}</dd></div>
             <div><dt>aktualisiert</dt><dd>{preview.counts.update}</dd></div>
@@ -159,6 +179,7 @@ export function ImportSettings({ me }: { me: Me }) {
           <div className="actions-row">
             <button className="btn btn-primary" disabled={busy || preview.counts.create + preview.counts.update === 0} aria-busy={busy} onClick={() => void run(false)}>{preview.counts.create + preview.counts.update} Mitglieder importieren</button>
           </div>
+          </>)}
         </section>
       )}
 

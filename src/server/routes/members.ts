@@ -347,11 +347,11 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
 
 /** The group must exist in the organisation and, for scoped actors, be one of their groups. */
 /** Person, membership (number from the pattern) and group memberships in the caller's transaction. */
-export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof memberCreate>, today: string, action = 'member.created') {
+export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof memberCreate>, today: string, action = 'member.created', importRunId: string | null = null) {
   const org = await tx.selectFrom('organization').select('member_number_pattern').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
   const person = await tx
     .insertInto('person')
-    .values({ organization_id: actor.organizationId, ...(personValues(body) as { last_name: string }) })
+    .values({ organization_id: actor.organizationId, ...(personValues(body) as { last_name: string }), import_run_id: importRunId })
     .returning('id')
     .executeTakeFirstOrThrow();
   const status: MemberStatus = body.joinDate ? statusForJoin(body.joinDate, today) : 'applicant';
@@ -366,12 +366,13 @@ export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof m
       status,
       join_date: body.joinDate ?? null,
       application_date: body.applicationDate ?? (status === 'applicant' ? today : null),
+      import_run_id: importRunId,
     })
     .returning('id')
     .executeTakeFirstOrThrow();
   for (const groupId of body.groupIds) {
     await assertGroup(tx, actor, groupId);
-    await tx.insertInto('group_membership').values({ organization_id: actor.organizationId, member_id: member.id, group_id: groupId, valid_from: body.joinDate ?? today }).execute();
+    await tx.insertInto('group_membership').values({ organization_id: actor.organizationId, member_id: member.id, group_id: groupId, valid_from: body.joinDate ?? today, import_run_id: importRunId }).execute();
   }
   await audit(tx, actor.organizationId, actor, { action, entityType: 'member', entityId: member.id, diff: { status: [null, status], membershipNumber: [null, number] } });
   return member.id;
