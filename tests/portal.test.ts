@@ -193,6 +193,9 @@ describe('member portal', () => {
     const receipts = (await admin.get('/receipts')).body as { id: string; supplier: string; status: string; totalCents: number }[];
     expect(receipts.find((r) => r.id === ok.body.receiptId)).toMatchObject({ supplier: 'Auslage Auslage, Ali', status: 'open', totalCents: 4590 });
     expect((await admin.post(`/expense-claims/${list[0].id}/reject`, { reason: 'zu spät' })).status).toBe(409);
+    // The member hears about the decision.
+    const mails = await mailTo('ali@example.org', 2);
+    expect(mails.map((x) => x.Subject)).toContain('Deine Auslage bei TSV Musterstadt 1890 e.V.');
     expect((await get('/portal/expenses', cookie)).json()[0].status).toBe('approved');
 
     // The membership certificate: own one in the portal, nobody else's; any member's for admins.

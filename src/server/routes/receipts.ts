@@ -18,6 +18,7 @@ import { assertCashNotNegative, bookingLines, lockJournal, postEntry, reverseEnt
 import { orgToday } from '../members/query.ts';
 import { requireClubWide, restrictedFields, type Actor } from '../policy.ts';
 import { readEinvoice } from '../receipts/einvoice.ts';
+import { sendSystemMail } from '../mail/system.ts';
 import { decrypt } from '../crypto.ts';
 
 const tags = ['ledger'];
@@ -150,6 +151,15 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     };
   };
 
+  /** Tells the member about the decision (best effort: a mail problem never undoes the decision). */
+  async function notifyClaim(organizationId: string, id: string, approved: boolean, reason?: string) {
+    const c = await db.selectFrom('expense_claim').innerJoin('person', 'person.id', 'expense_claim.person_id').select(['person.email', 'person.first_name', 'person.company_name', 'expense_claim.purpose', 'expense_claim.amount_cents']).where('expense_claim.id', '=', id).executeTakeFirst();
+    if (!c?.email) return;
+    const betrag = (Number(c.amount_cents) / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+    const entscheidung = approved ? `„${c.purpose}“ ist angenommen. Wir überweisen Dir den Betrag.` : `„${c.purpose}“ ist abgelehnt.${reason ? ` Begründung: ${reason}` : ''}`;
+    await sendSystemMail(db, organizationId, 'expense_decided', c.email, { vorname: c.first_name ?? c.company_name ?? '', betrag, entscheidung });
+  }
+
   app.get('/expense-claims', { schema: { tags, summary: 'Eingereichte Auslagen von Mitgliedern (offene zuerst)', response: { 200: z.array(expenseClaim) } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'read');
@@ -184,6 +194,7 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
       await tx.updateTable('expense_claim').set({ status: 'approved', receipt_id: id, decided_by: actor.userId, decided_at: new Date() }).where('id', '=', c.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'expense_claim.approved', entityType: 'expense_claim', entityId: c.id, diff: { receiptId: [null, id] } });
     });
+    await notifyClaim(actor.organizationId, req.params.id, true);
     return claimDto(actor, (await claimRows(actor.organizationId).where('expense_claim.id', '=', req.params.id).executeTakeFirstOrThrow()));
   });
 
@@ -195,6 +206,7 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
       if (Number(res.numUpdatedRows) === 0) throw new Problem(409, 'decided', 'Diese Auslage gibt es nicht oder es ist schon entschieden.');
       await audit(tx, actor.organizationId, actor, { action: 'expense_claim.rejected', entityType: 'expense_claim', entityId: req.params.id, diff: { reason: [null, req.body.reason] } });
     });
+    await notifyClaim(actor.organizationId, req.params.id, false, req.body.reason);
     return claimDto(actor, (await claimRows(actor.organizationId).where('expense_claim.id', '=', req.params.id).executeTakeFirstOrThrow()));
   });
 
