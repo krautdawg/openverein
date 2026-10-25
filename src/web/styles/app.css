@@ -640,3 +640,8 @@ input[type='range'] { accent-color: var(--accent); }
 /* The area name stays in view while the brackets scroll on narrow screens. */
 .census th[scope='row'], .census thead th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
 .census tr[data-total] th, .census tr[data-total] td { font-weight: 600; background: var(--surface-sunk); }
+
+/* Age rule reads as one sentence: "Mit 18 Jahren am Geburtstag wechseln nach Erwachsene". */
+.age-rule { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.age-rule .input[type='number'] { width: 72px; }
+.age-rule .select { width: auto; }

@@ -15,6 +15,10 @@ export const groupFields = z.object({
   parentId: z.uuid().nullish(),
   visibleToMembers: z.boolean().default(true),
   inApplicationForm: z.boolean().default(false),
+  /** Age rule: move members to this group at this age (all three set, or none). */
+  nextGroupId: z.uuid().nullish(),
+  nextGroupAge: z.number().int().min(1).max(120).nullish(),
+  nextGroupOn: z.enum(['birthday', 'year_start']).nullish(),
 });
 
 export const groupPatch = groupFields.partial();
@@ -28,6 +32,9 @@ export const group = z.object({
   parentId: z.uuid().nullable(),
   visibleToMembers: z.boolean(),
   inApplicationForm: z.boolean(),
+  nextGroupId: z.uuid().nullable(),
+  nextGroupAge: z.number().nullable(),
+  nextGroupOn: z.enum(['birthday', 'year_start']).nullable(),
   archived: z.boolean(),
   memberCount: z.number(),
 });

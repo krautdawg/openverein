@@ -172,6 +172,7 @@ function GroupSheet({ group, canWrite, onClose }: { group: Group | null; canWrit
               {canWrite && <button className="btn" onClick={() => void archive()}>{group.archived ? 'Wiederherstellen' : 'Archivieren'}</button>}
             </div>
           </section>
+          <AgeRule group={group} canWrite={canWrite} save={save} />
           <section className="sheet-section" aria-labelledby="g-members">
             <h3 id="g-members">Mitglieder am</h3>
             <input type="date" className="input" style={{ width: 'auto', marginBottom: 'var(--s-3)' }} aria-label="Stichtag" value={at} onChange={(e) => e.target.value && setAt(e.target.value)} />
@@ -188,5 +189,55 @@ function GroupSheet({ group, canWrite, onClose }: { group: Group | null; canWrit
         </>
       )}
     </Sheet>
+  );
+}
+
+/** Age rule: members move on to another group at a given age; with a preview of who moves when. */
+function AgeRule({ group, canWrite, save }: { group: Group; canWrite: boolean; save: (body: Record<string, unknown>) => Promise<void> }) {
+  const { data: groups } = useGroups();
+  const birthVisible = useMe().data?.restricted?.includes('birth_date') !== true;
+  const moves = useQuery({ queryKey: ['age-moves', group.id, group.nextGroupId, group.nextGroupAge, group.nextGroupOn], queryFn: () => api<{ memberId: string; name: string; moveOn: string }[]>(`/groups/${group.id}/age-moves`), enabled: !!group.nextGroupId && birthVisible, retry: false });
+  const target = groups?.find((g) => g.id === group.nextGroupId);
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const to = String(f.get('nextGroupId') ?? '');
+    await save(to ? { nextGroupId: to, nextGroupAge: Number(f.get('nextGroupAge')), nextGroupOn: f.get('nextGroupOn') } : { nextGroupId: null, nextGroupAge: null, nextGroupOn: null }).catch(() => undefined);
+  }
+  return (
+    <section className="sheet-section" aria-labelledby="g-age">
+      <h3 id="g-age">Wechsel nach Alter</h3>
+      {canWrite ? (
+        <form className="age-rule" onSubmit={submit} aria-label="Wechsel nach Alter">
+          <span>Mit</span>
+          <input name="nextGroupAge" type="number" min={1} max={120} className="input" aria-label="Alter" defaultValue={group.nextGroupAge ?? 18} />
+          <span>Jahren</span>
+          <select name="nextGroupOn" className="select" aria-label="Zeitpunkt" defaultValue={group.nextGroupOn ?? 'birthday'}>
+            <option value="birthday">am Geburtstag</option>
+            <option value="year_start">zum 1. Januar</option>
+          </select>
+          <span>wechseln nach</span>
+          <select name="nextGroupId" className="select" aria-label="Zielgruppe" defaultValue={group.nextGroupId ?? ''}>
+            <option value="">kein Wechsel</option>
+            {groups?.filter((g) => g.id !== group.id).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+          <button className="btn">Speichern</button>
+        </form>
+      ) : (
+        <p className="muted">{target ? `Mit ${group.nextGroupAge} Jahren ${group.nextGroupOn === 'birthday' ? 'am Geburtstag' : 'zum 1. Januar'} nach „${target.name}“.` : 'Kein Wechsel nach Alter.'}</p>
+      )}
+      {group.nextGroupId && moves.data && (
+        moves.data.length === 0 ? <p className="meta" style={{ marginTop: 'var(--s-2)' }}>In den nächsten 12 Monaten wechselt niemand.</p> : (
+          <ul className="timeline" aria-label="Anstehende Wechsel" style={{ marginTop: 'var(--s-3)' }}>
+            {moves.data.map((m) => (
+              <li key={m.memberId} style={{ gridTemplateColumns: '1fr auto' }}>
+                <Link to={`/mitglieder/${m.memberId}`}>{m.name}</Link>
+                <span className="meta num">{m.moveOn.split('-').reverse().join('.')}</span>
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+    </section>
   );
 }

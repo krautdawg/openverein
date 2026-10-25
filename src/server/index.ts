@@ -8,6 +8,7 @@ import { pruneApplications } from './routes/applications.ts';
 import { startMailWorker } from './mail/worker.ts';
 import { startJobWorker } from './jobs/worker.ts';
 import { refreshMemberStatuses } from './members/status.ts';
+import { applyAgeMoves } from './members/ageMoves.ts';
 import { migrate } from './migrate.ts';
 import { replayErasures } from './gdpr/service.ts';
 import { pruneIdempotencyKeys } from './http/idempotency.ts';
@@ -38,6 +39,7 @@ await app.listen({ port: config.port, host: '0.0.0.0' });
 const refresh = () =>
   Promise.all([
     refreshMemberStatuses(db).then((n) => n && app.log.info(`${n} member statuses updated`)),
+    applyAgeMoves(db).then((n) => n && app.log.info(`${n} members moved by age rule`)),
     sweepFiles(db).then((n) => n && app.log.info(`${n} unused files removed`)),
     pruneSignIns(db),
     pruneApplications(db),
