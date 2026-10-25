@@ -32,7 +32,7 @@ Für Finanzdaten brauchst Du die Anmeldung mit zweitem Faktor (App wie Aegis, 2F
 - **Einzelne Rechnung** (Rechnungen → neu): Positionen eintragen, „Ausstellen“. Ausgestellte Rechnungen ändern sich nicht mehr. Fehler korrigierst Du mit „Stornieren“, das erzeugt eine Stornorechnung.
 - **E-Rechnung**: Steht beim Empfänger „E-Rechnung: XRechnung“ (Mitglied → E-Rechnung) mit Leitweg-ID oder E-Rechnungsadresse, erzeugt OpenVerein beim Ausstellen zusätzlich die XRechnung und schickt sie mit. Fehlen Angaben, sagt OpenVerein vor dem Ausstellen, welche.
 - **Zahlung von Hand**: In der Rechnung „Zahlung erfassen“. Barzahlungen gehen dabei ins Kassenbuch.
-- **Mahnwesen** (Rechnungen → Mahnwesen): Der „Mahnvorschlag“ listet überfällige Rechnungen mit Mahnstufe. „Mahnpause“ hält einzelne Rechnungen bis zu einem Datum zurück. „Mahnung per E-Mail“ verschickt die Erinnerung.
+- **Mahnwesen** (Rechnungen → Mahnwesen): Der „Mahnvorschlag“ listet überfällige Rechnungen mit Mahnstufe. „Mahnpause“ hält einzelne Rechnungen bis zu einem Datum zurück. „Mahnung per E-Mail“ verschickt die Erinnerung; wer Briefe bevorzugt oder keine E-Mail hat, bekommt ein Mahnschreiben mit offenem Betrag, Mahngebühr und Zahlungsfrist (14 Tage), alle zusammen als ein PDF nach Postleitzahl.
 - **Ausbuchen**: Ist eine Forderung nicht mehr einzutreiben, „Ausbuchen“ mit Grund. Das bleibt im Protokoll sichtbar.
 
 ## 4. Lastschriften (SEPA)
@@ -63,7 +63,7 @@ Erstattungen aus Gutschriften gehen über „Gutschriften überweisen“ als Üb
 
 1. Einmalig: Spenden → Einstellungen → „Freistellungsbescheid“ mit Finanzamt, Datum und Zwecken. Ohne gültigen Bescheid stellt OpenVerein keine Zuwendungsbestätigung aus.
 2. Spende erfassen (Spenden → „Erfassen“): von Mitgliedern oder anderen Personen. Sachspenden erfasst OpenVerein noch nicht.
-3. Zuwendungsbestätigung (Spenden → Bestätigungen): einzeln oder als Sammelbestätigung für ein Jahr, nach amtlichem Muster. Eine Spende steht nie auf zwei gültigen Bestätigungen.
+3. Zuwendungsbestätigung (Spenden → Bestätigungen): einzeln oder als Sammelbestätigung für ein Jahr, nach amtlichem Muster. Eine Spende steht nie auf zwei gültigen Bestätigungen. „Bestätigungen verschicken“ schickt sie per E-Mail mit PDF; die übrigen gibt es als ein Brief-PDF.
 
 ## 8. Jahresabschluss und Steuerberatung
 

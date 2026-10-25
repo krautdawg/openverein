@@ -1,4 +1,5 @@
 import { mergeLetters, postalCodeOf } from '../letters.ts';
+import { dunningLetterPdf } from '../invoices/dunning-pdf.ts';
 import { decryptBytes } from '../crypto.ts';
 import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -174,6 +175,22 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const { pdf, number } = await storedPdf(db, actor.organizationId, req.params.id);
     reply.header('content-type', 'application/pdf').header('content-disposition', `inline; filename="${number}.pdf"`).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(pdf);
+  });
+
+  app.post('/invoices/dunning-letters.pdf', { schema: { tags, summary: 'Mahnschreiben zum Drucken: offene Rechnungen mit ihrer letzten Mahnstufe als ein PDF (nach Postleitzahl, Duplex)', body: z.object({ invoiceIds: z.array(z.uuid()).min(1).max(500) }) } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'read');
+    const letters: { pdf: Buffer; sortKey: string; postalCode: string }[] = [];
+    for (const id of new Set(req.body.invoiceIds)) {
+      const inv = await detail(actor, id); // scope check
+      if (!['open', 'partially_paid'].includes(inv.status) || !inv.number) continue;
+      const l = await dunningLetterPdf(db, actor.organizationId, id);
+      letters.push({ pdf: l.pdf, sortKey: l.number, postalCode: l.postalCode });
+    }
+    if (!letters.length) throw new Problem(409, 'nothing-open', 'Keine der Rechnungen ist noch offen.');
+    const merged = await mergeLetters(letters);
+    await audit(db, actor.organizationId, actor, { action: 'invoice.dunning_letters_printed', entityType: 'invoice', entityId: req.body.invoiceIds[0]!, diff: { numbers: [null, letters.map((l) => l.sortKey)] } });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="Mahnschreiben-${new Date().toISOString().slice(0, 10)}.pdf"`).header('cache-control', 'private, no-store').send(merged);
   });
 
   app.post('/invoices/letters.pdf', { schema: { tags, summary: 'Briefe drucken: ausgestellte Rechnungen als ein PDF, nach Postleitzahl sortiert und für Duplexdruck auf gerade Seitenzahlen aufgefüllt', body: z.object({ invoiceIds: z.array(z.uuid()).min(1).max(500) }) } }, async (req, reply) => {

@@ -280,4 +280,15 @@ describe('review fixes', () => {
     await admin.post(`/invoices/${credit.body.id}/issue`, {});
     expect((await admin.post(`/invoices/${credit.body.id}/cancel`, {})).status).toBe(409);
   });
+
+  it('prints dunning letters for open invoices only', async () => {
+    const { memberId } = await setup({ join: '2026-01-01' });
+    const open = await admin.post('/invoices', { memberId, dueDate: '2026-02-01', lines: [{ text: 'Beitrag', unitCents: 4000 }] });
+    await admin.post(`/invoices/${open.body.id}/issue`, { issueDate: '2026-01-15' });
+    const pdf = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/dunning-letters.pdf', headers: { cookie: adminCookie, 'content-type': 'application/json' }, payload: { invoiceIds: [open.body.id] } });
+    expect(pdf.statusCode, pdf.body.slice(0, 200)).toBe(200);
+    expect(pdf.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    await admin.post(`/invoices/${open.body.id}/payments`, { amountCents: 4000, bookedOn: '2026-03-01', method: 'transfer' });
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/dunning-letters.pdf', headers: { cookie: adminCookie, 'content-type': 'application/json' }, payload: { invoiceIds: [open.body.id] } })).statusCode).toBe(409);
+  });
 });

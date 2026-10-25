@@ -17,7 +17,7 @@ export function SendInvoiceMail({ invoiceIds, feeRunId, template = 'invoice', la
     setPrinting(true);
     setError(undefined);
     try {
-      const res = await fetch('/api/v1/invoices/letters.pdf', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ invoiceIds: ids }), credentials: 'same-origin' });
+      const res = await fetch(template === 'dunning' ? '/api/v1/invoices/dunning-letters.pdf' : '/api/v1/invoices/letters.pdf', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ invoiceIds: ids }), credentials: 'same-origin' });
       if (!res.ok) throw new ApiError(await res.json());
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
