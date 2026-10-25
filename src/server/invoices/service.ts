@@ -27,7 +27,7 @@ export const RECEIVABLE_KINDS: InvoiceKind[] = ['membership', 'other', 'dunning_
 /** Dunning fees are not dunned themselves. */
 export const DUNNABLE_KINDS: InvoiceKind[] = ['membership', 'other'];
 
-function personLines(p: { kind: string; first_name: string | null; last_name: string | null; company_name: string | null; street: string | null; postal_code: string | null; city: string | null; country: string }) {
+export function personLines(p: { kind: string; first_name: string | null; last_name: string | null; company_name: string | null; street: string | null; postal_code: string | null; city: string | null; country: string }) {
   const name = p.kind === 'organisation' ? (p.company_name ?? '') : [p.first_name, p.last_name].filter(Boolean).join(' ');
   const lines = [name, p.street, [p.postal_code, p.city].filter(Boolean).join(' '), p.country !== 'DE' ? p.country : null].filter((l): l is string => !!l);
   return { name, lines };

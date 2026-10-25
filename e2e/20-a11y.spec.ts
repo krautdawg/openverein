@@ -4,7 +4,7 @@ import { signIn } from './helpers.ts';
 
 const ROUTES = [
   '/', '/mitglieder', '/mitglieder/haushalte', '/mitglieder/dubletten', '/mitglieder/bestandserhebung', '/mitglieder/ehrungen', '/mitglieder/arbeitsstunden', '/gruppen', '/termine', '/versammlungen',
-  '/beitraege', '/beitraege/laeufe', '/rechnungen', '/rechnungen/mahnwesen', '/rechnungen/artikel', '/bank', '/bank/abgleich', '/bank/lastschriften',
+  '/beitraege', '/beitraege/laeufe', '/rechnungen', '/rechnungen/mahnwesen', '/rechnungen/artikel', '/rechnungen/angebote', '/bank', '/bank/abgleich', '/bank/lastschriften',
   '/buchhaltung', '/buchhaltung/euer', '/buchhaltung/haushaltsplan', '/buchhaltung/konten', '/buchhaltung/einstellungen', '/buchhaltung/export', '/buchhaltung/belege', '/buchhaltung/kassenbuch', '/buchhaltung/pauschalen',
   '/spenden', '/spenden/bestaetigungen', '/spenden/einstellungen', '/antraege', '/kommunikation', '/kommunikation/umfragen', '/dokumente', '/dokumente/inventar',
   '/einstellungen', '/einstellungen/email', '/einstellungen/aufnahme', '/einstellungen/import', '/einstellungen/datenschutz', '/einstellungen/export',

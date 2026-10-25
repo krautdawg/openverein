@@ -16,6 +16,7 @@ import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { todayLocal } from '../lib/hooks.ts';
 import { euroInput, parseEuro } from '../lib/money.ts';
+import { OFFER_STATUS_LABEL, type Offer } from '../../shared/offers.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 type List = { items: InvoiceListItem[]; total: number; nextCursor: string | null; sums: { totalCents: number; openCents: number } };
@@ -41,6 +42,7 @@ export function InvoicesLayout({ children, actions }: { children: React.ReactNod
       <nav className="subnav" aria-label="Rechnungen">
         <NavLink to="/rechnungen" end>Rechnungen</NavLink>
         <NavLink to="/rechnungen/mahnwesen">Mahnwesen</NavLink>
+        <NavLink to="/rechnungen/angebote">Angebote</NavLink>
         <NavLink to="/rechnungen/artikel">Artikel</NavLink>
       </nav>
       {children}
@@ -294,7 +296,8 @@ export function InvoiceSheet({ id, canWrite, onClose }: { id: string | null; can
   );
 }
 
-function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+/** Writes an invoice, or an offer (same lines, no due date or kind; valid until instead). */
+function CreateInvoice({ onClose, onCreated, offer = false }: { onClose: () => void; onCreated: (id: string) => void; offer?: boolean }) {
   const qc = useQueryClient();
   const [member, setMember] = useState<MemberListItem | null>(null);
   const [term, setTerm] = useState('');
@@ -310,17 +313,17 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
     const f = new FormData(e.currentTarget);
     setError(undefined);
     try {
+      const base = offer ? { memberId: member.id, validUntil: f.get('validUntil') || null } : { memberId: member.id, kind: f.get('kind'), dueDate: f.get('dueDate') || null };
       const body = {
-        memberId: member.id,
-        kind: f.get('kind'),
-        dueDate: f.get('dueDate') || null,
+        ...base,
         coverText: f.get('coverText') || null,
         closingText: f.get('closingText') || null,
         lines: lines.map((l) => ({ text: l.text, quantity: Number(l.quantity.replace(',', '.')), unitCents: parseEuro(l.price) ?? NaN, taxRate: Number(l.taxRate), net })),
       };
-      const inv = await api<InvoiceDetail>('/invoices', { method: 'POST', body });
-      if (issue) await api(`/invoices/${inv.id}/issue`, { method: 'POST' });
-      await qc.invalidateQueries({ queryKey: ['invoices'] });
+      const path = offer ? '/offers' : '/invoices';
+      const inv = await api<{ id: string }>(path, { method: 'POST', body });
+      if (issue) await api(`${path}/${inv.id}/issue`, { method: 'POST' });
+      await qc.invalidateQueries({ queryKey: [offer ? 'offers' : 'invoices'] });
       onCreated(inv.id);
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);
@@ -328,7 +331,7 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
   }
 
   return (
-    <Sheet title="Rechnung schreiben" open onClose={onClose}>
+    <Sheet title={offer ? 'Angebot schreiben' : 'Rechnung schreiben'} open onClose={onClose}>
       <form className="form" noValidate onSubmit={(e) => void submit(e, (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'issue')}>
         {error && <div className="alert alert-error" role="alert">{error.problem.errors?.map((x) => x.message).join(' ') ?? error.problem.detail ?? error.problem.title}</div>}
         {member ? (
@@ -340,11 +343,15 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
             <ul className="timeline">{found.data?.items.map((m) => <li key={m.id} style={{ gridTemplateColumns: '1fr auto' }}><span>{displayName(m)}</span><button type="button" className="btn btn-ghost" onClick={() => setMember(m)}>wählen</button></li>)}</ul>
           </div>
         )}
-        <div className="form-row">
-          <div className="field"><label htmlFor="kind">Art</label><select id="kind" name="kind" className="select" style={{ width: '100%' }}><option value="other">Rechnung</option><option value="credit_note">Gutschrift</option></select></div>
-          <Field label="Fällig am" name="dueDate" type="date" hint="Leer: Zahlungsziel aus den Einstellungen." />
-        </div>
-        <div className="field"><label htmlFor="cover">Text über den Positionen (optional)</label><textarea id="cover" name="coverText" className="textarea" /><p className="hint">Leer: der Standardtext aus den Einstellungen, falls es einen gibt.</p></div>
+        {offer ? (
+          <Field label="Gültig bis" name="validUntil" type="date" hint="Leer: 30 Tage ab Ausstellung." />
+        ) : (
+          <div className="form-row">
+            <div className="field"><label htmlFor="kind">Art</label><select id="kind" name="kind" className="select" style={{ width: '100%' }}><option value="other">Rechnung</option><option value="credit_note">Gutschrift</option></select></div>
+            <Field label="Fällig am" name="dueDate" type="date" hint="Leer: Zahlungsziel aus den Einstellungen." />
+          </div>
+        )}
+        <div className="field"><label htmlFor="cover">Text über den Positionen (optional)</label><textarea id="cover" name="coverText" className="textarea" />{!offer && <p className="hint">Leer: der Standardtext aus den Einstellungen, falls es einen gibt.</p>}</div>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
           <legend className="label" style={{ marginBottom: 'var(--s-2)' }}>Positionen</legend>
           {lines.map((l, i) => (
@@ -481,5 +488,91 @@ export function Articles({ me }: { me: Me }) {
         )}
       </div>
     </InvoicesLayout>
+  );
+}
+
+export function Offers({ me }: { me: Me }) {
+  useTitle('Angebote');
+  const canWrite = me.permissions.invoices === 'write';
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const list = useQuery({ queryKey: ['offers'], queryFn: () => api<Offer[]>('/offers') });
+  const [creating, setCreating] = useState(false);
+  return (
+    <InvoicesLayout actions={canWrite && <button className="btn btn-primary" onClick={() => setCreating(true)}><Plus size={16} aria-hidden /> Angebot schreiben</button>}>
+      <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '70ch' }}>Zum Beispiel für die Vermietung des Vereinsheims. Ein Angebot ist keine Forderung und wird nicht gebucht; nimmt jemand an, machst Du daraus mit einem Klick einen Rechnungsentwurf.</p>
+      <div className="table-wrap">
+        {list.data?.length === 0 ? (
+          <div className="empty-state"><h3>Noch keine Angebote.</h3><p>Angebote bekommen eine eigene Nummer und werden beim Ausstellen als PDF gespeichert.</p></div>
+        ) : (
+          <table className="table" aria-label="Angebote">
+            <thead><tr><th scope="col">Nummer</th><th scope="col">An</th><th scope="col" className="num hide-sm">Datum</th><th scope="col" className="num hide-sm">Gültig bis</th><th scope="col" className="num">Betrag</th><th scope="col">Status</th></tr></thead>
+            <tbody>
+              {list.data?.map((o) => (
+                <tr key={o.id} data-href tabIndex={0} onClick={() => navigate(`/rechnungen/angebote/${o.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/rechnungen/angebote/${o.id}`)}>
+                  <td className="name" style={{ whiteSpace: 'nowrap' }}>{o.number ?? 'Entwurf'}</td>
+                  <td>{o.recipientName}</td>
+                  <td className="num hide-sm">{o.issueDate ? formatDate(o.issueDate) : '—'}</td>
+                  <td className="num hide-sm">{o.validUntil ? formatDate(o.validUntil) : '—'}</td>
+                  <td className="num">{euro(o.totalCents)}</td>
+                  <td>{o.expired ? 'abgelaufen' : OFFER_STATUS_LABEL[o.status]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {creating && <CreateInvoice offer onClose={() => setCreating(false)} onCreated={(nid) => { setCreating(false); navigate(`/rechnungen/angebote/${nid}`); }} />}
+      <OfferSheet id={id ?? null} canWrite={canWrite} onClose={() => navigate('/rechnungen/angebote')} />
+    </InvoicesLayout>
+  );
+}
+
+function OfferSheet({ id, canWrite, onClose }: { id: string | null; canWrite: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const { data: o } = useQuery({ queryKey: ['offer', id], queryFn: () => api<Offer>(`/offers/${id}`), enabled: !!id });
+  const [error, setError] = useState<string>();
+  async function run(path: string, method: 'POST' | 'DELETE' = 'POST') {
+    setError(undefined);
+    try {
+      const r = await api<{ invoiceId?: string }>(`/offers/${id}${path}`, { method, ...(method === 'POST' ? { body: {} } : {}) });
+      await qc.invalidateQueries({ queryKey: ['offers'] });
+      await qc.invalidateQueries({ queryKey: ['offer', id] });
+      if (r?.invoiceId) navigate(`/rechnungen/${r.invoiceId}`);
+      if (method === 'DELETE') onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
+    }
+  }
+  return (
+    <Sheet title={o ? `Angebot ${o.number ?? '(Entwurf)'}` : 'Angebot'} open={!!id} onClose={onClose}>
+      {o && (
+        <>
+          <section className="sheet-section">
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
+            <dl className="facts">
+              <dt>An</dt><dd>{o.recipientName}</dd>
+              <dt>Status</dt><dd>{o.expired ? 'abgelaufen' : OFFER_STATUS_LABEL[o.status]}</dd>
+              {o.issueDate && <><dt>Datum</dt><dd>{formatDate(o.issueDate)}</dd></>}
+              {o.validUntil && <><dt>Gültig bis</dt><dd>{formatDate(o.validUntil)}</dd></>}
+              <dt>Betrag</dt><dd className="num">{euro(o.totalCents)}</dd>
+            </dl>
+            <ul className="timeline" aria-label="Positionen" style={{ marginTop: 'var(--s-3)' }}>
+              {o.lines.map((l) => <li key={l.position} style={{ gridTemplateColumns: '1fr auto' }}><span>{l.quantity !== 1 && `${l.quantity.toLocaleString('de-DE')} × `}{l.text}</span><span className="num">{euro(l.totalCents)}</span></li>)}
+            </ul>
+            <div className="actions-row">
+              {canWrite && o.status === 'draft' && <button className="btn btn-primary" onClick={() => void run('/issue')}>Ausstellen</button>}
+              {canWrite && (o.status === 'sent' || o.status === 'accepted') && <button className="btn btn-primary" onClick={() => void run('/convert')}>In Rechnung umwandeln</button>}
+              {o.status !== 'draft' && <a className="btn" href={`/api/v1/offers/${o.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>}
+              {canWrite && (o.status === 'sent' || o.status === 'declined') && <button className="btn" onClick={() => void run('/accept')}>Angenommen</button>}
+              {canWrite && (o.status === 'sent' || o.status === 'accepted') && <button className="btn btn-ghost" onClick={() => void run('/decline')}>Abgelehnt</button>}
+              {o.invoiceId && <Link className="btn" to={`/rechnungen/${o.invoiceId}`}>Zur Rechnung</Link>}
+              {canWrite && o.status === 'draft' && <button className="btn btn-ghost btn-danger" onClick={() => void run('', 'DELETE')}>Entwurf löschen</button>}
+            </div>
+          </section>
+        </>
+      )}
+    </Sheet>
   );
 }
