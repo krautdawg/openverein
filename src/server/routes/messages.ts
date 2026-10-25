@@ -191,44 +191,48 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
       if (req.body.template === 'dunning') q = q.where('invoice.status', 'in', ['open', 'partially_paid']);
       const rows = await q.orderBy('invoice.number').execute();
       const suppressed = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId).where('reason', 'in', ['bounce', 'manual']).execute()).map((s) => s.email_hash));
-      const mailed = new Set(
-        req.body.resend || !rows.length
-          ? []
-          : (await db.selectFrom('delivery').innerJoin('message', 'message.id', 'delivery.message_id').select('delivery.invoice_id').where('delivery.invoice_id', 'in', rows.map((r) => r.id)).where('delivery.status', 'in', ['queued', 'sending', 'sent']).where(sql<boolean>`message.recipient_filter->>'template' = ${req.body.template}`).execute()).map((r) => r.invoice_id),
-      );
-      let alreadySent = 0;
-      const toPrint: { invoiceId: string; number: string; name: string; reason: string }[] = [];
-      const send: { personId: string; memberId: string | null; email: string; invoiceId: string }[] = [];
-      for (const r of rows) {
-        if (mailed.has(r.id)) {
-          alreadySent++;
-          continue;
+      // One invoice mailing at a time per club: the "already sent" check and the new deliveries are one step,
+      // so two people sending the same invoices at once do not both send them (Codex review of #7).
+      const { ids, sent, alreadySent, toPrint } = await db.transaction().execute(async (tx) => {
+        await sql`select pg_advisory_xact_lock(hashtext(${`invoice-mail:${actor.organizationId}`}))`.execute(tx);
+        const mailed = new Set(
+          req.body.resend || !rows.length
+            ? []
+            : (await tx.selectFrom('delivery').innerJoin('message', 'message.id', 'delivery.message_id').select('delivery.invoice_id').where('delivery.invoice_id', 'in', rows.map((r) => r.id)).where('delivery.status', 'in', ['queued', 'sending', 'sent']).where(sql<boolean>`message.recipient_filter->>'template' = ${req.body.template}`).execute()).map((r) => r.invoice_id),
+        );
+        let alreadySent = 0;
+        const toPrint: { invoiceId: string; number: string; name: string; reason: string }[] = [];
+        const send: { personId: string; memberId: string | null; email: string; invoiceId: string }[] = [];
+        for (const r of rows) {
+          if (mailed.has(r.id)) {
+            alreadySent++;
+            continue;
+          }
+          const name = (r.recipient as { recipient: { name: string } } | null)?.recipient.name ?? '';
+          if (r.status === 'draft' || r.status === 'cancelled' || !r.number) continue;
+          // An e-invoice goes to the recipient's e-invoice mailbox (BT-49) when that is an e-mail address; a letter cannot carry it.
+          const einvoiceTo = r.einvoiced && r.einvoice_address?.includes('@') ? r.einvoice_address : null;
+          const email = einvoiceTo ?? r.email;
+          const reason = !einvoiceTo && r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(email)) ? 'Adresse unzustellbar' : null;
+          if (reason) toPrint.push({ invoiceId: r.id, number: r.number, name, reason });
+          else send.push({ personId: r.recipient_person_id, memberId: r.member_id, email: email!, invoiceId: r.id });
         }
-        const name = (r.recipient as { recipient: { name: string } } | null)?.recipient.name ?? '';
-        if (r.status === 'draft' || r.status === 'cancelled' || !r.number) continue;
-        // An e-invoice goes to the recipient's e-invoice mailbox (BT-49) when that is an e-mail address; a letter cannot carry it.
-        const einvoiceTo = r.einvoiced && r.einvoice_address?.includes('@') ? r.einvoice_address : null;
-        const email = einvoiceTo ?? r.email;
-        const reason = !einvoiceTo && r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(email)) ? 'Adresse unzustellbar' : null;
-        if (reason) toPrint.push({ invoiceId: r.id, number: r.number, name, reason });
-        else send.push({ personId: r.recipient_person_id, memberId: r.member_id, email: email!, invoiceId: r.id });
-      }
-      // One delivery per person and message: several invoices for one person go out as separate messages.
-      const batches: (typeof send)[] = [];
-      for (const s of send) {
-        const batch = batches.find((b) => !b.some((x) => x.personId === s.personId));
-        if (batch) batch.push(s);
-        else batches.push([s]);
-      }
-      const ids: string[] = [];
-      await db.transaction().execute(async (tx) => {
+        // One delivery per person and message: several invoices for one person go out as separate messages.
+        const batches: (typeof send)[] = [];
+        for (const s of send) {
+          const batch = batches.find((b) => !b.some((x) => x.personId === s.personId));
+          if (batch) batch.push(s);
+          else batches.push([s]);
+        }
+        const ids: string[] = [];
         for (const b of batches) {
           const id = await createMessage(tx, actor, { kind: 'invoices', category: 'notice', subject: req.body.subject ?? text.subject, body: req.body.body ?? text.body, filter: { template: req.body.template, invoiceIds: b.map((x) => x.invoiceId) } }, b);
           ids.push(id);
         }
+        return { ids, sent: send.length, alreadySent, toPrint };
       });
       reply.status(201);
-      return { messages: await Promise.all(ids.map((id) => dto(actor, id))), sent: send.length, alreadySent, toPrint };
+      return { messages: await Promise.all(ids.map((id) => dto(actor, id))), sent, alreadySent, toPrint };
     },
   );
 

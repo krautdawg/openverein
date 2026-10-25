@@ -86,12 +86,25 @@ describe('documents', () => {
     expect((await admin.del(`/files/${v1.id}`)).status).toBe(409);
     // A hold on the current version protects the whole chain from the 7-day expiry.
     await admin.patch(`/files/${v2.id}`, { legalHold: true });
-    await ctx.db.updateTable('file').set({ created_at: new Date(Date.now() - 8 * 86_400_000) }).execute();
+    await ctx.db.updateTable('file').set({ created_at: new Date(Date.now() - 8 * 86_400_000), temporary_since: new Date(Date.now() - 8 * 86_400_000) }).execute();
     await sweepFiles(ctx.db);
     expect(await ctx.db.selectFrom('file').select('id').execute()).toHaveLength(2);
     await admin.patch(`/files/${v2.id}`, { legalHold: false });
     await sweepFiles(ctx.db);
     expect(await ctx.db.selectFrom('file').select('id').execute()).toHaveLength(0);
+
+    // An old document made temporary today keeps its seven days from today (Codex review of #5).
+    const old = (await upload('name=Alt.pdf', 'alt')).json();
+    await ctx.db.updateTable('file').set({ created_at: new Date(Date.now() - 700 * 86_400_000) }).where('id', '=', old.id).execute();
+    await admin.patch(`/files/${old.id}`, { retentionClass: 'temporary' });
+    await sweepFiles(ctx.db);
+    expect(await ctx.db.selectFrom('file').select('id').where('id', '=', old.id).execute()).toHaveLength(1);
+
+    // The name travels in a header, not in the URL.
+    const viaHeader = await ctx.app.inject({ method: 'POST', url: '/api/v1/files', headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-type': 'application/pdf', 'x-file-name': encodeURIComponent('Attest Müller.pdf') }, payload: 'x' });
+    expect(viaHeader.statusCode, viaHeader.body).toBe(201);
+    expect(viaHeader.json().name).toBe('Attest Müller.pdf');
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/files', headers: { cookie, 'content-type': 'application/octet-stream' }, payload: 'x' })).statusCode).toBe(400);
 
     // A voucher cannot be turned temporary while its retention runs.
     const beleg = (await upload('name=Beleg.pdf&retentionClass=voucher', 'beleg')).json();

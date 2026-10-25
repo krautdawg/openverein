@@ -62,10 +62,11 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
 
 /** Uploads one file as raw bytes (the only non-JSON write the API accepts). */
 export async function uploadFile<T>(path: string, file: File, query: Record<string, string | undefined>): Promise<T> {
-  const qs = new URLSearchParams(Object.entries({ name: file.name, ...query }).filter((e): e is [string, string] => !!e[1]));
+  // The name goes in a header, never in the URL (URLs end up in logs; names can be personal).
+  const qs = new URLSearchParams(Object.entries(query).filter((e): e is [string, string] => !!e[1] && e[0] !== 'name'));
   let res: Response;
   try {
-    res = await fetch(`/api/v1${path}?${qs}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-type': file.type || 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+    res = await fetch(`/api/v1${path}${qs.size ? `?${qs}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-type': file.type || 'application/octet-stream', 'x-file-name': encodeURIComponent(query.name ?? file.name) }, body: file, credentials: 'same-origin' });
   } catch {
     throw new ApiError({ type: 'network', title: 'Keine Verbindung zum Server. Bitte prüfe Deine Internetverbindung.', status: 0 });
   }

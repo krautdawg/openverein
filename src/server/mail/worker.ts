@@ -38,11 +38,15 @@ export async function processQueue(db: Db, opts: { baseUrl?: string; limit?: num
   // shortcut: one club per install, so one rate limit and one pause switch; per-tenant limits come with multi-tenant hosting.
   const org = await db.selectFrom('organization').select(['id', 'mail_per_minute', 'mail_paused_reason']).executeTakeFirst();
   if (!org || org.mail_paused_reason) return 0;
-  const sentLastMinute = await db.selectFrom('delivery').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', org.id).where('status', '=', 'sent').where('sent_at', '>', sql<Date>`now() - interval '1 minute'`).executeTakeFirstOrThrow();
-  const budget = Math.min(opts.limit ?? 30, org.mail_per_minute - sentLastMinute.n);
-  if (budget <= 0) return 0;
-
   const claimed = await db.transaction().execute(async (tx) => {
+    // The budget is counted under the club's row lock, including claims still in flight, so several instances
+    // together stay within the per-minute rate (Codex review of #7).
+    await tx.selectFrom('organization').select('id').where('id', '=', org.id).forUpdate().execute();
+    const used = await tx.selectFrom('delivery').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', org.id)
+      .where((eb) => eb.or([eb.and([eb('status', '=', 'sent'), eb('sent_at', '>', sql<Date>`now() - interval '1 minute'`)]), eb.and([eb('status', '=', 'sending'), eb('claimed_at', '>', sql<Date>`now() - interval '1 minute'`)])]))
+      .executeTakeFirstOrThrow();
+    const budget = Math.min(opts.limit ?? 30, org.mail_per_minute - used.n);
+    if (budget <= 0) return [];
     // Rows that crashed past their last attempt are given up instead of retried forever.
     await tx.updateTable('delivery').set({ status: 'failed', error: 'Versand abgebrochen (zu viele Versuche).' }).where('status', '=', 'sending').where('attempts', '>=', MAX_ATTEMPTS).where('claimed_at', '<', sql<Date>`now() - interval '10 minutes'`).execute();
     const rows = await sql<{ id: string }>`
@@ -80,6 +84,7 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
       'message.subject', 'message.body', 'message.category', 'message.recipient_filter',
       'organization.name as org_name', 'organization.mail_from_name', 'organization.mail_from_address', 'organization.mail_reply_to',
       'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.custom', 'member.membership_number',
+      'person.email as current_email', 'person.einvoice_format', 'person.einvoice_address',
     ])
     .where('delivery.id', '=', id)
     .executeTakeFirstOrThrow();
@@ -92,6 +97,11 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
   const reasons: ('bounce' | 'manual' | 'unsubscribe')[] = d.category === 'newsletter' ? ['bounce', 'manual', 'unsubscribe'] : ['bounce', 'manual'];
   const blocked = await db.selectFrom('suppression').select('reason').where('organization_id', '=', d.organization_id).where('email_hash', '=', emailHash(d.email)).where('reason', 'in', reasons).executeTakeFirst();
   if (blocked) return done({ status: 'skipped', error: blocked.reason === 'unsubscribe' ? 'inzwischen abgemeldet' : 'Adresse inzwischen gesperrt' });
+  // The address was taken when the mail was queued. If the record was corrected since, the old address may belong to
+  // someone else: skip (never redirect an approved mailing silently); a new send goes to the current address.
+  const norm = (a: string | null) => (a ?? '').trim().toLowerCase();
+  const current = [d.current_email, d.einvoice_format === 'xrechnung' ? d.einvoice_address : null].map(norm).filter(Boolean);
+  if (!current.includes(norm(d.email))) return done({ status: 'skipped', error: 'Adresse inzwischen geändert' });
 
   const values: PlaceholderValues = {
     vorname: d.first_name ?? d.company_name ?? '',

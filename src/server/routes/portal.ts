@@ -1,4 +1,5 @@
 import { customText } from '../../shared/customFields.ts';
+import { uploadName } from '../http/upload.ts';
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -308,7 +309,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: 10 * 1024 * 1024 }, (_req, body, done) => done(null, body));
   const EXPENSE_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'];
 
-  app.post('/portal/expenses/files', { schema: { tags, summary: 'Beleg für eine Auslage hochladen (PDF oder Foto, höchstens 10 MB; Dateityp im Header X-File-Type)', security: [], querystring: z.object({ name: z.string().trim().min(1).max(200) }), response: { 201: z.object({ id: z.uuid() }) } } }, async (req, reply) => {
+  app.post('/portal/expenses/files', { schema: { tags, summary: 'Beleg für eine Auslage hochladen (PDF oder Foto, höchstens 10 MB; Dateityp im Header X-File-Type)', security: [], querystring: z.object({ name: z.string().trim().min(1).max(200).optional() }), response: { 201: z.object({ id: z.uuid() }) } } }, async (req, reply) => {
     const u = await portalUser(req, reply);
     const bytes = req.body as Buffer;
     if (!Buffer.isBuffer(bytes) || !bytes.length) throw new Problem(400, 'empty', 'Die Datei ist leer.');
@@ -317,7 +318,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!EXPENSE_FILE_TYPES.includes(type)) throw new Problem(415, 'file-type', 'Bitte ein PDF oder ein Foto (JPG, PNG) hochladen.');
     const sha = await putBlob(bytes);
     // Temporary until a claim uses it; abandoned uploads expire like other temporary files.
-    const f = await db.insertInto('file').values({ organization_id: u.organizationId, folder_id: null, member_id: null, purpose: 'receipt', sha256: sha, size_bytes: bytes.length, mime_type: type, name: req.query.name, retention_class: 'temporary', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
+    const f = await db.insertInto('file').values({ organization_id: u.organizationId, folder_id: null, member_id: null, purpose: 'receipt', sha256: sha, size_bytes: bytes.length, mime_type: type, name: uploadName(req, req.query.name, 200), retention_class: 'temporary', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
     reply.status(201);
     return { id: f.id };
   });

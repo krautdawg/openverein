@@ -203,4 +203,11 @@ describe('events', () => {
     const f = await admin.put(`/events/${free.eventId}/occurrences/2026-12-21/participants/${kid}`, { status: 'yes' });
     expect(f.body.participants.find((p: { memberId: string }) => p.memberId === kid).invoiceId).toBeNull();
   });
+
+  it('Codex review #6: a single occurrence cannot take a new rule', async () => {
+    const ev = (await admin.post('/events', { calendarId, title: 'Training', startsAt: '2026-12-01T18:00', endsAt: '2026-12-01T19:30', recurrence: { freq: 'WEEKLY', byDay: ['TU'] } })).body;
+    const r = await admin.patch(`/events/${ev.eventId}`, { scope: 'this', date: '2026-12-08', title: 'Sondertraining', recurrence: { freq: 'WEEKLY', byDay: ['TH'] } });
+    expect(r.status).toBe(400);
+    expect(await ctx.db.selectFrom('event').select('id').execute()).toHaveLength(1);
+  });
 });

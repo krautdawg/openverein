@@ -8,6 +8,7 @@ import type { FileTable, FolderTable, RetentionClass } from '../db.ts';
 import { deleteChain, deletionBlocker, lockChain } from '../files/chain.ts';
 import { getBlob, putBlob } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
+import { uploadName } from '../http/upload.ts';
 import { loadMemberRow, orgToday } from '../members/query.ts';
 import { requirePermission, scopeOf, type Actor } from '../policy.ts';
 
@@ -189,7 +190,8 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   const uploadQuery = z.object({
-    name: z.string().trim().min(1).max(255),
+    /** deprecated: names can hold personal data and URLs end up in logs; send X-File-Name instead */
+    name: z.string().trim().min(1).max(255).optional(),
     folderId: z.uuid().optional(),
     memberId: z.uuid().optional(),
     retentionClass: z.enum(['document', 'voucher', 'temporary']).default('document'),
@@ -206,7 +208,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     {
       schema: {
         tags,
-        summary: 'Datei hochladen (Body: die Bytes als application/octet-stream, höchstens 20 MB; Dateityp im Header X-File-Type)',
+        summary: 'Datei hochladen (Body: die Bytes als application/octet-stream, höchstens 20 MB; Name im Header X-File-Name, URL-kodiert; Dateityp im Header X-File-Type)',
         querystring: uploadQuery,
         consumes: ['application/octet-stream'],
         response: { 201: fileDto },
@@ -215,6 +217,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const actor = requireActor(req);
       const q = req.query;
+      const name = uploadName(req, q.name);
       if (q.folderId && q.memberId) throw new Problem(400, 'validation', 'Entweder Ordner oder Mitglied.');
       await assertPlace(actor, { folder_id: q.folderId ?? null, member_id: q.memberId ?? null }, 'write');
       const bytes = bytesOf(req.body);
@@ -223,7 +226,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
       const f = await db.transaction().execute(async (tx) => {
         const f = await tx
           .insertInto('file')
-          .values({ organization_id: actor.organizationId, folder_id: q.folderId ?? null, member_id: q.memberId ?? null, sha256: sha, size_bytes: bytes.length, mime_type: mimeOf(req), name: q.name, retention_class: q.retentionClass, retain_until: retainUntil(q.retentionClass, today), uploaded_by: actor.userId })
+          .values({ organization_id: actor.organizationId, folder_id: q.folderId ?? null, member_id: q.memberId ?? null, sha256: sha, size_bytes: bytes.length, mime_type: mimeOf(req), name, retention_class: q.retentionClass, retain_until: retainUntil(q.retentionClass, today), uploaded_by: actor.userId })
           .returningAll()
           .executeTakeFirstOrThrow();
         await audit(tx, actor.organizationId, actor, { action: 'file.uploaded', entityType: 'file', entityId: f.id, diff: { name: [null, f.name], sha256: [null, sha], member: [null, f.member_id] } });
@@ -247,6 +250,8 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
         // Read place and hold from the locked row, so a move or hold set a moment ago is carried over.
         const locked = await tx.updateTable('file').set({ superseded_at: new Date() }).where('id', '=', old.id).where('superseded_at', 'is', null).returningAll().executeTakeFirst();
         if (!locked) throw new Problem(409, 'superseded', 'Jemand hat gerade eine neue Fassung hochgeladen.');
+        // Authorize where the file is *now* (it may have moved while the bytes were stored); a refusal rolls back.
+        await assertPlace(actor, locked, 'write');
         const f = await tx
           .insertInto('file')
           .values({ organization_id: actor.organizationId, folder_id: locked.folder_id, member_id: locked.member_id, sha256: sha, size_bytes: bytes.length, mime_type: mimeOf(req), name: locked.name, retention_class: locked.retention_class, retain_until: retainUntil(locked.retention_class, today), legal_hold: locked.legal_hold, previous_id: locked.id, uploaded_by: actor.userId })
@@ -302,6 +307,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     const updated = await db.transaction().execute(async (tx) => {
       const chain = await lockChain(tx, f.id);
       if (!chain) throw new Problem(409, 'superseded', 'Jemand hat gerade eine neue Fassung hochgeladen.');
+      await assertPlace(actor, chain[0]!, 'write');
       if (b.retentionClass === 'temporary' && chain.some((v) => v.retain_until && v.retain_until >= today)) {
         throw new Problem(409, 'retention', 'Ein Beleg in seiner Aufbewahrungsfrist kann nicht vorübergehend werden.');
       }
@@ -331,6 +337,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const chain = await lockChain(tx, f.id);
       if (!chain) throw new Problem(409, 'superseded', 'Jemand hat gerade eine neue Fassung hochgeladen.');
+      await assertPlace(actor, chain[0]!, 'write');
       const blocker = deletionBlocker(chain, today);
       if (blocker) throw new Problem(409, 'retention', blocker);
       await deleteChain(tx, chain);

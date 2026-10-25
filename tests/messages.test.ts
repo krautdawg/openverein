@@ -147,4 +147,19 @@ describe('messages', () => {
     expect(list.find((t) => t.id === 'dunning')!.custom).toBe(true);
     expect((await admin.del('/mail-templates/dunning')).status).toBe(204);
   });
+
+  it('Codex review #7: one invoice mailing at a time, and no mail to an address corrected after queueing', async () => {
+    await admin.patch('/organization', { street: 'Weg 1', postalCode: '12345', city: 'Musterstadt' });
+    const m = await member('Doppelt', 'doppelt@example.org');
+    const d = await admin.post('/invoices', { memberId: m, lines: [{ text: 'Beitrag', unitCents: 4200 }] });
+    await admin.post(`/invoices/${d.body.id}/issue`, {});
+    const both = await Promise.all([admin.post('/invoices/send-mail', { invoiceIds: [d.body.id] }), admin.post('/invoices/send-mail', { invoiceIds: [d.body.id] })]);
+    expect(both.map((r) => r.body.sent).sort()).toEqual([0, 1]);
+    // The address is corrected before the queue runs: the old one gets nothing.
+    await admin.patch(`/members/${m}`, { email: 'richtig@example.org' });
+    await processQueue(ctx.db);
+    expect(await inbox('doppelt@example.org')).toHaveLength(0);
+    const del = await ctx.db.selectFrom('delivery').select(['status', 'error']).where('invoice_id', '=', d.body.id).executeTakeFirstOrThrow();
+    expect(del).toMatchObject({ status: 'skipped', error: 'Adresse inzwischen geändert' });
+  });
 });

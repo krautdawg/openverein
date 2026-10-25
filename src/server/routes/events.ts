@@ -69,6 +69,18 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     return { e, cal };
   }
 
+  /**
+   * Locks the event row and authorizes its *current* calendar inside the transaction, so a move to another calendar
+   * a moment ago is seen (Codex review of #6). Lock order everywhere: event row first, then the occurrence lock.
+   */
+  async function lockEvent(tx: Db, actor: Actor, id: string, lock: 'update' | 'share' = 'update') {
+    const q = tx.selectFrom('event').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId);
+    const e = await (lock === 'update' ? q.forUpdate() : q.forShare()).executeTakeFirst();
+    if (!e) throw notFound('Termin');
+    await writableCalendar(actor, e.calendar_id);
+    return e;
+  }
+
   function assertOccurrence(e: Ev, date: string) {
     if (occurrences(datePart(e.starts_at), e.rrule, date, date, e.exdates).length === 0) throw new Problem(404, 'not-found', 'An diesem Tag findet der Termin nicht statt.');
   }
@@ -390,13 +402,16 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       requirePermission(actor, 'events', 'write');
-      const { e } = await loadEvent(actor, req.params.id, 'write');
+      await loadEvent(actor, req.params.id, 'write');
       const b = req.body;
+      // A single occurrence leaves the series as a single event: it cannot carry a new rule.
+      if (b.scope === 'this' && b.recurrence !== undefined) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'recurrence', message: 'Eine Wiederholung gilt für die Serie, nicht für einen einzelnen Termin.' }] });
       const v = changes(b);
       if (b.calendarId) await writableCalendar(actor, b.calendarId);
-      // "following" from the very first date is the whole series.
-      const scope = e.rrule && b.scope === 'following' && b.date === datePart(e.starts_at) ? 'all' : b.scope;
       const result = await db.transaction().execute(async (tx) => {
+        const e = await lockEvent(tx, actor, req.params.id);
+        // "following" from the very first date is the whole series.
+        const scope = e.rrule && b.scope === 'following' && b.date === datePart(e.starts_at) ? 'all' : b.scope;
         if (!e.rrule || scope === 'all') {
           const after = await tx.updateTable('event').set({ ...v, updated_at: new Date() }).where('id', '=', e.id).returningAll().executeTakeFirstOrThrow();
           validateTimes(after.starts_at, after.ends_at);
@@ -412,7 +427,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
           await tx.updateTable('event').set({ exdates: sql`array_append(exdates, ${b.date}::date)`, updated_at: new Date() }).where('id', '=', e.id).execute();
           const single = await tx
             .insertInto('event')
-            .values({ ...pick(base), rrule: null, exdates: [], ...v, organization_id: actor.organizationId, created_by: actor.userId } as never)
+            .values({ ...pick(base), exdates: [], ...v, rrule: null, organization_id: actor.organizationId, created_by: actor.userId } as never)
             .returningAll()
             .executeTakeFirstOrThrow();
           validateTimes(single.starts_at, single.ends_at);
@@ -451,10 +466,11 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const actor = requireActor(req);
       requirePermission(actor, 'events', 'write');
-      const { e } = await loadEvent(actor, req.params.id, 'write');
+      await loadEvent(actor, req.params.id, 'write');
       const date = req.body?.date;
-      const scope = req.body?.scope === 'following' && date === datePart(e.starts_at) ? 'all' : (req.body?.scope ?? 'all');
       await db.transaction().execute(async (tx) => {
+        const e = await lockEvent(tx, actor, req.params.id);
+        const scope = req.body?.scope === 'following' && date === datePart(e.starts_at) ? 'all' : (req.body?.scope ?? 'all');
         // Places already charged are cancelled with a cancellation invoice; paid ones must be refunded first (409).
         let billed = tx.selectFrom('participation').innerJoin('invoice', 'invoice.id', 'participation.invoice_id').select('invoice.id').where('participation.event_id', '=', e.id).where('invoice.status', '!=', 'cancelled');
         if (e.rrule && scope !== 'all' && date) billed = billed.where('participation.occurrence_date', scope === 'this' ? '=' : '>=', date);
@@ -501,6 +517,8 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         }
       }
       await db.transaction().execute(async (tx) => {
+        // The event's current calendar must still be writable (lock order: event row, then the occurrence lock).
+        await lockEvent(tx, actor, e.id, 'share');
         // Serialise changes per occurrence so two last places cannot both be taken.
         await sql`select pg_advisory_xact_lock(hashtext(${`${e.id}|${req.params.date}`}))`.execute(tx);
         const current = await tx.selectFrom('participation').selectAll().where('event_id', '=', e.id).where('occurrence_date', '=', req.params.date).where('member_id', '=', member.id).executeTakeFirst();

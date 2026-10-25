@@ -57,7 +57,7 @@ export async function sweepFiles(db: Db) {
 }
 
 async function expireTemporary(db: Db) {
-  const heads = await db.selectFrom('file').select(['id', 'organization_id']).where('retention_class', '=', 'temporary').where('superseded_at', 'is', null).where('created_at', '<', new Date(Date.now() - 7 * 86_400_000)).execute();
+  const heads = await db.selectFrom('file').select(['id', 'organization_id']).where('retention_class', '=', 'temporary').where('superseded_at', 'is', null).where('temporary_since', '<', new Date(Date.now() - 7 * 86_400_000)).execute();
   for (const h of heads) {
     await db.transaction().execute(async (tx) => {
       const chain = await lockChain(tx, h.id);
