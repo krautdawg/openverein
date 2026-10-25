@@ -197,7 +197,11 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
 
       const n = v.intervalMonths;
       const [ps, pe] = periodContaining(cursor, n, v.anchor, start);
-      const segEnd = last ? minDate(pe, last) : pe;
+      // A new price inside the period: with monthly proration, the period splits at the month the price starts
+      // (the following month when it starts mid-month). Without proration it applies from the next period.
+      const change = v.proration === 'month' ? versions.map((x) => (x.validFrom.endsWith('-01') ? x.validFrom : addMonths(`${x.validFrom.slice(0, 7)}-01`, 1))).filter((d) => d > cursor && d <= pe).sort()[0] : undefined;
+      const periodEnd = change ? addDays(change, -1) : pe;
+      const segEnd = last ? minDate(periodEnd, last) : periodEnd;
       const parts = uncovered(cursor, segEnd, billed);
       if (parts.length === 0) {
         skipped.push({ slot, periodStart: cursor, periodEnd: segEnd, reason: 'Zeitraum bereits berechnet.' });
@@ -219,7 +223,7 @@ export function assess(input: AssessInput): { lines: Line[]; skipped: Skipped[] 
         if (a.overrideCents !== null) why += ', individueller Betrag';
         lines.push(line(a, slot, s, e, amount, full, why + '.'));
       }
-      cursor = addDays(pe, 1);
+      cursor = change ?? addDays(pe, 1);
     }
   }
 

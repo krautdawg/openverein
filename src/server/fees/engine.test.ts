@@ -22,6 +22,16 @@ describe('periods', () => {
 });
 
 describe('assess', () => {
+  it('splits a prorated period where a new price starts (mid-month: from the next month)', () => {
+    const { lines } = run([assignment({ validFrom: '2026-01-01' })], [plan({ validFrom: '2000-01-01', amountCents: 12000 }), plan({ validFrom: '2026-07-15', amountCents: 24000 })]);
+    expect(lines.map((l) => [l.periodStart, l.periodEnd, l.amountCents])).toEqual([['2026-01-01', '2026-07-31', 7000], ['2026-08-01', '2026-12-31', 10000]]);
+  });
+
+  it('keeps a whole period at the old price without proration (the new price starts with the next period)', () => {
+    const { lines } = run([assignment({ validFrom: '2026-01-01' })], [plan({ validFrom: '2000-01-01', proration: 'none' }), plan({ validFrom: '2026-07-01', amountCents: 24000, proration: 'none' })]);
+    expect(lines.map((l) => [l.periodStart, l.periodEnd, l.amountCents])).toEqual([['2026-01-01', '2026-12-31', 12000]]);
+  });
+
   it('bills a full year and renders the line text', () => {
     const { lines } = run([assignment()], [plan()]);
     expect(lines).toHaveLength(1);

@@ -80,9 +80,9 @@ export async function loadInputs(db: Db, organizationId: string, opts: { memberI
  * Hash of every input that decides what a member is billed. Posting re-computes it; any difference
  * means the data changed since the preview.
  */
-export function inputHash(m: MemberInputs, versions: Map<string, PlanVersion[]>, until: string) {
+export function inputHash(m: MemberInputs, versions: Map<string, PlanVersion[]>, until: string, hasMandate = false) {
   const plans = [...new Set(m.assignments.map((a) => a.planId))].sort().map((p) => [p, versions.get(p)]);
-  return createHash('sha256').update(JSON.stringify([until, m.membershipNumber, m.exitDate, m.paymentMethod, m.assignments, m.billed, plans])).digest('hex').slice(0, 32);
+  return createHash('sha256').update(JSON.stringify([until, m.membershipNumber, m.exitDate, m.paymentMethod, hasMandate, m.assignments, m.billed, plans])).digest('hex').slice(0, 32);
 }
 
 export function previewFor(m: MemberInputs, versions: Map<string, PlanVersion[]>, until: string, today: string, hasMandate: boolean): PreviewMember {
@@ -104,7 +104,8 @@ export function previewFor(m: MemberInputs, versions: Map<string, PlanVersion[]>
     skipped,
     warnings,
     totalCents: total,
-    hash: inputHash(m, versions, until),
+    // A revoked or new mandate changes what the run can collect: it makes the preview stale too.
+    hash: inputHash(m, versions, until, hasMandate),
   };
 }
 

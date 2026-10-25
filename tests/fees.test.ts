@@ -253,4 +253,31 @@ describe('review fixes', () => {
     expect(seen.body.members.map((m: { memberId: string }) => m.memberId)).toEqual([other.body.id]);
     expect(seen.body.members.map((m: { memberId: string }) => m.memberId)).not.toContain(memberId);
   });
+
+  it('Codex review #3: club-wide runs, mandate in the preview hash, exact quantities, no credit-note cancellation, due date not before issue', async () => {
+    const { memberId } = await setup({ join: '2026-01-01' });
+    const tennis = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN', kind: 'division' })).body.id;
+    const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Kassenwart', [tennis]) });
+    expect((await lead.post('/fee-runs', { until: '2026-12-31' })).status).toBe(403);
+
+    // A new mandate after the preview makes it stale.
+    await admin.patch(`/members/${memberId}/payment-method`, { paymentMethod: 'direct_debit' });
+    const run = await admin.post('/fee-runs', { until: '2026-12-31' });
+    await admin.post(`/members/${memberId}/mandates`, { signedOn: '2026-01-01', accountHolder: 'Eva Beispiel', iban: 'DE02120300000000202051' });
+    expect((await admin.post(`/fee-runs/${run.body.id}/post`, {})).status).toBe(409);
+
+    // 0.29 × 0,50 € is 14.5 cents: 15, not 14; three decimals are refused.
+    const inv = await admin.post('/invoices', { memberId, lines: [{ text: 'Kleinkram', quantity: 0.29, unitCents: 50 }] });
+    expect(inv.body.lines[0].totalCents).toBe(15);
+    expect((await admin.post('/invoices', { memberId, lines: [{ text: 'x', quantity: 1.234, unitCents: 100 }] })).status).toBe(400);
+
+    // Due date before the issue date is refused.
+    const late = await admin.post('/invoices', { memberId, dueDate: '2020-01-01', lines: [{ text: 'Alt', unitCents: 100 }] });
+    expect((await admin.post(`/invoices/${late.body.id}/issue`, {})).status).toBe(400);
+
+    // Credit notes are not cancelled.
+    const credit = await admin.post('/invoices', { memberId, kind: 'credit_note', lines: [{ text: 'Erstattung', unitCents: 3000 }] });
+    await admin.post(`/invoices/${credit.body.id}/issue`, {});
+    expect((await admin.post(`/invoices/${credit.body.id}/cancel`, {})).status).toBe(409);
+  });
 });

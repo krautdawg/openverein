@@ -20,7 +20,7 @@ export const INVOICE_KIND_LABEL = {
 
 export const lineInput = z.object({
   text: z.string().trim().min(1, 'Pflichtfeld.').max(500),
-  quantity: z.number().positive().max(100_000).default(1),
+  quantity: z.number().positive().max(100_000).refine((q) => Number.isInteger(Math.round(q * 100)) && Math.abs(q * 100 - Math.round(q * 100)) < 1e-6, 'Höchstens zwei Nachkommastellen.').default(1),
   unitCents: cents,
   taxRate: z.union([z.literal(0), z.literal(7), z.literal(19)]).default(0),
 });
