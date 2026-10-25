@@ -38,6 +38,7 @@ import { reportRoutes } from './routes/reports.ts';
 import { workHourRoutes } from './routes/workHours.ts';
 import { assemblyRoutes } from './routes/assemblies.ts';
 import { articleRoutes } from './routes/articles.ts';
+import { allowanceRoutes } from './routes/allowances.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -148,6 +149,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(workHourRoutes);
       await api.register(assemblyRoutes);
       await api.register(articleRoutes);
+      await api.register(allowanceRoutes);
     },
     { prefix: '/api/v1' },
   );

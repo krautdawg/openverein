@@ -911,6 +911,28 @@ export interface Database {
   assembly_attendance: AssemblyAttendanceTable;
   article: ArticleTable;
   instance_setting: InstanceSettingTable;
+  allowance_payment: AllowancePaymentTable;
+  allowance_declaration: AllowanceDeclarationTable;
+}
+
+export interface AllowancePaymentTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  kind: 'uebungsleiter' | 'ehrenamt';
+  paid_on: string;
+  amount_cents: number;
+  text: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+export interface AllowanceDeclarationTable {
+  organization_id: string;
+  person_id: string;
+  year: number;
+  kind: 'uebungsleiter' | 'ehrenamt';
+  other_cents: number;
+  declared_on: string;
 }
 
 export interface InstanceSettingTable {

@@ -21,6 +21,7 @@ import { Accounts, EuerReport, Journal, LedgerExports, LedgerSettings } from './
 import { DonationReceipts, Donations, DonationSettingsPage } from './pages/Donations.tsx';
 import { Households } from './pages/Households.tsx';
 import { CashBookPage, Receipts } from './pages/Receipts.tsx';
+import { Allowances } from './pages/Allowances.tsx';
 import { Duplicates } from './pages/Duplicates.tsx';
 import { Census } from './pages/Census.tsx';
 import { HonoursPage } from './pages/Honours.tsx';
@@ -107,6 +108,7 @@ function AdminApp() {
         <Route path="/buchhaltung/export" element={<LedgerExports me={me.data} />} />
         <Route path="/buchhaltung/belege" element={<Receipts me={me.data} />} />
         <Route path="/buchhaltung/kassenbuch" element={<CashBookPage me={me.data} />} />
+        <Route path="/buchhaltung/pauschalen" element={<Allowances me={me.data} />} />
         <Route path="/buchhaltung/:id" element={<Journal me={me.data} />} />
         <Route path="/spenden" element={<Donations me={me.data} />} />
         <Route path="/spenden/bestaetigungen" element={<DonationReceipts me={me.data} />} />
