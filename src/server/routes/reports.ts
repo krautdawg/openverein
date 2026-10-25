@@ -3,7 +3,9 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { requireActor } from '../auth/session.ts';
 import { csvCell } from './members.ts';
-import { requireClubWide, type Actor } from '../policy.ts';
+import { displayName } from '../../shared/members.ts';
+import { applyScope, orgToday } from '../members/query.ts';
+import { requireClubWide, requirePermission, restrictedFields, type Actor } from '../policy.ts';
 
 /** Age brackets of the DOSB/LSB census; the age is the year of the census minus the year of birth. */
 export const CENSUS_BRACKETS = [
@@ -76,5 +78,44 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
     const head = ['Bereich', ...CENSUS_BRACKETS.flatMap((b) => [`${b.label} w`, `${b.label} m`, `${b.label} d`, `${b.label} ohne Angabe`]), 'ohne Geburtsdatum', 'gesamt'];
     const lines = rows.map((r) => [r.name, ...CENSUS_BRACKETS.flatMap((b) => GENDERS.map((g) => r.counts[b.label]![g])), r.noBirthDate, r.total].map(csvCell).join(';'));
     return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="Bestandserhebung-${year}.csv"`).send('﻿' + [head.map(csvCell).join(';'), ...lines].join('\r\n') + '\r\n');
+  });
+
+  const honour = z.object({ memberId: z.uuid(), name: z.string(), date: z.string(), years: z.number() });
+  app.get('/reports/honours', {
+    schema: {
+      tags: ['members'],
+      summary: 'Ehrungen eines Jahres: Vereinsjubiläen (ab 10 Jahre, alle 5 Jahre) und runde Geburtstage der aktuellen Mitglieder',
+      querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100) }),
+      response: { 200: z.object({ anniversaries: z.array(honour), birthdays: z.array(honour).nullable() }) },
+    },
+  }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'members', 'read');
+    const today = await orgToday(db, actor.organizationId);
+    const { year } = req.query;
+    const base = db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id')
+      .select(['member.id', 'member.join_date', 'person.birth_date', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
+      .where('member.organization_id', '=', actor.organizationId)
+      .where('member.status', 'in', ['active', 'future', 'resigned'])
+      .where(applyScope(actor, today, 'read'));
+    const rows = await base.execute();
+    const nameOf = (r: (typeof rows)[number]) => displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name });
+    // Same day in the honour year; 29 February falls on 28 February in other years.
+    const sameDay = (d: string) => (d.slice(5) === '02-29' && !(year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? `${year}-02-28` : `${year}${d.slice(4)}`);
+    const anniversaries = rows
+      .filter((r) => r.join_date)
+      .map((r) => ({ r, years: year - Number(r.join_date!.slice(0, 4)) }))
+      .filter(({ years }) => years >= 10 && years % 5 === 0)
+      .map(({ r, years }) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.join_date!), years }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'de'));
+    const ROUND = new Set([18, 30, 40, 50, 60, 65, 70, 75, 80, 85, 90, 95]);
+    const birthdays = restrictedFields(actor).has('birth_date')
+      ? null
+      : rows
+          .filter((r) => r.birth_date && r.kind === 'natural')
+          .map((r) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.birth_date!), years: year - Number(r.birth_date!.slice(0, 4)) }))
+          .filter((h) => ROUND.has(h.years) || h.years >= 100)
+          .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'de'));
+    return { anniversaries, birthdays };
   });
 };

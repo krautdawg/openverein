@@ -39,3 +39,17 @@ describe('census (Bestandserhebung)', () => {
     expect((await lead.get('/reports/census?year=2027')).status).toBe(403);
   });
 });
+
+describe('honours (Ehrungen)', () => {
+  it('lists membership anniversaries every 5 years from 10 and round birthdays, hiding birthdays without the right', async () => {
+    await admin.post('/members', { lastName: 'Treu', birthDate: '1952-02-29', joinDate: '2002-05-01' });
+    await admin.post('/members', { lastName: 'Neu', birthDate: '1990-06-01', joinDate: '2024-01-01' });
+    const res = (await admin.get('/reports/honours?year=2027')).body;
+    expect(res.anniversaries).toEqual([expect.objectContaining({ name: 'Treu', years: 25, date: '2027-05-01' })]);
+    expect(res.birthdays).toEqual([expect.objectContaining({ name: 'Treu', years: 75, date: '2027-02-28' })]);
+    const adviser = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Steuerberatung', null) });
+    const limited = (await adviser.get('/reports/honours?year=2027')).body;
+    expect(limited.birthdays).toBeNull();
+    expect(limited.anniversaries).toHaveLength(1);
+  });
+});

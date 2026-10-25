@@ -645,3 +645,7 @@ input[type='range'] { accent-color: var(--accent); }
 .age-rule { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
 .age-rule .input[type='number'] { width: 72px; }
 .age-rule .select { width: auto; }
+
+/* Section title with its action on the right; keeps the short court stroke above the title. */
+.section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; margin-bottom: var(--s-3); }
+.section-head h2::before { content: ''; display: block; width: 24px; height: 2px; background: var(--line-strong); margin-bottom: var(--s-2); }

@@ -129,7 +129,7 @@ export function Members({ me }: { me: Me }) {
           <>
             <Link className="btn btn-ghost" to="/mitglieder/haushalte">Haushalte</Link>
             <Link className="btn btn-ghost" to="/mitglieder/dubletten">Dubletten</Link>
-            <Link className="btn btn-ghost" to="/mitglieder/bestandserhebung">Bestandserhebung</Link>
+            <Link className="btn btn-ghost" to="/mitglieder/bestandserhebung">Auswertungen</Link>
             <a className="btn" href={exportHref} download><Download size={16} aria-hidden /> CSV</a>
             {canWrite && <button className="btn btn-primary" onClick={() => setCreating(true)} aria-keyshortcuts="n"><Plus size={16} aria-hidden /> Mitglied anlegen</button>}
           </>
