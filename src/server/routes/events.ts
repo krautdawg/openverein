@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { parseIcs } from '../events/icsImport.ts';
+import { csvCell } from './members.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql, type Selectable } from 'kysely';
 import { z } from 'zod';
@@ -251,6 +252,35 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     }
     if (endsAt < startsAt) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'endsAt', message: 'Das Ende liegt vor dem Beginn.' }] });
   }
+
+  app.get('/calendars/:id/attendance.csv', { schema: { tags, summary: 'Anwesenheitsliste eines Kalenders für einen Zeitraum (Mitglieder × Termine, für Zuschussanträge); CSV mit Semikolon', params: idParam, querystring: z.object({ from: z.iso.date(), to: z.iso.date() }).refine((q) => q.from <= q.to && dayDiff(q.from, q.to) <= 366, { message: 'Zeitraum: Anfang vor Ende, höchstens ein Jahr.' }) } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'events', 'read');
+    requirePermission(actor, 'members', 'read');
+    const cal = (await visibleCalendars(actor)).find((c) => c.id === req.params.id);
+    if (!cal) throw notFound('Kalender');
+    const today = await orgToday(db, actor.organizationId);
+    const rows = await db.selectFrom('participation').innerJoin('event', 'event.id', 'participation.event_id').innerJoin('member', 'member.id', 'participation.member_id').innerJoin('person', 'person.id', 'member.person_id')
+      .select(['participation.occurrence_date', 'participation.status', 'event.id as event_id', 'event.title', 'event.starts_at', 'member.id as member_id', 'member.membership_number', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
+      .where('event.calendar_id', '=', cal.id).where('participation.occurrence_date', '>=', req.query.from).where('participation.occurrence_date', '<=', req.query.to)
+      .where('participation.status', 'in', ['attended', 'not_attended'])
+      // Only members this user may read (a trainer sees their own group).
+      .where(applyScope(actor, today, 'read'))
+      .execute();
+    // One column per session (date and event), in time order; one row per member, by name.
+    const sessions = [...new Map(rows.map((r) => [`${r.occurrence_date}|${r.event_id}`, { key: `${r.occurrence_date}|${r.event_id}`, date: r.occurrence_date, time: r.starts_at.slice(11, 16), title: r.title }])).values()].sort((x, y) => (x.date + x.time).localeCompare(y.date + y.time));
+    const members = [...new Map(rows.map((r) => [r.member_id, { id: r.member_id, number: r.membership_number, name: displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name }) }])).values()].sort((x, y) => x.name.localeCompare(y.name, 'de'));
+    const present = new Set(rows.filter((r) => r.status === 'attended').map((r) => `${r.member_id}|${r.occurrence_date}|${r.event_id}`));
+    const head = ['Name', 'Mitgliedsnummer', ...sessions.map((x) => `${x.date.split('-').reverse().join('.')} ${x.time} ${x.title}`), 'Anwesend'];
+    const lines = members.map((m) => {
+      const marks = sessions.map((x) => (present.has(`${m.id}|${x.date}|${x.key.split('|')[1]}`) ? 'x' : ''));
+      return [m.name, m.number, ...marks, marks.filter(Boolean).length].map(csvCell).join(';');
+    });
+    const totals = ['Anwesende je Termin', '', ...sessions.map((x) => members.filter((m) => present.has(`${m.id}|${x.date}|${x.key.split('|')[1]}`)).length), present.size].map(csvCell).join(';');
+    const csv = '\uFEFF' + [head.map(csvCell).join(';'), ...lines, totals].join('\r\n') + '\r\n';
+    const safe = cal.name.replace(/[^\p{L}\p{N}_-]+/gu, '-');
+    return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="Anwesenheit-${safe}-${req.query.from}-${req.query.to}.csv"`).header('cache-control', 'private, no-store').send(csv);
+  });
 
   app.post('/calendars/:id/import', { schema: { tags, summary: 'Termine aus einer ICS-Datei übernehmen (z. B. aus Google- oder Outlook-Kalender); schon übernommene werden übersprungen', params: idParam, body: z.object({ content: z.string().min(1).max(2_000_000) }), response: { 200: z.object({ imported: z.number(), duplicates: z.number(), notes: z.array(z.object({ title: z.string(), note: z.string() })) }) } } }, async (req) => {
     const actor = requireActor(req);

@@ -164,4 +164,25 @@ describe('events', () => {
     expect(occ.filter((o) => o.title === 'Training').length).toBe(4);
     expect((await admin.post(`/calendars/${cal}/import`, { content: 'kein Kalender' })).status).toBe(400);
   });
+
+  it('exports an attendance list per calendar and period', async () => {
+    const ev = (await admin.post('/events', { calendarId, title: 'Training', startsAt: '2026-09-01T18:00', endsAt: '2026-09-01T19:30', recurrence: { freq: 'WEEKLY', byDay: ['TU'], until: '2026-09-15' } })).body;
+    const anna = (await admin.post('/members', { firstName: 'Anna', lastName: 'Anwesend', joinDate: '2020-01-01' })).body.id;
+    const ben = (await admin.post('/members', { firstName: 'Ben', lastName: '=Bunt', joinDate: '2020-01-01' })).body.id;
+    for (const d of ['2026-09-01', '2026-09-08']) await admin.put(`/events/${ev.eventId}/occurrences/${d}/participants/${anna}`, { status: 'attended' });
+    await admin.put(`/events/${ev.eventId}/occurrences/2026-09-08/participants/${ben}`, { status: 'attended' });
+    await admin.put(`/events/${ev.eventId}/occurrences/2026-09-15/participants/${ben}`, { status: 'not_attended' });
+    const res = await ctx.app.inject({ url: `/api/v1/calendars/${calendarId}/attendance.csv?from=2026-09-01&to=2026-09-30`, headers: { cookie: adminCookie } });
+    expect(res.statusCode, res.body).toBe(200);
+    const lines = res.body.replace('\uFEFF', '').trim().split('\r\n');
+    expect(lines[0]).toBe('Name;Mitgliedsnummer;01.09.2026 18:00 Training;08.09.2026 18:00 Training;15.09.2026 18:00 Training;Anwesend');
+    // Rows by name: "'=Bunt, Ben" sorts before "Anwesend, Anna" only by its quote, so look the rows up.
+    const row = (start: string) => lines.find((l) => l.startsWith(start))!.split(';').slice(2).join(';');
+    expect(row('Anwesend, Anna')).toBe('x;x;;2');
+    expect(row("'=Bunt, Ben")).toBe(';x;;1');
+    // Formula-looking names are neutralised for spreadsheets.
+    expect(lines.some((l) => l.startsWith("'=Bunt"))).toBe(true);
+    expect(lines.at(-1)).toBe('Anwesende je Termin;;1;2;0;3');
+    expect((await ctx.app.inject({ url: `/api/v1/calendars/${calendarId}/attendance.csv?from=2026-01-01&to=2027-06-01`, headers: { cookie: adminCookie } })).statusCode).toBe(400);
+  });
 });
