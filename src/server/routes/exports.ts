@@ -15,9 +15,17 @@ const tags = ['ledger'];
 const datevSettings = z.object({ consultant: z.number().int().min(1001).max(9_999_999).nullable(), client: z.number().int().min(1).max(99_999).nullable(), accountLength: z.number().int().min(4).max(8), fiscalYearStartMonth: z.number().int().min(1).max(12) });
 const exportDto = z.object({ id: z.uuid(), mode: z.enum(['delta', 'full']), from: z.string(), to: z.string(), entryCount: z.number(), sha256: z.string(), createdAt: z.string() });
 
-const csvCell = (v: string | number | null) => (typeof v === 'number' ? String(v) : `"${(v ?? '').replace(/"/g, '""')}"`);
+// Line breaks inside text would split records for readers that cut on CRLF.
+const csvCell = (v: string | number | null) => (typeof v === 'number' ? String(v) : `"${(v ?? '').replace(/[\r\n]+/g, ' ').replace(/"/g, '""')}"`);
 const money = (c: number) => (c / 100).toFixed(2).replace('.', ',');
 const de = (d: string) => d.split('-').reverse().join('.');
+/** The fiscal year that contains `date`, for a year starting in `startMonth`. */
+export function fiscalYear(date: string, startMonth: number) {
+  const y = Number(date.slice(0, 4)) - (Number(date.slice(5, 7)) < startMonth ? 1 : 0);
+  const start = `${y}-${String(startMonth).padStart(2, '0')}-01`;
+  const end = new Date(Date.UTC(y + 1, startMonth - 1, 0)).toISOString().slice(0, 10);
+  return { start, end };
+}
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export const exportRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -59,35 +67,41 @@ export const exportRoutes: FastifyPluginAsyncZod = async (app) => {
       if (to < from) throw new Problem(400, 'validation', 'Das Ende liegt vor dem Anfang.');
       await syncAllocations(db, actor.organizationId);
       const s = await db.selectFrom('ledger_setting').selectAll().where('organization_id', '=', actor.organizationId).executeTakeFirst();
-      if (!s?.datev_consultant || !s.datev_client) throw new Problem(409, 'datev-settings', 'Beraternummer und Mandantennummer fehlen.', 'Trag sie unter Buchhaltung → Einstellungen ein.');
-      let q = db.selectFrom('journal_entry').selectAll().where('organization_id', '=', actor.organizationId).where('entry_date', '>=', from).where('entry_date', '<=', to);
-      if (mode === 'delta') q = q.where((eb) => eb.not(eb.exists(eb.selectFrom('datev_export_entry').select('datev_export_entry.entry_id').whereRef('datev_export_entry.entry_id', '=', 'journal_entry.id'))));
-      const entries = await q.orderBy('entry_date').orderBy('number').execute();
-      if (!entries.length) throw new Problem(409, 'nothing', mode === 'delta' ? 'Seit dem letzten Export gibt es keine neuen Buchungen im Zeitraum.' : 'Keine Buchungen im Zeitraum.');
-      const lines = await db
-        .selectFrom('journal_line')
-        .innerJoin('ledger_account', 'ledger_account.id', 'journal_line.account_id')
-        .leftJoin('cost_center', 'cost_center.id', 'journal_line.cost_center_id')
-        .select(['journal_line.entry_id', 'ledger_account.number', 'ledger_account.name', 'ledger_account.kind', 'ledger_account.datev_number', 'journal_line.debit_cents', 'journal_line.credit_cents', 'journal_line.sphere', 'cost_center.code as cc'])
-        .where('journal_line.entry_id', 'in', entries.map((e) => e.id))
-        .execute();
-      // Refuse while any used account has no DATEV number, and say which.
-      const missing = [...new Map(lines.filter((l) => !l.datev_number).map((l) => [l.number, `${l.number} ${l.name}`])).values()];
-      if (missing.length) throw new Problem(409, 'datev-mapping', 'Für den Export fehlen DATEV-Kontonummern.', `Ergänze sie im Kontenplan: ${missing.join(', ')}.`, { accounts: missing });
-      const rows: DatevLine[] = [];
-      for (const e of entries) {
-        const own = lines.filter((l) => l.entry_id === e.id);
-        for (const r of pairLines(own.map((l) => ({ account: l.datev_number!, debitCents: Number(l.debit_cents), creditCents: Number(l.credit_cents), sphere: l.sphere, costCenter: l.cc, isMoney: l.kind === 'money' })))) {
-          rows.push({ entryNumber: e.number, date: e.entry_date, text: e.text, ...r });
-        }
-      }
-      const fy = `${from.slice(0, 4)}-${String(s.fiscal_year_start_month).padStart(2, '0')}-01`;
-      const csv = buchungsstapel({ consultant: s.datev_consultant, client: s.datev_client, fiscalYearStart: fy <= from ? fy : `${Number(from.slice(0, 4)) - 1}${fy.slice(4)}`, accountLength: s.datev_account_length, from, to, createdAt: new Date() }, rows);
-      const file = zip([{ name: `EXTF_Buchungsstapel_${from}_${to}.csv`, data: cp1252(csv) }]);
-      const sha = createHash('sha256').update(file).digest('hex');
+      if (!s?.datev_consultant || !s.datev_client) throw new Problem(409, 'datev-settings', 'Beraternummer und Mandantennummer fehlen.', 'Trag sie unter Buchhaltung → Export ein.');
+      // DATEV reads DDMM dates against the fiscal year in the header: one batch, one fiscal year.
+      const fy = fiscalYear(from, s.fiscal_year_start_month);
+      if (to > fy.end) throw new Problem(400, 'validation', `Ein Buchungsstapel umfasst höchstens ein Wirtschaftsjahr (bis ${de(fy.end)}).`);
+      const consultant = s.datev_consultant;
+      const client = s.datev_client;
+      // Selecting and recording the entries under one lock: two exports at once never contain the same entries.
       const ex = await db.transaction().execute(async (tx) => {
-        const ex = await tx.insertInto('datev_export').values({ organization_id: actor.organizationId, mode, period_from: from, period_to: to, entry_count: entries.length, file, sha256: sha, created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();
-        await tx.insertInto('datev_export_entry').values(entries.map((e) => ({ export_id: ex.id, entry_id: e.id }))).execute();
+        await sql`select pg_advisory_xact_lock(hashtext(${`datev:${actor.organizationId}`}))`.execute(tx);
+        const base = tx.selectFrom('journal_entry');
+        const inRange = (q: typeof base) => q.where('journal_entry.organization_id', '=', actor.organizationId).where('journal_entry.entry_date', '>=', from).where('journal_entry.entry_date', '<=', to)
+          .$if(mode === 'delta', (q) => q.where((eb) => eb.not(eb.exists(eb.selectFrom('datev_export_entry').select('datev_export_entry.entry_id').whereRef('datev_export_entry.entry_id', '=', 'journal_entry.id')))));
+        const entries = await inRange(base).selectAll('journal_entry').orderBy('entry_date').orderBy('number').execute();
+        if (!entries.length) throw new Problem(409, 'nothing', mode === 'delta' ? 'Seit dem letzten Export gibt es keine neuen Buchungen im Zeitraum.' : 'Keine Buchungen im Zeitraum.');
+        const lines = await inRange(base)
+          .innerJoin('journal_line', 'journal_line.entry_id', 'journal_entry.id')
+          .innerJoin('ledger_account', 'ledger_account.id', 'journal_line.account_id')
+          .leftJoin('cost_center', 'cost_center.id', 'journal_line.cost_center_id')
+          .select(['journal_line.entry_id', 'ledger_account.number', 'ledger_account.name', 'ledger_account.kind', 'ledger_account.datev_number', 'journal_line.debit_cents', 'journal_line.credit_cents', 'journal_line.sphere', 'cost_center.code as cc'])
+          .orderBy('journal_line.id')
+          .execute();
+        // Refuse while any used account has no DATEV number of the configured length, and say which.
+        const missing = [...new Map(lines.filter((l) => !l.datev_number || l.datev_number.length !== s.datev_account_length).map((l) => [l.number, `${l.number} ${l.name}`])).values()];
+        if (missing.length) throw new Problem(409, 'datev-mapping', `Für den Export fehlen DATEV-Kontonummern mit ${s.datev_account_length} Stellen.`, `Ergänze sie im Kontenplan: ${missing.join(', ')}.`, { accounts: missing });
+        const byEntry = Map.groupBy(lines, (l) => l.entry_id);
+        const rows: DatevLine[] = [];
+        for (const e of entries) {
+          for (const r of pairLines((byEntry.get(e.id) ?? []).map((l) => ({ account: l.datev_number!, debitCents: Number(l.debit_cents), creditCents: Number(l.credit_cents), sphere: l.sphere, costCenter: l.cc, isMoney: l.kind === 'money' })))) {
+            rows.push({ entryNumber: e.number, date: e.entry_date, text: e.text, ...r });
+          }
+        }
+        const csv = buchungsstapel({ consultant, client, fiscalYearStart: fy.start, accountLength: s.datev_account_length, from, to, createdAt: new Date() }, rows);
+        const file = zip([{ name: `EXTF_Buchungsstapel_${from}_${to}.csv`, data: cp1252(csv) }]);
+        const ex = await tx.insertInto('datev_export').values({ organization_id: actor.organizationId, mode, period_from: from, period_to: to, entry_count: entries.length, file, sha256: createHash('sha256').update(file).digest('hex'), created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();
+        await sql`insert into datev_export_entry (export_id, entry_id) select ${ex.id}::uuid, unnest(${entries.map((e) => e.id)}::uuid[])`.execute(tx);
         await audit(tx, actor.organizationId, actor, { action: 'ledger.datev_export', entityType: 'datev_export', entityId: ex.id, diff: { from: [null, from], to: [null, to], entries: [null, entries.length], mode: [null, mode] } });
         return ex;
       });
@@ -106,17 +120,20 @@ export const exportRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/ledger/exports/z3',
-    { schema: { tags, summary: 'Datenträgerüberlassung für die Betriebsprüfung (GoBD Z3, Beschreibungsstandard): index.xml und CSV-Tabellen eines Jahres; jeder Abruf wird protokolliert', querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100) }) } },
+    { schema: { tags, summary: 'Datenträgerüberlassung für die Betriebsprüfung (GoBD Z3, Beschreibungsstandard): index.xml und CSV-Tabellen eines Wirtschaftsjahres (beginnend im Jahr `year`); jeder Abruf wird protokolliert', querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100) }) } },
     async (req, reply) => {
       const actor = requireActor(req);
       requireClubWide(actor, 'ledger', 'read');
       await syncAllocations(db, actor.organizationId);
-      const from = `${req.query.year}-01-01`;
-      const to = `${req.query.year}-12-31`;
+      const month = (await db.selectFrom('ledger_setting').select('fiscal_year_start_month').where('organization_id', '=', actor.organizationId).executeTakeFirst())?.fiscal_year_start_month ?? 1;
+      const { start: from, end: to } = fiscalYear(`${req.query.year}-${String(month).padStart(2, '0')}-01`, month);
       const org = await db.selectFrom('organization').select(['name', 'city']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
       const entries = await db.selectFrom('journal_entry').selectAll().where('organization_id', '=', actor.organizationId).where('entry_date', '>=', from).where('entry_date', '<=', to).orderBy('number').execute();
-      const reversed = new Map((await db.selectFrom('journal_entry').select(['id', 'number']).where('organization_id', '=', actor.organizationId).execute()).map((e) => [e.id, e.number]));
-      const lines = entries.length ? await db.selectFrom('journal_line').innerJoin('ledger_account', 'ledger_account.id', 'journal_line.account_id').leftJoin('cost_center', 'cost_center.id', 'journal_line.cost_center_id').leftJoin('tax_rate', 'tax_rate.id', 'journal_line.tax_rate_id').select(['journal_line.entry_id', 'ledger_account.number', 'journal_line.debit_cents', 'journal_line.credit_cents', 'journal_line.sphere', 'cost_center.code as cc', 'tax_rate.label as rate', 'journal_line.text']).where('journal_line.entry_id', 'in', entries.map((e) => e.id)).execute() : [];
+      const reversed = new Map((await db.selectFrom('journal_entry as e').innerJoin('journal_entry as o', 'o.id', 'e.reverses_id').select(['o.id', 'o.number']).where('e.organization_id', '=', actor.organizationId).where('e.entry_date', '>=', from).where('e.entry_date', '<=', to).execute()).map((e) => [e.id, e.number]));
+      const lines = await db.selectFrom('journal_line').innerJoin('journal_entry', 'journal_entry.id', 'journal_line.entry_id').innerJoin('ledger_account', 'ledger_account.id', 'journal_line.account_id').leftJoin('cost_center', 'cost_center.id', 'journal_line.cost_center_id').leftJoin('tax_rate', 'tax_rate.id', 'journal_line.tax_rate_id')
+        .select(['journal_line.entry_id', 'ledger_account.number', 'journal_line.debit_cents', 'journal_line.credit_cents', 'journal_line.sphere', 'cost_center.code as cc', 'tax_rate.label as rate', 'journal_line.text'])
+        .where('journal_entry.organization_id', '=', actor.organizationId).where('journal_entry.entry_date', '>=', from).where('journal_entry.entry_date', '<=', to)
+        .orderBy('journal_entry.number').orderBy('journal_line.id').execute();
       const accounts = await db.selectFrom('ledger_account').selectAll().where('organization_id', '=', actor.organizationId).orderBy('number').execute();
       const invoices = await db.selectFrom('invoice').innerJoin('person', 'person.id', 'invoice.recipient_person_id').select(['invoice.number', 'invoice.kind', 'invoice.issue_date', 'invoice.total_cents', 'invoice.paid_cents', 'invoice.status', 'person.id as person', 'person.first_name', 'person.last_name', 'person.company_name']).where('invoice.organization_id', '=', actor.organizationId).where('invoice.issue_date', '>=', from).where('invoice.issue_date', '<=', to).orderBy('invoice.number').execute();
       const numberOf = new Map(entries.map((e) => [e.id, e.number]));
@@ -124,7 +141,7 @@ export const exportRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const tables: { file: string; name: string; desc: string; key: string; columns: [string, 'num' | 'date' | 'text' | 'money'][]; rows: (string | number | null)[][] }[] = [
         { file: 'buchungen.csv', name: 'Buchungen', desc: 'Journal: eine Zeile je Buchung', key: 'Nr', columns: [['Nr', 'num'], ['Datum', 'date'], ['Text', 'text'], ['Herkunft', 'text'], ['StornoVon', 'num']], rows: entries.map((e) => [e.number, de(e.entry_date), e.text, e.source, e.reverses_id ? (reversed.get(e.reverses_id) ?? null) : null]) },
-        { file: 'buchungszeilen.csv', name: 'Buchungszeilen', desc: 'Soll- und Haben-Zeilen je Buchung', key: 'Buchung', columns: [['Buchung', 'num'], ['Konto', 'text'], ['Soll', 'money'], ['Haben', 'money'], ['Sphaere', 'text'], ['Kostenstelle', 'text'], ['Steuersatz', 'text'], ['Text', 'text']], rows: lines.map((l) => [numberOf.get(l.entry_id)!, l.number, money(Number(l.debit_cents)), money(Number(l.credit_cents)), l.sphere, l.cc, l.rate, l.text]) },
+        { file: 'buchungszeilen.csv', name: 'Buchungszeilen', desc: 'Soll- und Haben-Zeilen je Buchung', key: 'Zeile', columns: [['Zeile', 'num'], ['Buchung', 'num'], ['Konto', 'text'], ['Soll', 'money'], ['Haben', 'money'], ['Sphaere', 'text'], ['Kostenstelle', 'text'], ['Steuersatz', 'text'], ['Text', 'text']], rows: lines.map((l, i) => [i + 1, numberOf.get(l.entry_id)!, l.number, money(Number(l.debit_cents)), money(Number(l.credit_cents)), l.sphere, l.cc, l.rate, l.text]) },
         { file: 'konten.csv', name: 'Konten', desc: 'Kontenplan mit DATEV-Zuordnung', key: 'Konto', columns: [['Konto', 'text'], ['Name', 'text'], ['Art', 'text'], ['DATEV', 'text']], rows: accounts.map((a) => [a.number, a.name, a.kind, a.datev_number]) },
         { file: 'rechnungen.csv', name: 'Rechnungen', desc: 'Ausgangsrechnungen des Jahres', key: 'Nummer', columns: [['Nummer', 'text'], ['Art', 'text'], ['Datum', 'date'], ['Debitor', 'text'], ['Betrag', 'money'], ['Bezahlt', 'money'], ['Status', 'text']], rows: invoices.map((i) => [i.number, i.kind, i.issue_date ? de(i.issue_date) : null, i.person, money(Number(i.total_cents)), money(Number(i.paid_cents)), i.status]) },
         { file: 'debitoren.csv', name: 'Debitoren', desc: 'Rechnungsempfänger', key: 'Id', columns: [['Id', 'text'], ['Name', 'text']], rows: debtors },
@@ -135,13 +152,13 @@ export const exportRoutes: FastifyPluginAsyncZod = async (app) => {
         const kind = type === 'num' ? '<Numeric/>' : type === 'money' ? '<Numeric><Accuracy>2</Accuracy></Numeric>' : type === 'date' ? '<Date><Format>DD.MM.YYYY</Format></Date>' : '<AlphaNumeric/>';
         return `        <${tag}><Name>${n}</Name>${kind}</${tag}>`;
       };
-      const index = `<?xml version="1.0" encoding="ISO-8859-1"?>
+      const index = `<?xml version="1.0" encoding="windows-1252"?>
 <!DOCTYPE DataSet SYSTEM "gdpdu-01-09-2004.dtd">
 <DataSet>
   <Version>1.0</Version>
-  <DataSupplier><Name>${xml(org.name)}</Name><Location>${xml(org.city ?? '')}</Location><Comment>OpenVerein, Geschäftsjahr ${req.query.year}</Comment></DataSupplier>
+  <DataSupplier><Name>${xml(org.name)}</Name><Location>${xml(org.city ?? '')}</Location><Comment>OpenVerein, Wirtschaftsjahr ${de(from)} bis ${de(to)}</Comment></DataSupplier>
   <Media>
-    <Name>Geschäftsjahr ${req.query.year}</Name>
+    <Name>Wirtschaftsjahr ${de(from)} bis ${de(to)}</Name>
 ${tables
   .map(
     (t) => `    <Table>

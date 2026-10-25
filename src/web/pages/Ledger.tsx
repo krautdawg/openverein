@@ -469,8 +469,13 @@ export function LedgerExports({ me }: { me: Me }) {
   const settings = useQuery({ queryKey: ['datev-settings'], queryFn: () => api<DatevSettings>('/ledger/datev-settings') });
   const exports = useQuery({ queryKey: ['datev-exports'], queryFn: () => api<DatevExport[]>('/ledger/exports') });
   const y = Number(year());
-  const [from, setFrom] = useState(`${y}-01-01`);
-  const [to, setTo] = useState(todayLocal());
+  const today = todayLocal();
+  // Default: from the start of the current fiscal year (a DATEV batch stays inside one).
+  const fyMonth = settings.data?.fiscalYearStartMonth ?? 1;
+  const fyStart = `${Number(today.slice(5, 7)) < fyMonth ? y - 1 : y}-${String(fyMonth).padStart(2, '0')}-01`;
+  const [fromInput, setFrom] = useState('');
+  const from = fromInput || fyStart;
+  const [to, setTo] = useState(today);
   const [mode, setMode] = useState<'delta' | 'full'>('delta');
   const [error, setError] = useState<ApiError>();
   const [done, setDone] = useState<DatevExport>();

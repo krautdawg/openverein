@@ -48,6 +48,11 @@ describe('exports', () => {
     expect(csv.split('\r\n')[2]).toContain('250,00;"S";"EUR";;;;1800;2250;;0503;"1";;;"Spende Bäckerei"');
     expect((await run()).body.type).toContain('nothing'); // delta: nothing new
     expect((await admin.post('/ledger/exports/datev', { from: '2026-01-01', to: '2026-03-31', mode: 'full' })).status).toBe(201);
+    // One batch, one fiscal year; parallel delta exports never repeat entries.
+    expect((await admin.post('/ledger/exports/datev', { from: '2025-12-01', to: '2026-01-31' })).status).toBe(400);
+    await admin.post('/ledger/bookings', { kind: 'income', date: '2026-03-06', text: 'Spende 2', moneyAccountId: acc('1100'), lines: [{ grossCents: 1000, accountId: acc('4100') }] });
+    const both = await Promise.all([run(), run()]);
+    expect(both.map((r) => r.status).sort()).toEqual([201, 409]);
   });
 
   it('builds the tax-audit package with index.xml and tables, and logs the access', async () => {
@@ -58,6 +63,7 @@ describe('exports', () => {
     expect(Object.keys(files).sort()).toEqual(['buchungen.csv', 'buchungszeilen.csv', 'debitoren.csv', 'index.xml', 'konten.csv', 'rechnungen.csv']);
     expect(files['index.xml']).toContain('<URL>buchungszeilen.csv</URL>');
     expect(files['buchungen.csv']).toContain('1;"01.04.2026";"Hallenmiete";"manual";');
+    expect(files['buchungszeilen.csv']!.split('\r\n')[0]).toMatch(/^1;1;"1100";0,00;480,00;/);
     const log = await ctx.db.selectFrom('audit_event').select('action').where('action', '=', 'ledger.z3_export').execute();
     expect(log).toHaveLength(1);
   });

@@ -50,7 +50,7 @@ export function zip(files: { name: string; data: Buffer }[], date = new Date()) 
 }
 
 // Windows-1252 differs from Latin-1 only in 0x80–0x9F; these are the printable ones DATEV texts may contain.
-const CP1252: Record<string, number> = { '€': 0x80, '‚': 0x82, '„': 0x84, '…': 0x85, '–': 0x96, '—': 0x97, '‘': 0x91, '’': 0x92, '“': 0x93, '”': 0x94, '•': 0x95, 'Š': 0x8a, 'š': 0x9a, 'Œ': 0x8c, 'œ': 0x9c, 'Ž': 0x8e, 'ž': 0x9e, 'Ÿ': 0x9f };
+const CP1252: Record<string, number> = { '€': 0x80, '‚': 0x82, 'ƒ': 0x83, '„': 0x84, '…': 0x85, '†': 0x86, '‡': 0x87, 'ˆ': 0x88, '‰': 0x89, 'Š': 0x8a, '‹': 0x8b, 'Œ': 0x8c, 'Ž': 0x8e, '‘': 0x91, '’': 0x92, '“': 0x93, '”': 0x94, '•': 0x95, '–': 0x96, '—': 0x97, '˜': 0x98, '™': 0x99, 'š': 0x9a, '›': 0x9b, 'œ': 0x9c, 'ž': 0x9e, 'Ÿ': 0x9f };
 /** Encodes text as Windows-1252 (DATEV's ANSI); characters it cannot hold become "?". */
 export function cp1252(text: string) {
   const out = Buffer.alloc(text.length * 2);

@@ -19,3 +19,10 @@ it('writes the EXTF 700 header and rows', () => {
   expect(cols!.split(';')).toHaveLength(38);
   expect(row).toBe('250,00;"S";"EUR";;;;1200;2250;;0503;"7";;;"Spende ""Bäckerei""";;;;;;;;;;;;;;;;;;;;;;;"1";""');
 });
+
+it('finds the fiscal year of a date', async () => {
+  const { fiscalYear } = await import('../routes/exports.ts');
+  expect(fiscalYear('2026-03-05', 1)).toEqual({ start: '2026-01-01', end: '2026-12-31' });
+  expect(fiscalYear('2026-03-05', 7)).toEqual({ start: '2025-07-01', end: '2026-06-30' });
+  expect(fiscalYear('2026-07-01', 7)).toEqual({ start: '2026-07-01', end: '2027-06-30' });
+});
