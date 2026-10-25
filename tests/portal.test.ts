@@ -75,6 +75,15 @@ describe('member portal', () => {
     expect((await get('/members', cookie)).statusCode).toBe(401);
   });
 
+  it('shows the custom fields the club marks as visible to members, and only those', async () => {
+    const size = (await admin.post('/custom-fields', { key: 'trikot', label: 'Trikotgröße', type: 'select', options: ['S', 'M'], visibleToMember: true })).body;
+    const note = (await admin.post('/custom-fields', { key: 'intern', label: 'Interne Notiz', type: 'text' })).body;
+    await admin.post('/members', { firstName: 'Fritz', lastName: 'Feld', email: 'feld@example.org', joinDate: '2024-01-01', custom: { [size.id]: 'M', [note.id]: 'schwierig' } });
+    const cookie = await signIn('feld@example.org');
+    const me = JSON.parse((await get('/portal/me', cookie)).body);
+    expect(me.members[0].custom).toEqual([{ label: 'Trikotgröße', value: 'M' }]);
+  });
+
   it('limits code attempts and expires codes', async () => {
     await admin.post('/members', { lastName: 'Code', email: 'code@example.org', joinDate: '2024-01-01' });
     await post('/portal/auth/request-code', { email: 'code@example.org' });
