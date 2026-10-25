@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { Cake, ChevronLeft, ChevronRight, Link2, Plus, Upload } from 'lucide-react';
+import { Cake, ChevronLeft, ChevronRight, Download, Link2, Plus, Upload } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { PARTICIPATION_LABEL, type Calendar, type Occurrence, type OccurrenceDetail } from '../../shared/events.ts';
 import { euro } from '../../shared/fees.ts';
@@ -382,9 +382,10 @@ function CalendarsSheet({ calendars, onClose }: { calendars: Calendar[]; onClose
             <span>
               <span className="court" style={courtVar(c.color)}>{c.name}</span>
               <div className="meta">{c.groupIds ? `Nur für ${c.groupIds.map((g) => groups?.find((x) => x.id === g)?.name ?? '…').join(', ')}` : 'Für alle Mitglieder'}</div>
-              <span className="actions-inline" style={{ marginTop: 'var(--s-1)' }}>
-                <button className="btn btn-ghost" style={{ paddingLeft: 0 }} onClick={() => void makeFeed(c.id)}><Link2 size={16} aria-hidden /> {c.hasFeed ? 'Neuer Abo-Link' : 'Abo-Link'}</button>
-                <label className="btn btn-ghost">
+              <span className="actions-inline" style={{ marginTop: 'var(--s-1)', columnGap: 'var(--s-4)' }}>
+                <button className="btn btn-ghost" style={{ paddingLeft: 0, paddingRight: 0 }} onClick={() => void makeFeed(c.id)}><Link2 size={16} aria-hidden /> {c.hasFeed ? 'Neuer Abo-Link' : 'Abo-Link'}</button>
+                <a className="btn btn-ghost" style={{ paddingLeft: 0, paddingRight: 0 }} href={`/api/v1/calendars/${c.id}/attendance.csv?from=${todayLocal().slice(0, 4)}-01-01&to=${todayLocal()}`} download><Download size={16} aria-hidden /> Anwesenheit {todayLocal().slice(0, 4)}</a>
+                <label className="btn btn-ghost" style={{ paddingLeft: 0, paddingRight: 0 }}>
                   <Upload size={16} aria-hidden /> ICS importieren
                   <input type="file" accept=".ics,text/calendar" hidden aria-label={`ICS-Datei in ${c.name} importieren`} onChange={(e) => { const f = e.target.files?.[0]; if (f) void importIcs(c.id, f); e.target.value = ''; }} />
                 </label>
