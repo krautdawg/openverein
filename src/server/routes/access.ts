@@ -149,8 +149,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/roles', { schema: { tags: ['access'], summary: 'Eigene Rolle anlegen (z. B. als Kopie einer eingebauten)', body: roleCreate, response: { 201: role } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requireStepUp(actor);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const fields = req.body.restrictedFields.filter((f) => (RESTRICTABLE_FIELDS as readonly string[]).includes(f));
     assertNotAbove(actor, req.body.permissions, null, fields);
@@ -169,8 +169,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.patch('/roles/:id', { schema: { tags: ['access'], summary: 'Eigene Rolle ändern (eingebaute Rollen sind unveränderlich)', params: idParam, body: roleCreate.partial(), response: { 200: role } } }, async (req) => {
     const actor = requireActor(req);
-    requireStepUp(actor);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     const before = (await rolesById(actor)).get(req.params.id);
     if (!before) throw notFound('Rolle');
     if (before.builtin_key) throw new Problem(409, 'builtin-role', 'Eingebaute Rollen lassen sich nicht ändern. Lege eine Kopie an.');
@@ -193,8 +193,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.delete('/roles/:id', { schema: { tags: ['access'], summary: 'Eigene Rolle löschen, wenn sie niemandem zugewiesen ist', params: idParam, body: z.object({}).optional(), response: { 204: z.null() } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requireStepUp(actor);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const r = (await rolesById(actor)).get(req.params.id);
     if (!r) throw notFound('Rolle');
@@ -221,8 +221,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/users', { schema: { tags: ['access'], summary: 'Zugang anlegen und Einladungslink erzeugen (Link wird nur einmal angezeigt)', body: userCreate, response: { 201: inviteResult } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requireStepUp(actor);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     await checkGrants(actor, req.body.grants);
     const result = await db.transaction().execute(async (tx) => {
@@ -240,6 +240,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/users/:id/invite', { schema: { tags: ['access'], summary: 'Neuen Einladungslink erzeugen (der alte wird ungültig)', params: idParam, body: z.object({}).optional(), response: { 200: inviteResult } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
     // An invitation is not a password reset: once the user has set a password, no new link.
@@ -255,8 +256,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/users/:id/totp/reset', { schema: { tags: ['access'], summary: 'Zweiten Faktor eines Zugangs zurücksetzen (Handy verloren); die Person richtet ihn neu ein', params: idParam, body: z.object({}).optional(), response: { 200: user } } }, async (req) => {
     const actor = requireActor(req);
-    requireStepUp(actor);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
     await assertCanManage(actor, u.id);
@@ -273,8 +274,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.patch('/users/:id', { schema: { tags: ['access'], summary: 'Zugang ändern: Name, sperren/entsperren, Rollen', params: idParam, body: userPatch, response: { 200: user } } }, async (req) => {
     const actor = requireActor(req);
-    requireStepUp(actor);
     requirePermission(actor, 'settings', 'write');
+    requireStepUp(actor);
     assertHuman(actor);
     const u = await loadUser(actor, req.params.id);
     await assertCanManage(actor, u.id);
@@ -349,8 +350,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { tags: ['access'], summary: 'API-Schlüssel mit einer Rolle erstellen (wird nur einmal angezeigt)', body: apiTokenCreate, response: { 201: z.object({ token: z.string(), apiToken }) } } },
     async (req, reply) => {
       const actor = requireActor(req);
-      requireStepUp(actor);
       requirePermission(actor, 'api', 'write');
+      requireStepUp(actor);
       requirePermission(actor, 'settings', 'write');
       // Tokens cannot create tokens: a leaked key must not be able to mint more keys.
       if (actor.kind === 'token') throw forbidden('api:write (nur angemeldete Zugänge)');

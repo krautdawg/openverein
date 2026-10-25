@@ -176,15 +176,20 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   const currentSession = (req: { cookies: Record<string, string | undefined> }) => sha256(req.cookies.ov_session ?? '');
 
-  app.post('/auth/totp/setup', { schema: { tags: ['auth'], summary: 'Zweiten Faktor einrichten: neues Geheimnis für die Authenticator-App (noch nicht aktiv)', body: z.object({}).optional(), response: { 200: z.object({ secret: z.string(), uri: z.string() }) } } }, async (req) => {
+  app.post('/auth/totp/setup', { ...limited, schema: { tags: ['auth'], summary: 'Zweiten Faktor einrichten: neues Geheimnis für die Authenticator-App (noch nicht aktiv). Beim ersten Mal mit Passwort.', body: z.object({ password: z.string().max(128).optional() }).optional(), response: { 200: z.object({ secret: z.string(), uri: z.string() }) } } }, async (req) => {
     const actor = requireActor(req);
     if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
-    // Replacing an active factor needs a fresh confirmation with the old one.
-    if (actor.mfa?.enrolled && !config.demoMode) requireStepUp(actor);
+    // Replacing an active factor needs a fresh confirmation with the old one; a first setup needs the password,
+    // so a stolen session alone cannot attach the attacker's phone.
+    if (actor.mfa?.enrolled) requireStepUp(actor);
+    else {
+      const row = await db.selectFrom('app_user').select('password_hash').where('id', '=', actor.id).executeTakeFirstOrThrow();
+      if (!row.password_hash || !req.body?.password || !(await verifyPassword(row.password_hash, req.body.password))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'password', message: 'Bitte bestätige mit Deinem Passwort.' }] });
+    }
     const user = await db.selectFrom('app_user').innerJoin('organization', 'organization.id', 'app_user.organization_id').select(['app_user.email', 'organization.name as org']).where('app_user.id', '=', actor.id).executeTakeFirstOrThrow();
     const secret = newSecret();
-    // Stored as pending: totp_enabled_at stays as it is until /auth/totp/enable confirms a code.
-    await db.updateTable('app_user').set({ totp_secret_encrypted: encrypt(`pending:${secret}`) }).where('id', '=', actor.id).execute();
+    // Stored as pending: the active secret keeps working until /auth/totp/enable confirms a code for the new one.
+    await db.updateTable('app_user').set({ totp_pending_secret_encrypted: encrypt(secret) }).where('id', '=', actor.id).execute();
     return { secret, uri: otpauthUri(secret, user.email, `OpenVerein ${user.org}`) };
   });
 
@@ -194,12 +199,13 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     const codes = recoveryCodes();
     await db.transaction().execute(async (tx) => {
       const user = await tx.selectFrom('app_user').selectAll().where('id', '=', actor.id).forUpdate().executeTakeFirstOrThrow();
-      const pending = user.totp_secret_encrypted ? decrypt(user.totp_secret_encrypted) : '';
-      if (!pending.startsWith('pending:')) throw new Problem(409, 'no-setup', 'Starte die Einrichtung zuerst.');
-      const secret = pending.slice('pending:'.length);
+      if (!user.totp_pending_secret_encrypted) throw new Problem(409, 'no-setup', 'Starte die Einrichtung zuerst.');
+      const secret = decrypt(user.totp_pending_secret_encrypted);
       const step = verifyCode(secret, req.body.code);
       if (step === null) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'code', message: 'Der Code stimmt nicht. Prüf die Uhrzeit auf dem Handy.' }] });
-      await tx.updateTable('app_user').set({ totp_secret_encrypted: encrypt(secret), totp_enabled_at: new Date(), totp_last_step: step }).where('id', '=', user.id).execute();
+      await tx.updateTable('app_user').set({ totp_secret_encrypted: encrypt(secret), totp_pending_secret_encrypted: null, totp_enabled_at: new Date(), totp_last_step: step }).where('id', '=', user.id).execute();
+      // Sessions that only ever passed the password end here; this one is now confirmed.
+      await tx.deleteFrom('session').where('user_id', '=', user.id).where('token_hash', '!=', currentSession(req)).execute();
       await tx.deleteFrom('totp_recovery_code').where('user_id', '=', user.id).execute();
       await tx.insertInto('totp_recovery_code').values(codes.map((c) => ({ user_id: user.id, code_hash: blindIndex(`recovery:${c}`) }))).execute();
       await tx.updateTable('session').set({ mfa_at: new Date() }).where('token_hash', '=', currentSession(req)).execute();
@@ -215,10 +221,23 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       const user = await tx.selectFrom('app_user').selectAll().where('id', '=', actor.id).forUpdate().executeTakeFirstOrThrow();
       const used = await checkSecondFactor(tx, user, req.body.code);
       await audit(tx, actor.organizationId, actor, { action: used ? `auth.step_up${used === 'recovery' ? '_recovery_code' : ''}` : 'auth.step_up_failed', entityType: 'app_user', entityId: user.id });
-      if (used) await tx.updateTable('session').set({ mfa_at: new Date() }).where('token_hash', '=', currentSession(req)).execute();
-      return !!used;
+      if (used) {
+        await tx.updateTable('app_user').set({ failed_logins: 0 }).where('id', '=', user.id).execute();
+        await tx.updateTable('session').set({ mfa_at: new Date() }).where('token_hash', '=', currentSession(req)).execute();
+        return 'ok' as const;
+      }
+      // Wrong codes count like wrong sign-ins: a stolen session cannot guess its way to critical actions.
+      const fails = user.failed_logins + 1;
+      if (fails >= MAX_FAILS) {
+        await tx.updateTable('app_user').set({ failed_logins: fails, locked_until: new Date(Date.now() + Math.min(60, 2 ** (fails - MAX_FAILS)) * 60_000) }).where('id', '=', user.id).execute();
+        await tx.deleteFrom('session').where('token_hash', '=', currentSession(req)).execute();
+        return 'locked' as const;
+      }
+      await tx.updateTable('app_user').set({ failed_logins: fails }).where('id', '=', user.id).execute();
+      return 'wrong' as const;
     });
-    if (!ok) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'code', message: 'Der Code stimmt nicht.' }] });
+    if (ok === 'locked') throw new Problem(401, 'locked', 'Zu viele falsche Codes. Du wurdest abgemeldet; melde Dich später wieder an.');
+    if (ok === 'wrong') throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'code', message: 'Der Code stimmt nicht.' }] });
     return { ok: true };
   });
 
@@ -232,9 +251,12 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/auth/sessions/revoke-others', { schema: { tags: ['auth'], summary: 'Alle anderen Anmeldungen beenden', body: z.object({}).optional(), response: { 200: z.object({ revoked: z.number() }) } } }, async (req) => {
     const actor = requireActor(req);
     if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
-    const r = await db.deleteFrom('session').where('user_id', '=', actor.id).where('token_hash', '!=', currentSession(req)).executeTakeFirst();
-    await audit(db, actor.organizationId, actor, { action: 'auth.sessions_revoked', entityType: 'app_user', entityId: actor.id });
-    return { revoked: Number(r.numDeletedRows) };
+    const revoked = await db.transaction().execute(async (tx) => {
+      const r = await tx.deleteFrom('session').where('user_id', '=', actor.id).where('token_hash', '!=', currentSession(req)).executeTakeFirst();
+      await audit(tx, actor.organizationId, actor, { action: 'auth.sessions_revoked', entityType: 'app_user', entityId: actor.id });
+      return Number(r.numDeletedRows);
+    });
+    return { revoked };
   });
 
   app.post(

@@ -19,10 +19,12 @@ export function SecuritySettings({ me }: { me: Me }) {
   const [error, setError] = useState<ApiError>();
   const [note, setNote] = useState<string>();
 
-  async function start() {
+  const [askPassword, setAskPassword] = useState(false);
+  async function start(password?: string) {
     setError(undefined);
     try {
-      setSetup(await api('/auth/totp/setup', { method: 'POST' }));
+      setSetup(await api('/auth/totp/setup', { method: 'POST', body: password ? { password } : {} }));
+      setAskPassword(false);
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);
     }
@@ -78,7 +80,16 @@ export function SecuritySettings({ me }: { me: Me }) {
             <dt>Status</dt>
             <dd>{me.mfa.enrolled ? <span className="status" data-s="active">eingerichtet</span> : <span className="status" data-s="applicant">nicht eingerichtet</span>}</dd>
             <dt />
-            <dd><button className="btn" onClick={() => void start()}>{me.mfa.enrolled ? 'Neues Handy einrichten' : 'Jetzt einrichten'}</button></dd>
+            <dd>
+              {askPassword ? (
+                <form className="inline-form" noValidate onSubmit={(e) => { e.preventDefault(); void start(String(new FormData(e.currentTarget).get('password') ?? '')); }}>
+                  <Field label="Dein Passwort zur Bestätigung" name="password" type="password" autoComplete="current-password" autoFocus error={error?.fieldError('password')} />
+                  <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">Weiter</button><button type="button" className="btn btn-ghost" onClick={() => setAskPassword(false)}>Abbrechen</button></div>
+                </form>
+              ) : (
+                <button className="btn" onClick={() => (me.mfa.enrolled ? void start() : setAskPassword(true))}>{me.mfa.enrolled ? 'Neues Handy einrichten' : 'Jetzt einrichten'}</button>
+              )}
+            </dd>
           </dl>
         )}
       </section>

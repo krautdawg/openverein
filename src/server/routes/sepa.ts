@@ -214,8 +214,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { tags, summary: 'Einzug anlegen und SEPA-Datei erzeugen (XSD-geprüft). Jede Rechnung kann nur in einem laufenden Einzug sein.', body: runCreate, response: { 201: run } } },
     async (req, reply) => {
       const actor = requireActor(req);
-      requireStepUp(actor);
       requireClubWide(actor, 'write');
+      requireStepUp(actor);
       if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Die SEPA-Datei enthält IBANs, die Du nicht sehen darfst.', { permission: 'members.field.iban' });
       const today = await orgToday(db, actor.organizationId);
       const { kind, bankAccountId, collectionDate, invoiceIds } = req.body;
@@ -375,8 +375,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) => {
       const actor = requireActor(req);
-      requireStepUp(actor);
       requireClubWide(actor, 'write');
+      requireStepUp(actor);
       await db.transaction().execute(async (tx) => {
         const r = await tx.selectFrom('collection_run').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
         if (!r) throw notFound('Einzug');

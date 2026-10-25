@@ -39,13 +39,13 @@ export async function setupClub(app: App, overrides: Partial<{ clubName: string;
   if (res.statusCode !== 201) throw new Error(`setup failed: ${res.body}`);
   const cookie = `ov_session=${res.cookies.find((c) => c.name === 'ov_session')!.value}`;
   // Admins hold finance write rights, so they use TOTP; enrolling also confirms the session for ten minutes.
-  const totp = await enrollTotp(app, cookie);
+  const totp = await enrollTotp(app, cookie, overrides.password ?? 'korrekt-pferd-batterie');
   return { cookie, me: res.json(), totp };
 }
 
 /** Sets up TOTP for the signed-in user; returns the secret and the recovery codes. */
-export async function enrollTotp(app: App, cookie: string) {
-  const setup = await app.inject({ method: 'POST', url: '/api/v1/auth/totp/setup', headers: { cookie }, payload: {} });
+export async function enrollTotp(app: App, cookie: string, password = 'ein-sehr-langes-passwort') {
+  const setup = await app.inject({ method: 'POST', url: '/api/v1/auth/totp/setup', headers: { cookie }, payload: { password } });
   if (setup.statusCode !== 200) throw new Error(`totp setup failed: ${setup.body}`);
   const secret = setup.json().secret as string;
   const enable = await app.inject({ method: 'POST', url: '/api/v1/auth/totp/enable', headers: { cookie }, payload: { code: codeAt(secret, currentStep()) } });

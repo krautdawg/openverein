@@ -60,6 +60,7 @@ export interface AppUserTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   totp_secret_encrypted: string | null;
+  totp_pending_secret_encrypted: string | null;
   totp_enabled_at: Date | null;
   totp_last_step: number | null;
 }

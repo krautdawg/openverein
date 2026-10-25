@@ -64,4 +64,29 @@ describe('TOTP', () => {
     expect((await admin.post('/auth/sessions/revoke-others', {})).body.revoked).toBe(1);
     expect((await admin.get('/auth/sessions')).body).toHaveLength(1);
   });
+
+  it('keeps the active phone working while a new one is only being set up, and refuses a replayed step', async () => {
+    await admin.post('/auth/totp/setup', {}); // abandoned: never confirmed
+    const login = async (code: string) => {
+      const t = (await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: 'erika@example.org', password: 'korrekt-pferd-batterie' } })).json().ticket;
+      return ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login/totp', payload: { ticket: t, code } });
+    };
+    const code = totpNow(adminSecret, 1);
+    expect((await login(code)).statusCode).toBe(200);
+    expect((await login(code)).statusCode).toBe(401); // same time step again
+  });
+
+  it('locks after repeated wrong step-up codes and ends password-only sessions when TOTP is enabled', async () => {
+    const first = await invite('Kassenwart');
+    const second = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: 'kassenwart@example.org', password: 'ein-sehr-langes-passwort' } });
+    const other = `ov_session=${second.cookies.find((c) => c.name === 'ov_session')!.value}`;
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/totp/setup', headers: { cookie: first }, payload: {} })).statusCode).toBe(400); // password needed
+    await enrollTotp(ctx.app, first);
+    expect((await ctx.app.inject({ url: '/api/v1/invoices', headers: { cookie: other } })).statusCode).toBe(401);
+    expect((await ctx.app.inject({ url: '/api/v1/invoices', headers: { cookie: first } })).statusCode).toBe(200);
+
+    for (let i = 0; i < 4; i++) expect((await admin.post('/auth/step-up', { code: '000000' })).status).toBe(400);
+    expect((await admin.post('/auth/step-up', { code: '000000' })).status).toBe(401);
+    expect((await admin.get('/auth/me')).status).toBe(401);
+  });
 });

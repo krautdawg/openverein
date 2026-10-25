@@ -19,10 +19,13 @@ export class ApiError extends Error {
 }
 
 let stepUpHandler: (() => Promise<boolean>) | null = null;
+let stepUpInFlight: Promise<boolean> | null = null;
 /** The app shell registers a prompt that asks for a fresh TOTP code; api() then retries once. */
 export const setStepUpHandler = (h: typeof stepUpHandler) => {
   stepUpHandler = h;
 };
+// Several requests may need the step-up at once: they share one prompt.
+const stepUp = () => (stepUpInFlight ??= stepUpHandler!().finally(() => (stepUpInFlight = null)));
 
 /** The UI talks only to the public REST API, so every UI action is also an API action. */
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}, retried = false): Promise<T> {
@@ -38,7 +41,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({ title: 'Keine Antwort vom Server.', status: res.status, type: 'network' }));
   if (!res.ok) {
-    if (!retried && res.status === 403 && String((data as ApiProblem).type).endsWith('/step-up-required') && stepUpHandler && (await stepUpHandler())) return api<T>(path, init, true);
+    if (!retried && res.status === 403 && String((data as ApiProblem).type).endsWith('/step-up-required') && stepUpHandler && (await stepUp())) return api<T>(path, init, true);
     throw new ApiError(data as ApiProblem);
   }
   return data as T;

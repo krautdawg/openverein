@@ -35,6 +35,8 @@ test('first run: set up the club, use the command palette, rename the club, log 
   await expect(page.getByRole('note').filter({ hasText: 'zweitem Faktor' })).toBeVisible();
   await page.getByRole('link', { name: 'Jetzt einrichten' }).click();
   await page.getByRole('button', { name: 'Jetzt einrichten' }).click();
+  await page.getByLabel('Dein Passwort zur Bestätigung').fill('korrekt-pferd-batterie');
+  await page.getByRole('button', { name: 'Weiter' }).click();
   const secret = (await page.locator('code.token-once').innerText()).replace(/\s+/g, '');
   await page.getByLabel('2. Code aus der App').fill(codeAt(secret, currentStep()));
   await page.getByRole('button', { name: 'Bestätigen' }).click();

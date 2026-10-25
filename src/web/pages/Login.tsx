@@ -35,6 +35,8 @@ export function Login() {
       setMe(r);
       navigate('/');
     } catch (err) {
+      // An expired ticket means: start again with the password.
+      if (err instanceof ApiError && err.problem.type.endsWith('/ticket-expired')) setTicket(undefined);
       setError(err instanceof ApiError ? err.problem.title : 'Keine Verbindung zum Server.');
     } finally {
       setBusy(false);

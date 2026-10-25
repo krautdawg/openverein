@@ -2,6 +2,8 @@
 
 alter table app_user
   add column totp_secret_encrypted text,
+  -- a new phone being set up; the active secret keeps working until a code for the new one is confirmed
+  add column totp_pending_secret_encrypted text,
   add column totp_enabled_at timestamptz,
   -- last accepted time step, so a code cannot be replayed within its window
   add column totp_last_step bigint;
