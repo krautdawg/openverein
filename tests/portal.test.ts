@@ -75,6 +75,20 @@ describe('member portal', () => {
     expect((await get('/members', cookie)).statusCode).toBe(401);
   });
 
+  it('shows the custom fields the club marks as visible to members, and only those', async () => {
+    const size = (await admin.post('/custom-fields', { key: 'trikot', label: 'Trikotgröße', type: 'select', options: ['S', 'M'], visibleToMember: true })).body;
+    const note = (await admin.post('/custom-fields', { key: 'intern', label: 'Interne Notiz', type: 'text' })).body;
+    const health = (await admin.post('/custom-fields', { key: 'gesundheit', label: 'Gesundheit', type: 'text', sensitive: true, visibleToMember: true })).body;
+    await admin.post('/members', { firstName: 'Fritz', lastName: 'Feld', email: 'feld@example.org', joinDate: '2024-01-01', custom: { [size.id]: 'M', [note.id]: 'schwierig', [health.id]: 'Asthma' } });
+    await admin.post('/members', { firstName: 'Frieda', lastName: 'Feld', email: 'feld@example.org', joinDate: '2024-01-01', custom: { [size.id]: 'S' } });
+    const cookie = await signIn('feld@example.org');
+    const me = JSON.parse((await get('/portal/me', cookie)).body);
+    // Each card carries its own values; internal and sensitive fields never appear.
+    const byName = Object.fromEntries(me.members.map((m: { firstName: string; custom: unknown }) => [m.firstName, m.custom]));
+    expect(byName.Fritz).toEqual([{ key: 'trikot', label: 'Trikotgröße', value: 'M' }]);
+    expect(byName.Frieda).toEqual([{ key: 'trikot', label: 'Trikotgröße', value: 'S' }]);
+  });
+
   it('limits code attempts and expires codes', async () => {
     await admin.post('/members', { lastName: 'Code', email: 'code@example.org', joinDate: '2024-01-01' });
     await post('/portal/auth/request-code', { email: 'code@example.org' });
