@@ -1,0 +1,2 @@
+- [x] warnings in member detail
+- [x] test, e2e

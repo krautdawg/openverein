@@ -328,4 +328,17 @@ describe('review fixes', () => {
     const w = await admin.post(`/members/${m.id}/withdraw-resignation`);
     expect(w.body.memberships[0].validTo).toBeNull();
   });
+
+  it('shows payment and access warnings on the member record', async () => {
+    const m = (await admin.post('/members', { firstName: 'Lena', lastName: 'Lastschrift', email: 'erika@example.org', joinDate: '2024-01-01' })).body.id;
+    await admin.patch(`/members/${m}/payment-method`, { paymentMethod: 'direct_debit' });
+    const plan = (await admin.post('/fee-plans', { name: 'Erwachsene', version: { validFrom: '2020-01-01', amountCents: 12000, intervalMonths: 12 } })).body.id;
+    await admin.post(`/members/${m}/fee-assignments`, { feePlanId: plan, validFrom: '2024-01-01' });
+    let w = (await admin.get(`/members/${m}`)).body.warnings as string[];
+    expect(w).toContain('Zahlt per Lastschrift, aber es gibt kein gültiges Mandat.');
+    expect(w).toContain('Hat einen Zugang zur Verwaltung.');
+    await admin.patch(`/members/${m}/payment-method`, { paymentMethod: 'none' });
+    w = (await admin.get(`/members/${m}`)).body.warnings;
+    expect(w).toContain('Keine Zahlungsart hinterlegt.');
+  });
 });

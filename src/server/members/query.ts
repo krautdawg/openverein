@@ -7,7 +7,7 @@ import { fieldsFor, visibleDiffKeys, visibleValues } from './custom.ts';
 import { versionOf } from '../http/concurrency.ts';
 
 const maskCustom = (diff: unknown, keys: Set<string>) => (diff && typeof diff === 'object' && !Array.isArray(diff) ? Object.fromEntries(Object.entries(diff).filter(([k]) => !k.startsWith('custom.') || keys.has(k))) : diff);
-import { restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
+import { level, restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
 
 export async function orgToday(db: Db, organizationId: string) {
   const org = await db.selectFrom('organization').select('time_zone').where('id', '=', organizationId).executeTakeFirstOrThrow();
@@ -150,6 +150,21 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
   if (!row.email && !row.street && !row.phone) warnings.push('Keine Kontaktdaten erfasst.');
   if (row.preferred_channel === 'email' && !row.email) warnings.push('Bevorzugt E-Mail, aber keine E-Mail-Adresse hinterlegt.');
   if (row.preferred_channel === 'letter' && (!row.street || !row.postal_code || !row.city)) warnings.push('Bevorzugt Brief, aber die Anschrift ist unvollständig.');
+  // Payment readiness (spec M1), only for those who see fees: the household payer's mandate counts for its members.
+  if (level(actor, 'fees') !== 'none' && ['active', 'future', 'resigned'].includes(row.status)) {
+    const m = await db.selectFrom('member').leftJoin('household', 'household.id', 'member.household_id').select(['member.payment_method', 'household.payer_person_id']).where('member.id', '=', row.id).executeTakeFirstOrThrow();
+    const billed = await db.selectFrom('fee_assignment').select('id').where('member_id', '=', row.id).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>=', today)])).executeTakeFirst();
+    if (billed && m.payment_method === 'none' && !m.payer_person_id) warnings.push('Keine Zahlungsart hinterlegt.');
+    if (m.payment_method === 'direct_debit') {
+      const mandate = await db.selectFrom('sepa_mandate').select('id').where('person_id', '=', m.payer_person_id ?? row.person_id).where('status', '=', 'active').executeTakeFirst();
+      if (!mandate) warnings.push('Zahlt per Lastschrift, aber es gibt kein gültiges Mandat.');
+    }
+  }
+  // Someone with access to the administration should be visible as such on their member record.
+  if (row.email) {
+    const user = await db.selectFrom('app_user').select('id').where('organization_id', '=', actor.organizationId).where('status', '=', 'active').where(sql<boolean>`lower(email) = lower(${row.email})`).executeTakeFirst();
+    if (user) warnings.push('Hat einen Zugang zur Verwaltung.');
+  }
 
   // Custom values in old diffs follow today's visibility: sensitive, archived or deleted fields are dropped.
   const customKeys = await visibleDiffKeys(db, actor);
