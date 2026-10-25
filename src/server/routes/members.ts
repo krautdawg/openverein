@@ -20,6 +20,7 @@ import {
 import { audit, diffOf } from '../audit.ts';
 import { assertGroup, BULK_INLINE_MAX, memberBulk } from '../members/bulk.ts';
 import { jobDto, jobSchema } from './jobs.ts';
+import { memberListPdf, vcard } from '../members/lists.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { forbidden, Problem } from '../http/problem.ts';
@@ -207,6 +208,43 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     await audit(db, actor.organizationId, actor, { action: 'member.export', entityType: 'member', diff: { filter: req.query, columns: visible.map(([h]) => h), rows: rows.length } });
     reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="mitglieder-${today}.csv"`);
     return '﻿' + lines.join('\r\n') + '\r\n';
+  });
+
+  const exportQuery = memberListQuery.omit({ cursor: true, limit: true });
+  async function exportRows(actor: Actor, query: z.infer<typeof exportQuery>) {
+    const today = await orgToday(db, actor.organizationId);
+    const rows = await listFilter({ ...query, limit: 0 }, actor, today)(db).select(memberColumns).orderBy('person.last_name').orderBy('person.first_name').execute();
+    const groups = await currentGroups(db, rows.map((r) => r.id), today);
+    const org = await db.selectFrom('organization').select('name').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+    return { today, rows, groups, org: org.name, hidden: restrictedFields(actor) };
+  }
+
+  app.get('/members/export.pdf', { schema: { tags, summary: 'Gefilterte Mitgliederliste als PDF zum Drucken (gesperrte Felder fehlen)', querystring: exportQuery } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'members', 'read');
+    const { today, rows, groups, org, hidden } = await exportRows(actor, req.query);
+    const pdf = await memberListPdf(
+      rows.map((r) => ({
+        number: r.membership_number,
+        name: displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name }),
+        groups: (groups.get(r.id) ?? []).map((g) => g.name).join(', '),
+        phone: hidden.has('phone') ? null : r.phone,
+        email: hidden.has('email') ? null : r.email,
+        address: [r.street, [r.postal_code, r.city].filter(Boolean).join(' ')].filter(Boolean).join(', '),
+      })),
+      { club: org, title: 'Mitgliederliste', date: today.split('-').reverse().join('.'), showPhone: !hidden.has('phone'), showEmail: !hidden.has('email') },
+    );
+    await audit(db, actor.organizationId, actor, { action: 'member.export', entityType: 'member', diff: { format: 'pdf', filter: req.query, rows: rows.length } });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="mitglieder-${today}.pdf"`).header('cache-control', 'private, no-store').send(pdf);
+  });
+
+  app.get('/members/export.vcf', { schema: { tags, summary: 'Gefilterte Mitglieder als vCard 4.0 (eine Datei, gesperrte Felder fehlen)', querystring: exportQuery } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'members', 'read');
+    const { today, rows, org, hidden } = await exportRows(actor, req.query);
+    const cards = rows.map((r) => vcard({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name, email: hidden.has('email') ? null : r.email, phone: hidden.has('phone') ? null : r.phone, street: r.street, postalCode: r.postal_code, city: r.city, country: r.country, birthDate: hidden.has('birth_date') ? null : r.birth_date, org }));
+    await audit(db, actor.organizationId, actor, { action: 'member.export', entityType: 'member', diff: { format: 'vcf', filter: req.query, rows: rows.length } });
+    return reply.header('content-type', 'text/vcard; charset=utf-8').header('content-disposition', `attachment; filename="mitglieder-${today}.vcf"`).header('cache-control', 'private, no-store').send(cards.join('\r\n') + '\r\n');
   });
 
   app.get('/members/exit-proposal', { schema: { tags, summary: 'Austrittsdatum nach der Kündigungsregel des Vereins vorschlagen', querystring: z.object({ noticeDate: date }), response: { 200: z.object({ exitDate: z.string(), rule: z.string() }) } } }, async (req) => {

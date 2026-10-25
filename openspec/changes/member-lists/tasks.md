@@ -1,0 +1,4 @@
+- [x] PDF list
+- [x] vCard export
+- [x] export menu
+- [x] tests and e2e
