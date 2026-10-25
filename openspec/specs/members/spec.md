@@ -170,3 +170,10 @@ The system SHALL compute a household's discount at posting from the lines that a
 - **WHEN** the preview of a household with "50 % from the 2nd member" is posted with one child's fee excluded
 - **THEN** the discount line covers only the remaining discounted fees
 
+### Requirement: German spellings match in duplicate detection
+The system SHALL treat ü/ue, ö/oe, ä/ae and ß/ss as equal when comparing names for duplicates.
+
+#### Scenario: Müller and Mueller
+- **WHEN** "Jürgen Müller" and "Juergen Mueller" share birth date, e-mail and address
+- **THEN** the pair scores at least 90 %
+
