@@ -170,6 +170,21 @@ describe('member portal', () => {
     await admin.post(`/change-requests/${req.id}/accept`, {});
     expect((await admin.get(`/members/${m}`)).body).toMatchObject({ status: 'resigned', exitDate: exit });
 
+    // The member's own donation receipts, as PDF; a cancelled one stays listed but is not handed out.
+    const year = new Date().getFullYear();
+    await admin.put('/donations/settings', { kind: 'freistellung', office: 'Musterstadt', taxNumber: '12/345/67890', date: `${year - 1}-05-01`, period: '2021–2023', purposes: 'des Sports (§ 52 Abs. 2 Satz 1 Nr. 21 AO)', signer: 'Erika Mustermann, Kassenwartin' });
+    const person = (await admin.get(`/members/${m}`)).body.personId;
+    await admin.patch('/organization', { street: 'Weg 1', postalCode: '12345', city: 'Musterstadt' });
+    await admin.patch(`/members/${m}`, { street: 'Lindenweg 3', postalCode: '12345', city: 'Musterstadt' });
+    const d = await admin.post('/donations', { personId: person, date: `${year}-01-10`, amountCents: 5000 });
+    const rc = await admin.post('/donation-receipts', { personId: person, donationIds: [d.body.id] });
+    expect(rc.status, JSON.stringify(rc.body)).toBe(201);
+    const mine = (await get('/portal/donation-receipts', cookie)).json();
+    expect(mine).toEqual([expect.objectContaining({ number: rc.body.number, totalCents: 5000, status: 'issued' })]);
+    expect((await get(`/portal/donation-receipts/${rc.body.id}/pdf`, cookie)).body.slice(0, 5)).toBe('%PDF-');
+    await admin.post(`/donation-receipts/${rc.body.id}/cancel`, { reason: 'Betrag falsch erfasst' });
+    expect((await get(`/portal/donation-receipts/${rc.body.id}/pdf`, cookie)).statusCode).toBe(410);
+
     const shared = (await admin.post('/folders', { name: 'Satzung', shareWithMembers: true })).body;
     await admin.post('/folders', { name: 'Intern' });
     const up = await ctx.app.inject({ method: 'POST', url: `/api/v1/files?name=Satzung.pdf&folderId=${shared.id}`, headers: { cookie: adminCookie, 'content-type': 'application/octet-stream', 'x-file-type': 'application/pdf' }, payload: '%PDF satzung' });

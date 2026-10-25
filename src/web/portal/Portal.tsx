@@ -367,12 +367,26 @@ function PortalInvoices() {
 function PortalDocuments() {
   useTitle('Dokumente');
   const { data } = useQuery({ queryKey: ['portal-docs'], queryFn: () => api<{ id: string; name: string; folder: string; sizeBytes: number }[]>('/portal/documents') });
+  const receipts = useQuery({ queryKey: ['portal-receipts'], queryFn: () => api<{ id: string; number: string; issuedOn: string; totalCents: number; status: 'issued' | 'cancelled' }[]>('/portal/donation-receipts') });
   const folders = [...new Set(data?.map((d) => d.folder))];
   // Ids from the position, not the name: names may contain spaces.
   return (
     <>
       <h1 className="portal-h1">Dokumente</h1>
-      {data?.length === 0 && <p className="muted">Der Verein hat noch keine Dokumente für Mitglieder freigegeben.</p>}
+      {!!receipts.data?.length && (
+        <section className="portal-docs" aria-labelledby="docs-receipts">
+          <h2 id="docs-receipts">Deine Zuwendungsbestätigungen</h2>
+          <ul className="portal-list">
+            {receipts.data.map((r) => (
+              <li key={r.id} className="portal-row">
+                {r.status === 'issued' ? <a href={`/api/v1/portal/donation-receipts/${r.id}/pdf`} target="_blank" rel="noreferrer">{r.number}</a> : <span className="muted">{r.number} (storniert)</span>}
+                <span className="meta num">{formatDate(r.issuedOn)} · {euro(r.totalCents)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {data?.length === 0 && !receipts.data?.length && <p className="muted">Der Verein hat noch keine Dokumente für Mitglieder freigegeben.</p>}
       {folders.map((f, i) => (
         <section key={f} className="portal-docs" aria-labelledby={`docs-${i}`}>
           <h2 id={`docs-${i}`}>{f}</h2>
