@@ -11,7 +11,7 @@ import { bytes } from '../lib/format.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 interface PortalMember {
-  custom: { label: string; value: string }[];
+  custom: { key: string; label: string; value: string }[];
   memberId: string;
   name: string;
   firstName: string | null;
@@ -225,7 +225,7 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
         <dd>{m.mandate ? <>Konto •••• {m.mandate.ibanLast4}<div className="meta">Mandat {m.mandate.reference} vom {formatDate(m.mandate.signedOn)}{m.mandate.status === 'pending_evidence' && ', wartet auf Unterschrift'}</div></> : <span className="muted">kein Mandat, Du überweist selbst</span>}</dd>
         <dt>Adresse</dt>
         <dd>{m.street ? <>{m.street}<br />{m.postalCode} {m.city}</> : <span className="muted">keine</span>}</dd>
-        {m.custom.map((c) => <Fragment key={c.label}><dt>{c.label}</dt><dd>{c.value || <span className="muted">–</span>}</dd></Fragment>)}
+        {m.custom.map((c) => <Fragment key={c.key}><dt>{c.label}</dt><dd>{c.value || <span className="muted">–</span>}</dd></Fragment>)}
       </dl>
       {m.pending.filter((p) => p.field !== 'resignation').length > 0 && <p className="meta">Änderungen warten auf den Verein: {m.pending.filter((p) => p.field !== 'resignation').map((p) => FIELD_LABEL[p.field] ?? p.field).join(', ')}.</p>}
       <div className="actions-row">

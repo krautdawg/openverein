@@ -173,8 +173,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       ? await db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['group_membership.member_id', 'club_group.name', 'club_group.color']).where('group_membership.member_id', 'in', ids).where('group_membership.valid_from', '<=', today).where((eb) => eb.or([eb('group_membership.valid_to', 'is', null), eb('group_membership.valid_to', '>=', today)])).where('club_group.archived_at', 'is', null).execute()
       : [];
     const mandates = ids.length ? await db.selectFrom('sepa_mandate').select(['person_id', 'reference', 'iban_last4', 'signed_on', 'status']).where('person_id', 'in', u.members.map((m) => m.personId)).where('status', 'in', ['active', 'pending_evidence']).execute() : [];
-    // Only fields the club shows to members; values as text.
-    const shown = await db.selectFrom('custom_field').select(['id', 'label', 'type']).where('organization_id', '=', u.organizationId).where('visible_to_member', '=', true).where('archived_at', 'is', null).orderBy('position').orderBy('label').execute();
+    // Only fields the club shows to members, never sensitive ones (one address can hold several people); values as text.
+    const shown = await db.selectFrom('custom_field').select(['id', 'key', 'label', 'type']).where('organization_id', '=', u.organizationId).where('visible_to_member', '=', true).where('sensitive', '=', false).where('archived_at', 'is', null).orderBy('position').orderBy('label').execute();
     const pending = ids.length ? await db.selectFrom('change_request').select(['member_id', 'field', 'new_value', 'requested_at']).where('member_id', 'in', ids).where('status', '=', 'pending').execute() : [];
     return {
       email: u.email,
@@ -194,7 +194,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
         postalCode: m.postal_code,
         city: m.city,
         groups: groups.filter((g) => g.member_id === m.memberId).map((g) => ({ name: g.name, color: g.color })),
-        custom: shown.map((f) => ({ label: f.label, value: customText(f.type, (m.custom as Record<string, unknown>)[f.id]) })),
+        custom: shown.map((f) => ({ key: f.key, label: f.label, value: customText(f.type, m.custom[f.id]) })),
         mandate: mandates.filter((x) => x.person_id === m.personId).map((x) => ({ reference: x.reference, ibanLast4: x.iban_last4, signedOn: x.signed_on, status: x.status }))[0] ?? null,
         pending: pending.filter((p) => p.member_id === m.memberId).map((p) => ({ field: p.field, value: pendingText(p.field, p.new_value), requestedAt: p.requested_at.toISOString() })),
         resignationProposal: m.status === 'resigned' ? null : proposeExitDate(today, org.notice_weeks, org.exit_at),
