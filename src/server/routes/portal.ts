@@ -22,6 +22,7 @@ import { epcPayload } from '../invoices/pdf.ts';
 import { storedPdf, type IssueSnapshot } from '../invoices/service.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { orgToday } from '../members/query.ts';
+import { membershipCertificate } from '../members/certificate.ts';
 
 export const PORTAL_COOKIE = 'ov_portal';
 const PORTAL_IDLE_MS = 30 * 24 * 60 * 60 * 1000; // members stay signed in on their phone for 30 days of use
@@ -233,6 +234,13 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const { u, inv } = await ownInvoice(req, reply);
     const { pdf, number } = await storedPdf(db, u.organizationId, inv.id);
     return reply.header('content-type', 'application/pdf').header('content-disposition', `inline; filename="${number}.pdf"`).header('cache-control', 'private, no-store').send(pdf);
+  });
+
+  app.get('/portal/members/:id/certificate.pdf', { schema: { tags, summary: 'Eigene Mitgliedsbescheinigung als PDF', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const m = ownMember(u, req.params.id);
+    const { pdf } = await membershipCertificate(db, u.organizationId, m.memberId, { birthDate: true });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', 'attachment; filename="Mitgliedsbescheinigung.pdf"').header('cache-control', 'private, no-store').send(pdf);
   });
 
   app.get('/portal/invoices/:id/qr.svg', { schema: { tags, summary: 'GiroCode zum Bezahlen per Banking-App (nur offene Rechnungen)', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {

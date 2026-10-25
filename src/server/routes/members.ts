@@ -21,6 +21,7 @@ import { audit, diffOf } from '../audit.ts';
 import { assertGroup, BULK_INLINE_MAX, memberBulk } from '../members/bulk.ts';
 import { jobDto, jobSchema } from './jobs.ts';
 import { memberListPdf, vcard } from '../members/lists.ts';
+import { membershipCertificate } from '../members/certificate.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { forbidden, Problem } from '../http/problem.ts';
@@ -253,6 +254,16 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     const org = await db.selectFrom('organization').select(['notice_weeks', 'exit_at']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
     const at = { any_day: 'zu jedem Tag', month_end: 'zum Monatsende', quarter_end: 'zum Quartalsende', half_year_end: 'zum Halbjahresende', year_end: 'zum Jahresende' }[org.exit_at];
     return { exitDate: proposeExitDate(req.query.noticeDate, org.notice_weeks, org.exit_at), rule: `${org.notice_weeks} Wochen Frist ${at}` };
+  });
+
+  app.get('/members/:id/certificate.pdf', { schema: { tags, summary: 'Mitgliedsbescheinigung als PDF (Stand heute)', params: idParam } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'members', 'read');
+    await loadMemberRow(db, actor, req.params.id, 'read');
+    // The birth date appears only for users who may see it.
+    const { pdf } = await membershipCertificate(db, actor.organizationId, req.params.id, { birthDate: !restrictedFields(actor).has('birth_date') });
+    await audit(db, actor.organizationId, actor, { action: 'member.certificate', entityType: 'member', entityId: req.params.id });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', 'attachment; filename="Mitgliedsbescheinigung.pdf"').header('cache-control', 'private, no-store').send(pdf);
   });
 
   app.get('/members/:id', { schema: { tags, summary: 'Mitglied mit Gruppenverlauf und Zeitleiste (ETag für If-Match)', params: idParam, response: { 200: memberDetailSchema } } }, async (req, reply) => {
