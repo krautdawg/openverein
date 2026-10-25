@@ -103,3 +103,10 @@ The system SHALL only let signed-in users (not API tokens) create API tokens, so
 - **WHEN** a request authenticated with an API token calls `POST /api/v1/api-tokens`
 - **THEN** the API answers 403 naming the missing permission
 
+### Requirement: Failed attempts free the idempotency key
+The system SHALL store only successful responses under an idempotency key and SHALL let a request that failed be repeated with the same key.
+
+#### Scenario: Retry after a validation error
+- **WHEN** an invoice request with key K fails validation and is sent again, corrected, with key K
+- **THEN** the invoice is created
+
