@@ -15,7 +15,7 @@ import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { todayLocal } from '../lib/hooks.ts';
-import { parseEuro } from '../lib/money.ts';
+import { euroInput, parseEuro } from '../lib/money.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 type List = { items: InvoiceListItem[]; total: number; nextCursor: string | null; sums: { totalCents: number; openCents: number } };
@@ -41,6 +41,7 @@ export function InvoicesLayout({ children, actions }: { children: React.ReactNod
       <nav className="subnav" aria-label="Rechnungen">
         <NavLink to="/rechnungen" end>Rechnungen</NavLink>
         <NavLink to="/rechnungen/mahnwesen">Mahnwesen</NavLink>
+        <NavLink to="/rechnungen/artikel">Artikel</NavLink>
       </nav>
       {children}
     </div>
@@ -299,6 +300,7 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
   const [term, setTerm] = useState('');
   const found = useQuery({ queryKey: ['member-pick', term], queryFn: () => api<{ items: MemberListItem[] }>(`/members?q=${encodeURIComponent(term)}&limit=6`), enabled: term.length >= 2 && !member });
   const [lines, setLines] = useState([{ text: '', quantity: '1', price: '', taxRate: '0' }]);
+  const articles = useArticles();
   const [error, setError] = useState<ApiError>();
 
   async function submit(e: FormEvent<HTMLFormElement>, issue: boolean) {
@@ -351,7 +353,19 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
               <select className="select" aria-label={`Position ${i + 1}: Umsatzsteuer`} value={l.taxRate} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, taxRate: e.target.value } : x)))}><option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option></select>
             </div>
           ))}
-          <button type="button" className="btn btn-ghost" onClick={() => setLines([...lines, { text: '', quantity: '1', price: '', taxRate: '0' }])}>Position hinzufügen</button>
+          <span className="actions-inline">
+            <button type="button" className="btn btn-ghost" onClick={() => setLines([...lines, { text: '', quantity: '1', price: '', taxRate: '0' }])}>Position hinzufügen</button>
+            {!!articles.data?.length && (
+              <select className="select" aria-label="Artikel einfügen" value="" onChange={(e) => {
+                const a = articles.data!.find((x) => x.id === e.target.value);
+                // An empty first line is replaced; otherwise the article is added below.
+                if (a) setLines([...lines.filter((l) => l.text || l.price), { text: a.name, quantity: '1', price: euroInput(a.unitCents), taxRate: String(a.taxRate) }]);
+              }}>
+                <option value="">Artikel einfügen …</option>
+                {articles.data.map((a) => <option key={a.id} value={a.id}>{a.name} · {euroInput(a.unitCents)} €</option>)}
+              </select>
+            )}
+          </span>
         </fieldset>
         <div className="actions-row">
           <button className="btn btn-primary" value="issue" disabled={!member}>Ausstellen</button>
@@ -405,6 +419,60 @@ export function Dunning({ me }: { me: Me }) {
         )}
       </div>
       <InvoiceSheet id={id ?? null} canWrite={canWrite} onClose={() => navigate('/rechnungen/mahnwesen')} />
+    </InvoicesLayout>
+  );
+}
+
+export interface Article { id: string; name: string; unitCents: number; taxRate: 0 | 7 | 19; archived: boolean }
+const useArticles = (includeArchived = false) => useQuery({ queryKey: ['articles', includeArchived], queryFn: () => api<Article[]>(`/articles${includeArchived ? '?includeArchived=true' : ''}`) });
+
+/** Article catalogue: recurring invoice items. Invoices copy text and price, so changes never touch issued invoices. */
+export function Articles({ me }: { me: Me }) {
+  useTitle('Artikel');
+  const qc = useQueryClient();
+  const list = useArticles(true);
+  const canWrite = me.permissions.invoices === 'write';
+  const [error, setError] = useState<ApiError>();
+  const [formKey, setFormKey] = useState(0);
+  async function save(body: Record<string, unknown>, id?: string) {
+    setError(undefined);
+    try {
+      await api(id ? `/articles/${id}` : '/articles', { method: id ? 'PUT' : 'POST', body });
+      await qc.invalidateQueries({ queryKey: ['articles'] });
+      if (!id) setFormKey((k) => k + 1);
+    } catch (err) {
+      setError(err instanceof ApiError ? err : undefined);
+    }
+  }
+  return (
+    <InvoicesLayout>
+      <p className="muted" style={{ maxWidth: '72ch', marginBottom: 'var(--s-4)' }}>Wiederkehrende Positionen wie Trikots, Hallenmiete oder Kursgebühren. Beim Schreiben einer Rechnung wählst Du sie unter „Artikel einfügen“; die Rechnung übernimmt Text und Preis.</p>
+      {error && <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-3)' }}>{error.problem.errors?.map((x) => x.message).join(' ') ?? [error.problem.title, error.problem.detail].filter(Boolean).join(' ')}</div>}
+      {canWrite && (
+        <form key={formKey} className="age-rule" style={{ marginBottom: 'var(--s-5)' }} aria-label="Neuer Artikel" onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); void save({ name: f.get('name'), unitCents: Number(f.get('unitCents')), taxRate: Number(f.get('taxRate')) }); }}>
+          <input name="name" className="input" aria-label="Bezeichnung" placeholder="z. B. Vereinstrikot" style={{ width: 260 }} />
+          <div style={{ width: 120 }}><MoneyField label="Preis" name="unitCents" /></div>
+          <select name="taxRate" className="select" aria-label="Umsatzsteuer" defaultValue="0"><option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option></select>
+          <button className="btn btn-primary">Anlegen</button>
+        </form>
+      )}
+      <div className="table-wrap">
+        {list.data?.length === 0 ? <p className="empty">Noch keine Artikel.</p> : (
+          <table className="table" aria-label="Artikel">
+            <thead><tr><th scope="col">Bezeichnung</th><th scope="col" className="num">Preis (brutto)</th><th scope="col" className="num">USt.</th><th scope="col"><span className="sr-only">Aktionen</span></th></tr></thead>
+            <tbody>
+              {list.data?.map((a) => (
+                <tr key={a.id} data-archived={a.archived || undefined}>
+                  <td>{a.name}{a.archived && <span className="meta"> · archiviert</span>}</td>
+                  <td className="num">{euro(a.unitCents)}</td>
+                  <td className="num">{a.taxRate} %</td>
+                  <td>{canWrite && <button className="btn btn-ghost" onClick={() => void save({ name: a.name, unitCents: a.unitCents, taxRate: a.taxRate, archived: !a.archived }, a.id)}>{a.archived ? 'Wiederherstellen' : 'Archivieren'}</button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </InvoicesLayout>
   );
 }

@@ -909,6 +909,17 @@ export interface Database {
   assembly: AssemblyTable;
   assembly_item: AssemblyItemTable;
   assembly_attendance: AssemblyAttendanceTable;
+  article: ArticleTable;
+}
+
+export interface ArticleTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  unit_cents: number;
+  tax_rate: Generated<number>;
+  archived_at: Date | null;
+  created_at: Generated<Date>;
 }
 
 export interface AssemblyTable {
