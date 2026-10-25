@@ -10,6 +10,7 @@ import { useTitle } from '../lib/useTitle.ts';
 interface OverviewData {
   members: { active: number; future: number; applicants: number; resigned: number; joinedThisYear: number; leftThisYear: number } | null;
   groups: number | null;
+  onlineApplications: number | null;
 }
 
 function greeting() {
@@ -37,6 +38,7 @@ export function Overview({ me }: { me: Me }) {
           <dl className="figures">
             {[
               { label: 'aktive Mitglieder', n: m.active, to: '/mitglieder?ansicht=active' },
+              ...(data?.onlineApplications ? [{ label: 'neue Online-Anträge', n: data.onlineApplications, to: '/antraege' }] : []),
               ...(m.applicants > 0 ? [{ label: 'offene Anträge', n: m.applicants, to: '/mitglieder?ansicht=applicant' }] : []),
               { label: 'gekündigt, noch Mitglied', n: m.resigned, to: '/mitglieder?ansicht=resigned' },
               { label: `Eintritte ${new Date().getFullYear()}`, n: m.joinedThisYear },

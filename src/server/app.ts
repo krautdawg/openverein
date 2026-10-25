@@ -20,6 +20,7 @@ import { messageRoutes } from './routes/messages.ts';
 import { documentRoutes } from './routes/documents.ts';
 import { portalRoutes } from './routes/portal.ts';
 import { changeRoutes } from './routes/changes.ts';
+import { applicationRoutes } from './routes/applications.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -106,6 +107,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(documentRoutes);
       await api.register(portalRoutes);
       await api.register(changeRoutes);
+      await api.register(applicationRoutes);
     },
     { prefix: '/api/v1' },
   );
@@ -114,10 +116,20 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   if (serveWeb) {
     await app.register(fastifyStatic, { root: config.webDist });
   }
-  app.setNotFoundHandler((req, reply) => {
+  app.addHook('onSend', async (_req, reply, payload) => {
+    if (String(reply.getHeader('content-type') ?? '').startsWith('text/html') && !reply.hasHeader('content-security-policy')) reply.header('content-security-policy', "frame-ancestors 'self'");
+    return payload;
+  });
+  app.setNotFoundHandler(async (req, reply) => {
     // Client-side routes get the SPA shell; unknown API paths get a problem document.
     const path = req.url.split('?')[0]!;
-    if (serveWeb && req.method === 'GET' && !isApi(req.url) && !/\.\w+$/.test(path)) return reply.sendFile('index.html');
+    if (serveWeb && req.method === 'GET' && !isApi(req.url) && !/\.\w+$/.test(path)) {
+      // Pages may not be framed, except an application form on the sites the club allowed for it.
+      const slug = path.match(/^\/aufnahme\/([a-z0-9-]{3,60})\/?$/)?.[1];
+      const form = slug ? await db.selectFrom('application_form').select('allowed_origins').where('slug', '=', slug).where('active', '=', true).executeTakeFirst() : undefined;
+      reply.header('content-security-policy', `frame-ancestors 'self'${form?.allowed_origins.length ? ` ${form.allowed_origins.join(' ')}` : ''}`);
+      return reply.sendFile('index.html');
+    }
     return sendProblem(reply, new Problem(404, 'not-found', 'Diese Adresse gibt es nicht.'), req.url);
   });
 

@@ -1,4 +1,5 @@
 import { Kysely, PostgresDialect, type Generated, type ColumnType, type Selectable } from 'kysely';
+import type { SystemTemplateKey } from '../shared/mail.ts';
 import pg from 'pg';
 
 // DATE columns stay strings ("2026-03-01"): legal dates must never shift with time zones.
@@ -38,6 +39,8 @@ export interface OrganizationTable {
   mail_reply_to: string | null;
   mail_per_minute: Generated<number>;
   mail_paused_reason: string | null;
+  electronic_mandates_agreed: Generated<boolean>;
+  join_rule: Generated<'application_date' | 'acceptance_date' | 'month_first' | 'next_month_first'>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -557,7 +560,7 @@ export interface DeliveryTable {
 export interface MailTemplateTable {
   id: Generated<string>;
   organization_id: string;
-  key: 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | null;
+  key: SystemTemplateKey | null;
   name: string;
   subject: string;
   body: string;
@@ -632,6 +635,43 @@ export interface ChangeRequestTable {
   decided_at: Date | null;
 }
 
+export interface ApplicationFormTable {
+  id: Generated<string>;
+  organization_id: string;
+  slug: string;
+  title: string;
+  intro: string | null;
+  group_ids: Generated<string[]>;
+  fee_plan_ids: Generated<string[]>;
+  ask_mandate: Generated<boolean>;
+  consent_text: string;
+  consent_version: Generated<number>;
+  privacy_url: string | null;
+  allowed_origins: Generated<string[]>;
+  active: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ApplicationTable {
+  id: Generated<string>;
+  organization_id: string;
+  form_id: string;
+  payload: unknown;
+  consent: unknown;
+  application_date: string;
+  email_hash: string;
+  iban_encrypted: string | null;
+  iban_last4: string | null;
+  token_mac: string | null;
+  status: Generated<'new' | 'accepted' | 'rejected' | 'spam'>;
+  reason: string | null;
+  member_id: string | null;
+  decided_by: string | null;
+  decided_at: Date | null;
+  created_at: Generated<Date>;
+}
+
 export interface SuppressionTable {
   id: Generated<string>;
   organization_id: string;
@@ -683,6 +723,8 @@ export interface Database {
   login_code: LoginCodeTable;
   portal_session: PortalSessionTable;
   change_request: ChangeRequestTable;
+  application_form: ApplicationFormTable;
+  application: ApplicationTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;

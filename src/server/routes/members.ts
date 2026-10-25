@@ -181,35 +181,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
       throw new Problem(403, 'out-of-scope', 'Du kannst Mitglieder nur in Deinen eigenen Gruppen anlegen.', 'Wähle mindestens eine Deiner Gruppen.', { permission: 'members:write' });
     }
     const today = await orgToday(db, actor.organizationId);
-    const id = await db.transaction().execute(async (tx) => {
-      const org = await tx.selectFrom('organization').select('member_number_pattern').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
-      const person = await tx
-        .insertInto('person')
-        .values({ organization_id: actor.organizationId, ...(personValues(req.body) as { last_name: string }) })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      const status: MemberStatus = req.body.joinDate ? statusForJoin(req.body.joinDate, today) : 'applicant';
-      const taken = async (n: string) => !!(await tx.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('membership_number', '=', n).executeTakeFirst());
-      const number = req.body.membershipNumber ?? (await nextNumber(tx, actor.organizationId, 'member', org.member_number_pattern, req.body.joinDate ?? today, taken));
-      const member = await tx
-        .insertInto('member')
-        .values({
-          organization_id: actor.organizationId,
-          person_id: person.id,
-          membership_number: number,
-          status,
-          join_date: req.body.joinDate ?? null,
-          application_date: req.body.applicationDate ?? (status === 'applicant' ? today : null),
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      for (const groupId of req.body.groupIds) {
-        await assertGroup(tx, actor, groupId);
-        await tx.insertInto('group_membership').values({ organization_id: actor.organizationId, member_id: member.id, group_id: groupId, valid_from: req.body.joinDate ?? today }).execute();
-      }
-      await audit(tx, actor.organizationId, actor, { action: 'member.created', entityType: 'member', entityId: member.id, diff: { status: [null, status], membershipNumber: [null, number] } });
-      return member.id;
-    });
+    const id = await db.transaction().execute((tx) => insertMember(tx, actor, req.body, today));
     reply.status(201);
     return memberDetail(db, actor, id);
   });
@@ -374,6 +346,37 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
 };
 
 /** The group must exist in the organisation and, for scoped actors, be one of their groups. */
+/** Person, membership (number from the pattern) and group memberships in the caller's transaction. */
+export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof memberCreate>, today: string, action = 'member.created') {
+  const org = await tx.selectFrom('organization').select('member_number_pattern').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+  const person = await tx
+    .insertInto('person')
+    .values({ organization_id: actor.organizationId, ...(personValues(body) as { last_name: string }) })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  const status: MemberStatus = body.joinDate ? statusForJoin(body.joinDate, today) : 'applicant';
+  const taken = async (n: string) => !!(await tx.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('membership_number', '=', n).executeTakeFirst());
+  const number = body.membershipNumber ?? (await nextNumber(tx, actor.organizationId, 'member', org.member_number_pattern, body.joinDate ?? today, taken));
+  const member = await tx
+    .insertInto('member')
+    .values({
+      organization_id: actor.organizationId,
+      person_id: person.id,
+      membership_number: number,
+      status,
+      join_date: body.joinDate ?? null,
+      application_date: body.applicationDate ?? (status === 'applicant' ? today : null),
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  for (const groupId of body.groupIds) {
+    await assertGroup(tx, actor, groupId);
+    await tx.insertInto('group_membership').values({ organization_id: actor.organizationId, member_id: member.id, group_id: groupId, valid_from: body.joinDate ?? today }).execute();
+  }
+  await audit(tx, actor.organizationId, actor, { action, entityType: 'member', entityId: member.id, diff: { status: [null, status], membershipNumber: [null, number] } });
+  return member.id;
+}
+
 export async function assertGroup(db: Db, actor: Actor, groupId: string) {
   const group = await db.selectFrom('club_group').select(['id', 'archived_at']).where('id', '=', groupId).where('organization_id', '=', actor.organizationId).executeTakeFirst();
   if (!group) throw new Problem(404, 'not-found', 'Gruppe nicht gefunden.');

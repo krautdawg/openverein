@@ -396,12 +396,12 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         tags: ['system'],
         summary: 'Kennzahlen für die Startseite (nur mit Leserecht auf Mitglieder)',
-        response: { 200: z.object({ members: z.object({ active: z.number(), future: z.number(), applicants: z.number(), resigned: z.number(), joinedThisYear: z.number(), leftThisYear: z.number() }).nullable(), groups: z.number().nullable() }) },
+        response: { 200: z.object({ members: z.object({ active: z.number(), future: z.number(), applicants: z.number(), resigned: z.number(), joinedThisYear: z.number(), leftThisYear: z.number() }).nullable(), groups: z.number().nullable(), onlineApplications: z.number().nullable() }) },
       },
     },
     async (req) => {
       const actor = requireActor(req);
-      if (level(actor, 'members') === 'none') return { members: null, groups: null };
+      if (level(actor, 'members') === 'none') return { members: null, groups: null, onlineApplications: null };
       const org = await db.selectFrom('organization').select('time_zone').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: org.time_zone }).format(new Date());
       const yearStart = `${today.slice(0, 4)}-01-01`;
@@ -418,7 +418,8 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
         from member where organization_id = ${actor.organizationId} and ${scoped}`.execute(db);
       const g = await db.selectFrom('club_group').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', actor.organizationId).where('archived_at', 'is', null).executeTakeFirstOrThrow();
       const r = m.rows[0]!;
-      return { members: { active: r.active, future: r.future, applicants: r.applicants, resigned: r.resigned, joinedThisYear: r.joined, leftThisYear: r.left }, groups: g.n };
+      const apps = scope === null ? (await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', actor.organizationId).where('status', '=', 'new').executeTakeFirstOrThrow()).n : null;
+      return { members: { active: r.active, future: r.future, applicants: r.applicants, resigned: r.resigned, joinedThisYear: r.joined, leftThisYear: r.left }, groups: g.n, onlineApplications: apps };
     },
   );
 };

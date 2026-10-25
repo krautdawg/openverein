@@ -27,6 +27,8 @@ export const organization = z.object({
   mailReplyTo: z.string().nullable(),
   mailPerMinute: z.number(),
   mailPausedReason: z.string().nullable(),
+  electronicMandatesAgreed: z.boolean(),
+  joinRule: z.enum(['application_date', 'acceptance_date', 'month_first', 'next_month_first']),
 });
 export type Organization = z.infer<typeof organization>;
 
@@ -53,6 +55,8 @@ export const organizationPatch = z.object({
   mailFromName: optText(100),
   mailFromAddress: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)).optional(),
   mailPerMinute: z.number().int().min(1).max(1000).optional(),
+  electronicMandatesAgreed: z.boolean().optional(),
+  joinRule: z.enum(['application_date', 'acceptance_date', 'month_first', 'next_month_first']).optional(),
   mailReplyTo: z.email('Bitte eine gültige E-Mail-Adresse angeben.').max(254).nullish().or(z.literal('').transform(() => null)).optional(),
   creditorId: z.preprocess((v) => (typeof v === 'string' ? v.replace(/\s+/g, '').toUpperCase() : v), z.string().max(35).nullish().transform((v) => (v === '' ? null : v)).refine((v) => !v || isValidCreditorId(v), 'Diese Gläubiger-ID ist nicht gültig (Prüfziffer).')).optional(),
   dunningLevels: z
