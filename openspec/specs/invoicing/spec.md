@@ -17,3 +17,10 @@ The system SHALL accept a line's unit price as net and store it gross, rounded t
 - **WHEN** a line with a net unit price of 42,02 € and 19 % tax is saved
 - **THEN** its unit price is 50,00 €
 
+### Requirement: Offers
+The system SHALL issue offers with their own number range and a stored PDF, keep issued offers unchanged, and convert an offer at most once into an invoice draft with the same lines, without any ledger effect of the offer itself.
+
+#### Scenario: Convert an accepted offer
+- **WHEN** an issued offer is accepted and converted
+- **THEN** an invoice draft with the offer's lines exists, and a second conversion is refused
+
