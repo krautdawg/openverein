@@ -109,3 +109,10 @@ The system SHALL set the status of imported members from their join and exit dat
 - **WHEN** a row has an exit date of 31.12.2023
 - **THEN** the member is imported as `former` with that exit date and closed group memberships
 
+### Requirement: Secrets never leave in a full export
+The system SHALL leave sessions, sign-in codes, recovery codes, password and token hashes, TOTP secrets and keyed lookup hashes out of every full export.
+
+#### Scenario: App users exported
+- **WHEN** a full export is created
+- **THEN** `data/app_user.jsonl` contains names and e-mail addresses but no password hash and no TOTP secret
+
