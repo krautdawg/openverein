@@ -513,9 +513,10 @@ export interface BankTransactionTable {
   return_reason: string | null;
   bank_reference: string | null;
   dedupe_key: string;
-  status: Generated<'unmatched' | 'matched' | 'ignored'>;
+  status: Generated<'unmatched' | 'matched' | 'ignored' | 'booked'>;
   note: string | null;
   created_at: Timestamp;
+  journal_entry_id: string | null;
 }
 
 export interface ReturnDebitTable {

@@ -167,6 +167,35 @@ describe('bank import and matching', () => {
   });
 });
 
+describe('booking without invoice', () => {
+  it('books several bank movements to one account in one step and reverses on undo', async () => {
+    const csv = `Buchungstag;Verwendungszweck;Beguenstigter/Zahlungspflichtiger;Kontonummer/IBAN;Betrag
+01.10.2026;Kontofuehrung;Bank;;-4,90
+02.10.2026;Kontofuehrung;Bank;;-5,10
+03.10.2026;Zuschuss Stadt;Stadtkasse;;250,00`;
+    await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'csv', content: csv });
+    const open = (await admin.get('/bank-transactions')).body as { id: string; amountCents: number }[];
+    const fees = open.filter((t) => t.amountCents < 0).map((t) => t.id);
+    const grant = open.find((t) => t.amountCents > 0)!.id;
+    const accounts = (await admin.get('/ledger/accounts')).body as { id: string; kind: string }[];
+    const expense = accounts.find((a) => a.kind === 'expense')!.id;
+    expect((await admin.post('/bank-transactions/book', { transactionIds: [...fees, grant], accountId: expense })).status).toBe(400);
+    const r = await admin.post('/bank-transactions/book', { transactionIds: fees, accountId: expense, sphere: 'vermoegen' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.booked).toBe(2);
+    const booked = (await admin.get('/bank-transactions?status=booked')).body as { id: string; journalNumber: number | null }[];
+    expect(booked).toHaveLength(2);
+    expect(booked.every((t) => t.journalNumber)).toBe(true);
+    expect((await admin.post('/bank-transactions/book', { transactionIds: fees, accountId: expense })).status).toBe(409);
+    const entries = (await admin.get('/ledger/entries?from=2026-10-01&to=2026-10-31')).body as { lines: { debitCents: number; sphere: string }[] }[];
+    expect(entries.filter((e) => e.lines.some((l) => l.debitCents === 490 && l.sphere === 'vermoegen'))).toHaveLength(1);
+    const undo = await admin.post(`/bank-transactions/${fees[0]}/unmatch`);
+    expect(undo.status, JSON.stringify(undo.body)).toBe(200);
+    expect(undo.body).toMatchObject({ status: 'unmatched', journalNumber: null });
+    expect((await admin.get('/ledger/entries?from=2026-01-01&to=2026-12-31')).body.some((e: { text: string }) => e.text.startsWith('Storno Nr.'))).toBe(true);
+  });
+});
+
 describe('review fixes', () => {
   const camtEntry = (amount: string, sign: 'CRDT' | 'DBIT', e2e: string | null, text: string, d: string) =>
     `<Ntry><Amt Ccy="EUR">${amount}</Amt><CdtDbtInd>${sign}</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts><BookgDt><Dt>${d}</Dt></BookgDt><NtryDtls><TxDtls>${e2e ? `<Refs><EndToEndId>${e2e}</EndToEndId></Refs>` : ''}<RmtInf><Ustrd>${text}</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>`;

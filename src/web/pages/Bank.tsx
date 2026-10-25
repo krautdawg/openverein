@@ -5,6 +5,7 @@ import { Download, Upload } from 'lucide-react';
 import type { Me } from '../../shared/auth.ts';
 import { formatDate } from '../../shared/dates.ts';
 import { euro } from '../../shared/fees.ts';
+import { SPHERE_LABEL, SPHERES } from '../../shared/ledger.ts';
 import { READINESS_LABEL, RUN_STATUS_LABEL, type BankAccount, type BankTx, type Candidate, type Run } from '../../shared/sepa.ts';
 import { Field } from '../components/Field.tsx';
 import { MoneyField } from '../components/MoneyField.tsx';
@@ -166,7 +167,10 @@ export function Reconciliation({ me }: { me: Me }) {
   useTitle('Abgleich');
   const qc = useQueryClient();
   const canWrite = me.permissions.banking === 'write' && me.permissions.invoices === 'write';
-  const [status, setStatus] = useState<'unmatched' | 'matched' | 'ignored'>('unmatched');
+  const [status, setStatus] = useState<'unmatched' | 'matched' | 'ignored' | 'booked'>('unmatched');
+  // Booking without invoice goes into the ledger: needs ledger rights too.
+  const canBook = me.permissions.banking === 'write' && me.permissions.ledger === 'write';
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const txs = useQuery({ queryKey: ['bank-tx', status], queryFn: () => api<BankTx[]>(`/bank-transactions?status=${status}`) });
   const [message, setMessage] = useState<string>();
   const [open, setOpen] = useState<string | null>(null);
@@ -177,30 +181,40 @@ export function Reconciliation({ me }: { me: Me }) {
       await api(path, { method: 'POST', body });
       await Promise.all([qc.invalidateQueries({ queryKey: ['bank-tx'] }), qc.invalidateQueries({ queryKey: ['invoices'] }), qc.invalidateQueries({ queryKey: ['bank-accounts'] })]);
       setOpen(null);
+      setSelected(new Set());
     } catch (err) {
       setMessage(errText(err));
     }
   }
+  const selectable = canBook && status === 'unmatched';
+  const chosen = txs.data?.filter((t) => selected.has(t.id)) ?? [];
+  const toggle = (id: string) => setSelected((s) => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    return n;
+  });
 
   return (
     <BankLayout me={me}>
       <div className="toolbar">
         <div className="segmented" role="group" aria-label="Ansicht">
-          {(['unmatched', 'matched', 'ignored'] as const).map((s) => <button key={s} aria-pressed={status === s} onClick={() => setStatus(s)}>{{ unmatched: 'Offen', matched: 'Zugeordnet', ignored: 'Abgehakt' }[s]}</button>)}
+          {(['unmatched', 'matched', 'booked', 'ignored'] as const).map((s) => <button key={s} aria-pressed={status === s} onClick={() => { setStatus(s); setSelected(new Set()); }}>{{ unmatched: 'Offen', matched: 'Zugeordnet', booked: 'Gebucht', ignored: 'Abgehakt' }[s]}</button>)}
         </div>
         <span style={{ flex: 1 }} />
         {canWrite && status === 'unmatched' && <button className="btn" onClick={() => void act('/bank-transactions/match', {})}>Automatisch abgleichen</button>}
       </div>
       {message && <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-3)' }}>{message}</div>}
+      {selectable && chosen.length > 0 && <BookBar chosen={chosen} act={act} />}
       <div className="table-wrap">
         {txs.data?.length === 0 ? (
           <div className="empty-state"><h3>{status === 'unmatched' ? 'Alles abgeglichen.' : 'Keine Buchungen.'}</h3><p>{status === 'unmatched' ? 'Jede eingelesene Buchung ist einer Rechnung zugeordnet oder abgehakt.' : 'Hier erscheinen Buchungen, sobald Du Auszüge einliest.'}</p></div>
         ) : (
           <table className="table" aria-label="Kontobewegungen">
-            <thead><tr><th scope="col" className="num">Datum</th><th scope="col">Von / an</th><th scope="col" className="hide-sm">Verwendungszweck</th><th scope="col" className="num">Betrag</th><th scope="col">{status === 'unmatched' ? 'Vorschlag' : 'Zuordnung'}</th></tr></thead>
+            <thead><tr>{selectable && <th scope="col"><span className="sr-only">Auswahl</span></th>}<th scope="col" className="num">Datum</th><th scope="col">Von / an</th><th scope="col" className="hide-sm">Verwendungszweck</th><th scope="col" className="num">Betrag</th><th scope="col">{status === 'unmatched' ? 'Vorschlag' : 'Zuordnung'}</th></tr></thead>
             <tbody>
               {txs.data?.map((t) => (
-                <TxRow key={t.id} t={t} canWrite={canWrite} expanded={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} act={act} />
+                <TxRow key={t.id} t={t} canWrite={canWrite} canBook={canBook} expanded={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} act={act} select={selectable ? { checked: selected.has(t.id), toggle: () => toggle(t.id) } : undefined} />
               ))}
             </tbody>
           </table>
@@ -210,13 +224,14 @@ export function Reconciliation({ me }: { me: Me }) {
   );
 }
 
-function TxRow({ t, canWrite, expanded, onToggle, act }: { t: BankTx; canWrite: boolean; expanded: boolean; onToggle: () => void; act: (path: string, body: unknown) => Promise<void> }) {
+function TxRow({ t, canWrite, canBook, expanded, onToggle, act, select }: { t: BankTx; canWrite: boolean; canBook: boolean; expanded: boolean; onToggle: () => void; act: (path: string, body: unknown) => Promise<void>; select?: { checked: boolean; toggle: () => void } }) {
   const best = t.suggestions[0];
   // One click only for a confident suggestion that settles the invoice exactly.
   const oneClick = best && best.score >= 75 && best.openCents === t.amountCents;
   return (
     <>
       <tr>
+        {select && <td style={{ width: 32 }}><input type="checkbox" aria-label={`${formatDate(t.bookingDate)} ${t.counterpartyName ?? ''} ${euro(t.amountCents)} auswählen`} checked={select.checked} onChange={select.toggle} /></td>}
         <td className="num" style={{ whiteSpace: 'nowrap' }}>{formatDate(t.bookingDate)}</td>
         <td>
           <span className="name">{t.counterpartyName ?? '—'}</span>
@@ -234,6 +249,12 @@ function TxRow({ t, canWrite, expanded, onToggle, act }: { t: BankTx; canWrite: 
             </>
           )}
           {t.status === 'ignored' && <span className="muted">{t.note}</span>}
+          {t.status === 'booked' && (
+            <>
+              <span>Buchung Nr. {t.journalNumber}</span>
+              {canBook && <button className="btn btn-ghost" onClick={() => void act(`/bank-transactions/${t.id}/unmatch`, {})}>Stornieren</button>}
+            </>
+          )}
           {t.status === 'unmatched' && canWrite && (
             <div className="inline-edit" style={{ flexWrap: 'wrap' }}>
               {best && oneClick && <button className="btn btn-primary" title={best.rule} onClick={() => void act(`/bank-transactions/${t.id}/allocate`, { allocations: [{ invoiceId: best.invoiceId, amountCents: t.amountCents }] })}>{best.number} zuordnen</button>}
@@ -244,7 +265,7 @@ function TxRow({ t, canWrite, expanded, onToggle, act }: { t: BankTx; canWrite: 
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={5} style={{ background: 'var(--surface-sunk)', padding: 'var(--s-4)' }}>
+          <td colSpan={select ? 6 : 5} style={{ background: 'var(--surface-sunk)', padding: 'var(--s-4)' }}>
             <TxActions t={t} act={act} />
           </td>
         </tr>
@@ -471,5 +492,37 @@ export function CollectionRunDetail({ me }: { me: Me }) {
         </>
       )}
     </BankLayout>
+  );
+}
+
+/** Books the selected movements (all income or all expense) to one ledger account in one step. */
+function BookBar({ chosen, act }: { chosen: BankTx[]; act: (path: string, body: unknown) => Promise<void> }) {
+  const accounts = useQuery({ queryKey: ['ledger-accounts'], queryFn: () => api<{ id: string; number: string; name: string; kind: string; hidden: boolean; retired: boolean }[]>('/ledger/accounts') });
+  const incoming = chosen.every((t) => t.amountCents > 0);
+  const outgoing = chosen.every((t) => t.amountCents < 0);
+  const kind = incoming ? 'income' : 'expense';
+  const options = accounts.data?.filter((a) => a.kind === kind && !a.hidden && !a.retired) ?? [];
+  const total = chosen.reduce((s, t) => s + t.amountCents, 0);
+  return (
+    <form className="bulkbar" aria-label="Ohne Rechnung buchen" style={{ marginBottom: 'var(--s-3)' }} onSubmit={(e) => {
+      e.preventDefault();
+      const f = new FormData(e.currentTarget);
+      void act('/bank-transactions/book', { transactionIds: chosen.map((t) => t.id), accountId: f.get('accountId'), sphere: f.get('sphere') || undefined });
+    }}>
+      <strong>{chosen.length} ausgewählt, {euro(total)}</strong>
+      {incoming || outgoing ? (
+        <>
+          <select name="accountId" className="select" aria-label={incoming ? 'Einnahmenkonto' : 'Ausgabenkonto'} required defaultValue="">
+            <option value="" disabled>Konto wählen …</option>
+            {options.map((a) => <option key={a.id} value={a.id}>{a.number} {a.name}</option>)}
+          </select>
+          <select name="sphere" className="select" aria-label="Sphäre" defaultValue="">
+            <option value="">Sphäre des Kontos</option>
+            {SPHERES.map((s) => <option key={s} value={s}>{SPHERE_LABEL[s]}</option>)}
+          </select>
+          <button className="btn btn-primary">Buchen</button>
+        </>
+      ) : <span className="muted">Einnahmen und Ausgaben bitte getrennt auswählen.</span>}
+    </form>
   );
 }

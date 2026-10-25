@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { allocateInput, bankAccount, bankAccountInput, bankTx, importInput, importResult } from '../../shared/sepa.ts';
+import { allocateInput, bankAccount, bankAccountInput, bankBookInput, bankTx, importInput, importResult } from '../../shared/sepa.ts';
+import { bookingLines, lockJournal, postEntry, reverseEntry } from '../ledger/service.ts';
+import { orgToday } from '../members/query.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { parseCamt053, type BankTx as ParsedTx } from '../banking/camt.ts';
@@ -11,7 +13,7 @@ import { autoMatch, invoiceNumberRegex, processReturn, suggestionsFor } from '..
 import { blindIndex, decrypt, encrypt, maskIban } from '../crypto.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { refreshPayment } from '../invoices/service.ts';
-import { requirePermission, scopeOf, type Actor } from '../policy.ts';
+import { requireClubWide, requirePermission, scopeOf, type Actor } from '../policy.ts';
 import { assertNotLive } from '../sepa/live.ts';
 
 CONSTRAINT_MESSAGES.bank_account_organization_id_iban_key = 'Ein Konto mit dieser IBAN gibt es schon.';
@@ -231,6 +233,8 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
     const allocations = rows.length
       ? await db.selectFrom('allocation').innerJoin('invoice', 'invoice.id', 'allocation.invoice_id').select(['allocation.bank_transaction_id', 'allocation.invoice_id', 'invoice.number', 'allocation.amount_cents']).where('allocation.bank_transaction_id', 'in', rows.map((r) => r.id)).where('allocation.status', '=', 'confirmed').execute()
       : [];
+    const entryIds = rows.map((r) => r.journal_entry_id).filter((x): x is string => !!x);
+    const entries = new Map(entryIds.length ? (await db.selectFrom('journal_entry').select(['id', 'number']).where('id', 'in', entryIds).execute()).map((e) => [e.id, Number(e.number)]) : []);
     return Promise.all(rows.map(async (t) => ({
       id: t.id,
       bankAccountId: t.bank_account_id,
@@ -243,6 +247,7 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
       returnReason: t.return_reason,
       status: t.status,
       note: t.note,
+      journalNumber: t.journal_entry_id ? (entries.get(t.journal_entry_id) ?? null) : null,
       allocations: allocations.filter((a) => a.bank_transaction_id === t.id).map((a) => ({ invoiceId: a.invoice_id, number: a.number, amountCents: a.amount_cents })),
       suggestions: t.status === 'unmatched' ? await suggestionsFor(db, actor.organizationId, t, re) : [],
     })));
@@ -256,7 +261,7 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/bank-transactions',
-    { schema: { tags, summary: 'Kontobewegungen; status=unmatched ist der Abgleich-Eingang mit Vorschlägen', querystring: z.object({ bankAccountId: z.uuid().optional(), status: z.enum(['unmatched', 'matched', 'ignored', 'all']).default('unmatched'), limit: z.coerce.number().int().min(1).max(200).default(100) }), response: { 200: z.array(bankTx) } } },
+    { schema: { tags, summary: 'Kontobewegungen; status=unmatched ist der Abgleich-Eingang mit Vorschlägen', querystring: z.object({ bankAccountId: z.uuid().optional(), status: z.enum(['unmatched', 'matched', 'ignored', 'booked', 'all']).default('unmatched'), limit: z.coerce.number().int().min(1).max(200).default(100) }), response: { 200: z.array(bankTx) } } },
     async (req) => {
       const actor = requireActor(req);
       requireBanking(actor, 'read');
@@ -292,6 +297,35 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
     return (await txDto(actor, [await loadTx(actor, req.params.id)]))[0]!;
   });
 
+  app.post('/bank-transactions/book', { schema: { tags, summary: 'Mehrere Kontobewegungen ohne Rechnung auf ein Konto buchen (Sphäre, Kostenstelle, Steuersatz gemeinsam)', body: bankBookInput, response: { 200: z.object({ booked: z.number() }) } } }, async (req) => {
+    const actor = requireActor(req);
+    requireBanking(actor, 'write');
+    requireClubWide(actor, 'ledger', 'write');
+    const b = req.body;
+    const booked = await db.transaction().execute(async (tx) => {
+      await lockJournal(tx, actor.organizationId);
+      const rows = await tx.selectFrom('bank_transaction').innerJoin('bank_account', 'bank_account.id', 'bank_transaction.bank_account_id')
+        .select(['bank_transaction.id', 'bank_transaction.booking_date', 'bank_transaction.amount_cents', 'bank_transaction.counterparty_name', 'bank_transaction.remittance', 'bank_transaction.status', 'bank_account.ledger_account_id', 'bank_account.name as bank_name'])
+        .where('bank_transaction.organization_id', '=', actor.organizationId).where('bank_transaction.id', 'in', b.transactionIds).orderBy('bank_transaction.booking_date').forUpdate().execute();
+      if (rows.length !== new Set(b.transactionIds).size || rows.some((r) => r.status !== 'unmatched')) throw new Problem(409, 'not-open', 'Nicht alle gewählten Bewegungen sind noch offen.', 'Lade die Liste neu und wähle noch einmal.');
+      // Like payments on invoices: the bank account's own ledger account, else the default bank account.
+      const fallback = (await tx.selectFrom('ledger_setting').select('bank_account_id').where('organization_id', '=', actor.organizationId).executeTakeFirst())?.bank_account_id ?? null;
+      const noAccount = rows.find((r) => !(r.ledger_account_id ?? fallback));
+      if (noAccount) throw new Problem(409, 'bank-ledger-account', `Das Bankkonto ${noAccount.bank_name} hat kein Buchhaltungskonto.`, 'Ordne es unter Buchhaltung → Einstellungen zu.');
+      if (rows.some((r) => r.amount_cents > 0) && rows.some((r) => r.amount_cents < 0)) throw new Problem(400, 'mixed-directions', 'Einnahmen und Ausgaben bitte getrennt buchen.');
+      const kind = rows[0]!.amount_cents > 0 ? 'income' : 'expense';
+      for (const r of rows) {
+        const text = [r.counterparty_name, r.remittance].filter(Boolean).join(': ').slice(0, 300) || 'Kontobewegung';
+        const { lines } = await bookingLines(tx, actor.organizationId, { kind, date: r.booking_date, moneyAccountId: r.ledger_account_id ?? fallback, lines: [{ grossCents: Math.abs(r.amount_cents), accountId: b.accountId, sphere: b.sphere, costCenterId: b.costCenterId, taxRateId: b.taxRateId }] });
+        const e = await postEntry(tx, actor.organizationId, { date: r.booking_date, text, source: 'manual', createdBy: actor.userId, lines });
+        await tx.updateTable('bank_transaction').set({ status: 'booked', journal_entry_id: e.id }).where('id', '=', r.id).execute();
+      }
+      await audit(tx, actor.organizationId, actor, { action: 'bank_transaction.booked', entityType: 'ledger_account', entityId: b.accountId, diff: { transactions: [null, rows.length], sphere: [null, b.sphere ?? null] } });
+      return rows.length;
+    });
+    return { booked };
+  });
+
   app.post('/bank-transactions/:id/ignore', { schema: { tags, summary: 'Buchung ohne Rechnung abhaken (z. B. Bankgebühr), mit Notiz', params: idParam, body: z.object({ note: z.string().trim().min(2).max(300) }), response: { 200: bankTx } } }, async (req) => {
     const actor = requireActor(req);
     requireBanking(actor, 'write');
@@ -314,6 +348,15 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
       if (ret) throw new Problem(409, 'is-return', 'Eine verbuchte Rücklastschrift lässt sich nicht aufheben. Ziehe die Rechnung erneut ein oder buche sie aus.');
       const lock = (await tx.selectFrom('ledger_setting').select('lock_date').where('organization_id', '=', actor.organizationId).executeTakeFirst())?.lock_date;
       if (lock && t.booking_date <= lock) throw new Problem(409, 'period-locked', 'Diese Kontobewegung liegt in einem abgeschlossenen Zeitraum.', 'Die Zuordnung lässt sich danach nicht neu setzen. Korrigiere bei der Rechnung (Zahlung zurücknehmen und neu erfassen) oder öffne den Zeitraum wieder.');
+      if (t.status === 'booked') {
+        requireClubWide(actor, 'ledger', 'write');
+        await lockJournal(tx, actor.organizationId);
+        // Unlink first (the booking check), then reverse: the original entry stays, its counter-entry is dated today.
+        await tx.updateTable('bank_transaction').set({ status: 'unmatched', note: null, journal_entry_id: null }).where('id', '=', t.id).execute();
+        await reverseEntry(tx, actor.organizationId, t.journal_entry_id!, await orgToday(tx, actor.organizationId), actor.userId);
+        await audit(tx, actor.organizationId, actor, { action: 'bank_transaction.unbooked', entityType: 'bank_transaction', entityId: t.id });
+        return;
+      }
       const allocations = await tx.selectFrom('allocation').select(['id', 'invoice_id', 'collection_item_id']).where('bank_transaction_id', '=', t.id).where('status', '=', 'confirmed').execute();
       for (const a of allocations) {
         await tx.updateTable('allocation').set({ status: 'reversed', reversed_at: new Date() }).where('id', '=', a.id).execute();
