@@ -57,17 +57,7 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
   // ---------- Mandates ----------
 
   /** A mandate in a file that is generated, downloaded or submitted will still be debited. */
-  async function assertMandateNotLive(mandateId: string) {
-    const live = await db
-      .selectFrom('collection_item')
-      .innerJoin('collection_run', 'collection_run.id', 'collection_item.run_id')
-      .select('collection_item.id')
-      .where('collection_item.mandate_id', '=', mandateId)
-      .where('collection_item.status', '=', 'included')
-      .where('collection_run.status', 'in', ['generated', 'downloaded', 'submitted'])
-      .executeTakeFirst();
-    if (live) throw new Problem(409, 'mandate-in-run', 'Mit diesem Mandat läuft gerade ein Einzug.', 'Gib den Einzug zuerst frei oder warte die Gutschrift ab.');
-  }
+  const assertMandateNotLive = (mandateId: string, conn: Db = db) => assertNotInLiveRun(conn, mandateId);
 
   app.get('/members/:id/mandates', { schema: { tags, summary: 'SEPA-Mandate des Mitglieds (Kontoinhaber:in ist die Person des Mitglieds)', params: idParam, response: { 200: z.array(mandate) } } }, async (req) => {
     const actor = requireActor(req);
@@ -83,20 +73,19 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Du darfst keine IBAN sehen oder erfassen.', { permission: 'members.field.iban' });
     const { row, today } = await loadMemberRow(db, actor, req.params.id, 'write', 'sepa');
     if (req.body.signedOn > today) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'signedOn', message: 'Das Datum liegt in der Zukunft.' }] });
-    const old = await db.selectFrom('sepa_mandate').select('id').where('person_id', '=', row.person_id).where('status', 'in', ['active', 'pending_evidence']).execute();
-    for (const o of old) await assertMandateNotLive(o.id);
     const m = await db.transaction().execute((tx) => insertMandate(tx, actor, { personId: row.person_id, memberId: row.id, membershipNumber: row.membership_number, today, ...req.body }));
     reply.status(201);
     return mandateDto(actor, m);
   });
 
-  async function changeMandate(actor: Actor, id: string, change: (m: Selectable<SepaMandateTable>, today: string) => Record<string, unknown>, action: string) {
+  async function changeMandate(actor: Actor, id: string, change: (m: Selectable<SepaMandateTable>, today: string) => Record<string, unknown>, action: string, opts: { notLive?: boolean } = {}) {
     requirePermission(actor, 'sepa', 'write');
     return db.transaction().execute(async (tx) => {
       const m = await tx.selectFrom('sepa_mandate').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!m) throw notFound('Mandat');
       const member = await tx.selectFrom('member').select('id').where('person_id', '=', m.person_id).executeTakeFirst();
       if (member) await loadMemberRow(tx, actor, member.id, 'write', 'sepa');
+      if (opts.notLive) await assertMandateNotLive(m.id, tx);
       const today = await orgToday(tx, actor.organizationId);
       const values = change(m, today);
       const after = await tx.updateTable('sepa_mandate').set({ ...values, updated_at: new Date() }).where('id', '=', m.id).returningAll().executeTakeFirstOrThrow();
@@ -107,11 +96,10 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/mandates/:id/revoke', { schema: { tags, summary: 'Mandat widerrufen', params: idParam, body: z.object({ reason: z.string().trim().min(2).max(200), on: z.iso.date().optional() }), response: { 200: mandate } } }, async (req) => {
     const actor = requireActor(req);
-    await assertMandateNotLive(req.params.id);
     return changeMandate(actor, req.params.id, (m, today) => {
       if (m.status === 'revoked') throw new Problem(409, 'already-revoked', 'Das Mandat ist bereits widerrufen.');
       return { status: 'revoked', revoked_on: req.body.on ?? today, revoke_reason: req.body.reason };
-    }, 'mandate.revoked');
+    }, 'mandate.revoked', { notLive: true });
   });
 
   app.post('/mandates/:id/activate', { schema: { tags, summary: 'Unterschriebenes Mandat liegt vor: aktivieren', params: idParam, body: z.object({}).optional(), response: { 200: mandate } } }, async (req) => {
@@ -266,7 +254,13 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
           if (!['open', 'partially_paid'].includes(inv.status)) throw new Problem(409, 'not-open', `Rechnung ${c.number} ist nicht mehr offen.`);
           const m = await tx.selectFrom('sepa_mandate').selectAll().where('person_id', '=', inv.recipient_person_id).where('status', '=', 'active').forUpdate().executeTakeFirst();
           if (!m) throw new Problem(409, 'no-mandate', `Für Rechnung ${c.number} gibt es kein aktives Mandat mehr.`);
-          if (kind === 'debit' && m.type === 'one_off' && items.some((x) => x.mandate.id === m.id)) throw new Problem(409, 'one-off', `Das Einmal-Mandat ${m.reference} kann nur einmal eingezogen werden.`);
+          if (kind === 'debit' && m.type === 'one_off' && (m.first_collected || items.some((x) => x.mandate.id === m.id))) throw new Problem(409, 'one-off', `Das Einmal-Mandat ${m.reference} kann nur einmal eingezogen werden.`);
+          // Re-checked under the locks: the readiness above was computed before them (Codex review of #4).
+          if (kind === 'debit') {
+            const now = await tx.selectFrom('invoice').leftJoin('member', 'member.id', 'invoice.member_id').select(['invoice.recipient', 'member.payment_method']).where('invoice.id', '=', c.invoiceId).executeTakeFirstOrThrow();
+            if (now.payment_method !== null && now.payment_method !== 'direct_debit') throw new Problem(409, 'not-debit', `Rechnung ${c.number} wird nicht mehr per Lastschrift bezahlt.`);
+            if ((now.recipient as { mandateReference?: string | null }).mandateReference !== m.reference) throw new Problem(409, 'no-prenotification', `Für Rechnung ${c.number} gilt inzwischen ein anderes Mandat; die Vorabankündigung passt nicht mehr.`);
+          }
           const amount = inv.total_cents - inv.paid_cents;
           const e2e = `OV${seq}${String(++n).padStart(5, '0')}`;
           const item = await tx
@@ -415,6 +409,19 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 };
 
 /** Creates a mandate for the debtor person, replacing an active or pending one, in the caller's transaction. */
+/** Refuses to change a mandate that a generated, downloaded or submitted run still collects with. Call it on a locked mandate. */
+export async function assertNotInLiveRun(conn: Db, mandateId: string) {
+  const live = await conn
+    .selectFrom('collection_item')
+    .innerJoin('collection_run', 'collection_run.id', 'collection_item.run_id')
+    .select('collection_item.id')
+    .where('collection_item.mandate_id', '=', mandateId)
+    .where('collection_item.status', '=', 'included')
+    .where('collection_run.status', 'in', ['generated', 'downloaded', 'submitted'])
+    .executeTakeFirst();
+  if (live) throw new Problem(409, 'mandate-in-run', 'Mit diesem Mandat läuft gerade ein Einzug.', 'Gib den Einzug zuerst frei oder warte die Gutschrift ab.');
+}
+
 export async function insertMandate(
   tx: Db,
   actor: Actor,
@@ -422,7 +429,9 @@ export async function insertMandate(
 ) {
   const count = await tx.selectFrom('sepa_mandate').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', v.personId).executeTakeFirstOrThrow();
   const reference = v.reference ?? `${v.membershipNumber}-${count.n + 1}`.replace(/[^A-Za-z0-9/?:().,'+ -]/g, '-').slice(0, 35);
-  // One active mandate per person: a new one replaces the old.
+  // One active mandate per person: a new one replaces the old, never while a run still collects with it (locked here,
+  // as a run locks it too: Codex review of #4).
+  for (const o of await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', v.personId).where('status', 'in', ['active', 'pending_evidence']).forUpdate().execute()) await assertNotInLiveRun(tx, o.id);
   await tx.updateTable('sepa_mandate').set({ status: 'revoked', revoked_on: v.today, revoke_reason: 'Durch neues Mandat ersetzt', updated_at: new Date() }).where('person_id', '=', v.personId).where('status', 'in', ['active', 'pending_evidence']).execute();
   const m = await tx
     .insertInto('sepa_mandate')

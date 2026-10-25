@@ -118,6 +118,11 @@ describe('bank import and matching', () => {
     expect(schulz.status).toBe('open');
     const rd = await ctx.db.selectFrom('return_debit').selectAll().executeTakeFirstOrThrow();
     expect(rd).toMatchObject({ reason_code: 'AM04', fee_cents: 300 });
+    // Every automatic settlement is audited with its rule, and a run with nothing left included is finished.
+    const matchedEvents = await ctx.db.selectFrom('audit_event').select(['entity_id', 'diff']).where('action', '=', 'invoice.payment_matched').execute();
+    expect(matchedEvents.map((e) => e.entity_id)).toContain(a.invoiceId);
+    expect(JSON.stringify(matchedEvents[0]!.diff)).toContain('Einzugsposition');
+    expect((await admin.get(`/collection-runs/${run.id}`)).body.status).toBe('settled');
     expect((await admin.get('/collection-runs/candidates')).body.find((x: { invoiceId: string }) => x.invoiceId === b.invoiceId).readiness).toBe('ok');
     const dup = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: xml });
     expect(dup.status).toBe(409);
@@ -257,6 +262,27 @@ describe('review fixes', () => {
     expect(blocked.body.type).toContain('balance-mismatch');
     const forced = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'camt053', content: off, balanceOverrideReason: 'Auszug vom Vormonat fehlt' });
     expect(forced.status).toBe(201);
+    // A CSV import says what it took for duplicates instead of dropping it silently.
+    const again = await admin.post(`/bank-accounts/${accountId}/imports`, { format: 'csv', content: csv + '\n06.11.2026;Neu;1,00' });
+    expect(again.body.warnings.join(' ')).toMatch(/2 Bewegungen sahen aus wie schon eingelesene.*03\.11\.2026 30,00/);
+    // The IBAN of an account is not changed in place.
+    expect((await admin.patch(`/bank-accounts/${accountId}`, { iban: 'DE02120300000000202051' })).status).toBe(400);
+  });
+
+  it('Codex review #4: a one-off mandate is collected once under concurrency, and a live mandate is not replaced', async () => {
+    const m = (await admin.post('/members', { lastName: 'Einmal', firstName: 'Test', joinDate: '2024-01-01' })).body;
+    await admin.patch(`/members/${m.id}/payment-method`, { paymentMethod: 'direct_debit' });
+    await admin.post(`/members/${m.id}/mandates`, { signedOn: '2024-01-15', accountHolder: 'Test Einmal', iban: 'DE02120300000000202051', type: 'one_off' });
+    const inv = async (cents: number) => {
+      const i = await admin.post('/invoices', { memberId: m.id, dueDate: today(), lines: [{ text: 'Kurs', unitCents: cents }] });
+      await admin.post(`/invoices/${i.body.id}/issue`, {});
+      return i.body.id as string;
+    };
+    const [i1, i2] = [await inv(1000), await inv(2000)];
+    const runs = await Promise.all([i1, i2].map((id) => admin.post('/collection-runs', { bankAccountId: accountId, collectionDate: date(), invoiceIds: [id] })));
+    expect(runs.map((r) => r.status).sort()).toEqual([201, 409]);
+    // While that run is live, a new mandate (which would revoke the used one) is refused.
+    expect((await admin.post(`/members/${m.id}/mandates`, { signedOn: '2024-02-01', accountHolder: 'Test Einmal', iban: 'DE75512108001245126199' })).status).toBe(409);
   });
 
   it('refuses to revoke a mandate that is in a running debit and enforces the pre-notification period', async () => {

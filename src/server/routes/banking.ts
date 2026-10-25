@@ -86,6 +86,8 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireBanking(actor, 'write');
     const b = req.body;
+    // The IBAN is the account's identity in statements and SEPA files: a different account is a new bank account.
+    if (b.iban !== undefined) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'iban', message: 'Die IBAN eines Kontos ändert sich nicht. Leg für ein anderes Konto ein neues Bankkonto an.' }] });
     const values: Record<string, unknown> = {};
     if (b.name !== undefined) values.name = b.name;
     if (b.bic !== undefined) values.bic = b.bic;
@@ -134,6 +136,8 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       const sha = createHash('sha256').update(req.body.content).digest('hex');
       const result = await db.transaction().execute(async (tx) => {
+        // One import or rollback per account at a time: a rollback must not delete a booking a concurrent import skipped as a duplicate.
+        await tx.selectFrom('bank_account').select('id').where('id', '=', account.id).forUpdate().execute();
         const imp = await tx
           .insertInto('bank_statement_import')
           .values({ organization_id: actor.organizationId, bank_account_id: account.id, format: req.body.format, file_name: req.body.fileName ?? null, file_sha256: sha, period_from: parsed.from, period_to: parsed.to, opening_cents: parsed.opening, closing_cents: parsed.closing, raw_encrypted: encrypt(req.body.content), created_by: actor.userId })
@@ -141,6 +145,7 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
           .executeTakeFirstOrThrow();
         let imported = 0;
         let duplicates = 0;
+        const skippedSamples: string[] = [];
         const ids: string[] = [];
         const seen = new Map<string, number>();
         for (const t of parsed.transactions) {
@@ -175,8 +180,13 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
           if (row) {
             imported++;
             ids.push(row.id);
-          } else duplicates++;
+          } else {
+            duplicates++;
+            if (skippedSamples.length < 5) skippedSamples.push(`${t.bookingDate.split('-').reverse().join('.')} ${(t.amountCents / 100).toFixed(2).replace('.', ',')} € ${t.counterpartyName ?? ''}`.trim());
+          }
         }
+        // A CSV file has no balances to catch a wrongly skipped movement: name what was taken for a duplicate.
+        if (duplicates && req.body.format === 'csv') warnings.push(`${duplicates} Bewegungen sahen aus wie schon eingelesene und wurden übersprungen (${skippedSamples.join('; ')}${duplicates > skippedSamples.length ? '; …' : ''}). Ist eine davon eine neue Zahlung, erfasse sie von Hand.`);
         await tx.updateTable('bank_statement_import').set({ transaction_count: imported }).where('id', '=', imp.id).execute();
         // Balance check: opening balance + every booking must equal the statement's closing balance.
         if (parsed.closing !== null) {
@@ -191,7 +201,14 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
         await audit(tx, actor.organizationId, actor, { action: 'bank_import.created', entityType: 'bank_account', entityId: account.id, diff: { imported: [null, imported], duplicates: [null, duplicates] } });
         return { id: imp.id, imported, duplicates, ids };
       });
-      const matched = await autoMatch(db, actor.organizationId, actor, result.ids);
+      // The import is committed; a failing match must not report it as failed (a retry would hit the duplicate-file check).
+      let matched = { matched: 0, returns: 0 };
+      try {
+        matched = await autoMatch(db, actor.organizationId, actor, result.ids);
+      } catch (err) {
+        req.log.error(err, 'automatic matching after import failed');
+        warnings.push('Der automatische Abgleich ist fehlgeschlagen. Starte ihn unter Bank → Abgleich mit „Automatisch abgleichen“ erneut.');
+      }
       reply.status(201);
       return { id: result.id, imported: result.imported, duplicates: result.duplicates, autoMatched: matched.matched, returns: matched.returns, warnings };
     },
@@ -201,10 +218,13 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireBanking(actor, 'write');
     await db.transaction().execute(async (tx) => {
-      const imp = await tx.selectFrom('bank_statement_import').select(['id', 'bank_account_id']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
-      if (!imp) throw notFound('Import');
+      const found = await tx.selectFrom('bank_statement_import').select(['bank_account_id']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+      if (!found) throw notFound('Import');
+      // Same lock order as an import: account first, then the import.
+      await tx.selectFrom('bank_account').select('id').where('id', '=', found.bank_account_id).forUpdate().execute();
+      const imp = await tx.selectFrom('bank_statement_import').select(['id', 'bank_account_id']).where('id', '=', req.params.id).forUpdate().executeTakeFirstOrThrow();
       // Only the latest import of an account: a later, overlapping import may have skipped these bookings as duplicates.
-      const later = await tx.selectFrom('bank_statement_import').select('id').where('bank_account_id', '=', imp.bank_account_id).where('id', '>', imp.id).executeTakeFirst();
+      const later = await tx.selectFrom('bank_statement_import').select('id').where('bank_account_id', '=', imp.bank_account_id).where(sql<boolean>`(created_at, id) > (select created_at, id from bank_statement_import where id = ${imp.id})`).executeTakeFirst();
       if (later) throw new Problem(409, 'not-latest', 'Nur der zuletzt eingelesene Auszug lässt sich zurückrollen.');
       const used = await tx.selectFrom('bank_transaction').select('id').where('import_id', '=', imp.id).where('status', '<>', 'unmatched').executeTakeFirst();
       // Reversed allocations still point at the bookings, so they count as "used" too.
