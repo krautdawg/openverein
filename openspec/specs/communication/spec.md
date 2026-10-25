@@ -102,3 +102,10 @@ The system SHALL send issued invoices of a list or a fee run by e-mail with each
 - **WHEN** invoices are sent and one recipient prefers letters
 - **THEN** that invoice is listed for printing and not mailed
 
+### Requirement: Letters as one duplex-ready PDF
+The system SHALL merge the issued PDFs of invoices going out by letter into one PDF sorted by postal code, with every letter starting on a front page.
+
+#### Scenario: Two letters, one page each
+- **WHEN** two one-page invoices are printed as letters
+- **THEN** the PDF has four pages, the second and fourth blank, and the lower postal code comes first
+
