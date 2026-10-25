@@ -48,6 +48,7 @@ export interface OrganizationTable {
   exemption_period: string | null;
   exemption_purposes: string | null;
   receipt_signer: string | null;
+  erase_after_months: Generated<number>;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -125,6 +126,8 @@ export interface PersonTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   import_run_id: Generated<string | null>;
+  anonymised_at: Date | null;
+  legal_hold_reason: string | null;
 }
 
 export interface MemberTable {
@@ -866,6 +869,31 @@ export interface Database {
   donation: DonationTable;
   donation_receipt: DonationReceiptTable;
   donation_receipt_item: DonationReceiptItemTable;
+  consent: ConsentTable;
+  erasure_log: ErasureLogTable;
+}
+
+export type ConsentPurpose = 'newsletter' | 'photos' | 'phone_list' | 'other';
+export type ConsentSource = 'form' | 'portal' | 'paper' | 'admin';
+export interface ConsentTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  purpose: ConsentPurpose;
+  label: string | null;
+  source: ConsentSource;
+  text_version: string | null;
+  granted_at: Generated<Date>;
+  withdrawn_at: Date | null;
+  withdrawn_source: ConsentSource | null;
+  created_by: string | null;
+}
+
+export interface ErasureLogTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  at: Generated<Date>;
 }
 
 export interface DonationTable {

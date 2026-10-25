@@ -25,6 +25,7 @@ import { importRoutes } from './routes/imports.ts';
 import { ledgerRoutes } from './routes/ledger.ts';
 import { exportRoutes } from './routes/exports.ts';
 import { donationRoutes } from './routes/donations.ts';
+import { privacyRoutes } from './routes/privacy.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -122,6 +123,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(ledgerRoutes);
       await api.register(exportRoutes);
       await api.register(donationRoutes);
+      await api.register(privacyRoutes);
     },
     { prefix: '/api/v1' },
   );
