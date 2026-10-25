@@ -163,3 +163,10 @@ The system SHALL hide sensitive custom fields and their values from users whose 
 - **WHEN** a trainer limited to the tennis group opens a member with an allergy noted in a sensitive field
 - **THEN** neither the field nor its value is shown or returned by the API
 
+### Requirement: Household discount recomputed from included lines
+The system SHALL compute a household's discount at posting from the lines that are actually billed, so excluding a preview line changes the discount accordingly.
+
+#### Scenario: Excluded child fee
+- **WHEN** the preview of a household with "50 % from the 2nd member" is posted with one child's fee excluded
+- **THEN** the discount line covers only the remaining discounted fees
+
