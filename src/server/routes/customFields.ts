@@ -12,8 +12,8 @@ import { requirePermission, type Actor } from '../policy.ts';
 const tags = ['members'];
 const idParam = z.object({ id: z.uuid() });
 
-async function valueCount(db: Db, fieldId: string) {
-  const r = await db.selectFrom('person').select(sql<number>`count(*)::int`.as('n')).where(sql<boolean>`custom ? ${fieldId}`).executeTakeFirstOrThrow();
+async function valueCount(db: Db, organizationId: string, fieldId: string) {
+  const r = await db.selectFrom('person').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', organizationId).where(sql<boolean>`custom ? ${fieldId}`).executeTakeFirstOrThrow();
   return r.n;
 }
 
@@ -22,11 +22,11 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function dto(actor: Actor, id?: string) {
     const fields = (await fieldsFor(db, actor, { archived: true })).filter((f) => !id || f.id === id);
-    const counts = await db.selectFrom('person').select(['custom']).where('organization_id', '=', actor.organizationId).where(sql<boolean>`custom <> '{}'::jsonb`).execute();
+    const counts = new Map((await sql<{ k: string; n: number }>`select k, count(*)::int as n from person, jsonb_object_keys(custom) k where organization_id = ${actor.organizationId} group by k`.execute(db)).rows.map((r) => [r.k, r.n]));
     return fields.map((f) => ({
       id: f.id, key: f.key, label: f.label, type: f.type, options: f.options, required: f.required, position: f.position,
       visibleToMember: f.visible_to_member, editableByMember: f.editable_by_member, sensitive: f.sensitive, archived: !!f.archived_at,
-      valueCount: counts.filter((c) => c.custom[f.id] !== undefined).length,
+      valueCount: counts.get(f.id) ?? 0,
     }));
   }
 
@@ -57,10 +57,12 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const f = await tx.selectFrom('custom_field').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!f) throw notFound('Feld');
-      const used = await valueCount(tx, f.id);
+      const used = await valueCount(tx, actor.organizationId, f.id);
+      const type = b.type ?? f.type;
+      if ((type === 'select' || type === 'multiselect') && (b.options ?? f.options).length < 2) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'options', message: 'Eine Auswahl braucht mindestens zwei Möglichkeiten.' }] });
       if (b.type && b.type !== f.type && used) throw new Problem(409, 'type-locked', 'Der Typ lässt sich nicht mehr ändern: Es gibt schon Werte.', 'Archiviere das Feld und leg ein neues an.');
       if (b.options && used && (f.type === 'select' || f.type === 'multiselect')) {
-        const inUse = await tx.selectFrom('person').select(sql<string>`jsonb_array_elements_text(case jsonb_typeof(custom -> ${f.id}) when 'array' then custom -> ${f.id} else jsonb_build_array(custom -> ${f.id}) end)`.as('v')).where(sql<boolean>`custom ? ${f.id}`).execute();
+        const inUse = await tx.selectFrom('person').select(sql<string>`jsonb_array_elements_text(case jsonb_typeof(custom -> ${f.id}) when 'array' then custom -> ${f.id} else jsonb_build_array(custom -> ${f.id}) end)`.as('v')).where('organization_id', '=', actor.organizationId).where(sql<boolean>`custom ? ${f.id}`).execute();
         const missing = [...new Set(inUse.map((r) => r.v))].filter((v) => !b.options!.includes(v));
         if (missing.length) throw new Problem(409, 'option-in-use', `Diese Auswahl wird noch verwendet: ${missing.join(', ')}.`);
       }
@@ -70,7 +72,7 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
         ...(b.visibleToMember !== undefined ? { visible_to_member: b.visibleToMember } : {}), ...(b.editableByMember !== undefined ? { editable_by_member: b.editableByMember } : {}),
         ...(b.sensitive !== undefined ? { sensitive: b.sensitive } : {}), ...(b.archived !== undefined ? { archived_at: b.archived ? new Date() : null } : {}),
       }).where('id', '=', f.id).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'custom_field.updated', entityType: 'custom_field', entityId: f.id, diff: Object.fromEntries(Object.entries(b).map(([k, v]) => [k, [null, v]])) });
+      await audit(tx, actor.organizationId, actor, { action: 'custom_field.updated', entityType: 'custom_field', entityId: f.id, diff: Object.fromEntries(Object.entries(b).map(([k, v]) => [k, [k === 'archived' ? !!f.archived_at : (f as Record<string, unknown>)[k.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())] ?? null, v]])) });
     });
     return (await dto(actor, req.params.id))[0]!;
   });
@@ -81,7 +83,7 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const f = await tx.selectFrom('custom_field').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!f) throw notFound('Feld');
-      const used = await valueCount(tx, f.id);
+      const used = await valueCount(tx, actor.organizationId, f.id);
       if (used && req.body?.confirm !== f.label) throw new Problem(409, 'confirm-delete', `${used} Personen haben einen Wert in „${f.label}“.`, 'Gib zur Bestätigung den Namen des Feldes ein, oder archiviere es.', { valueCount: used });
       await tx.updateTable('person').set({ custom: sql`custom - ${f.id}` }).where('organization_id', '=', actor.organizationId).where(sql<boolean>`custom ? ${f.id}`).execute();
       await tx.deleteFrom('custom_field').where('id', '=', f.id).execute();

@@ -42,7 +42,7 @@ const isRealDate = (v: string) => {
 
 /** Checks and normalises one value for its field; returns the value to store or an error message. */
 export function checkCustomValue(f: { type: CustomFieldType; options: string[]; required: boolean; label: string }, v: unknown): { ok: true; value: CustomValue } | { ok: false; message: string } {
-  const empty = v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0);
+  const empty = v === null || v === undefined || (typeof v === 'string' && v.trim() === '') || (Array.isArray(v) && v.length === 0);
   if (empty) return f.required && f.type !== 'checkbox' ? { ok: false, message: `${f.label} ist ein Pflichtfeld.` } : { ok: true, value: null };
   switch (f.type) {
     case 'text':

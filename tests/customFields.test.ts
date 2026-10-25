@@ -51,4 +51,31 @@ describe('custom fields', () => {
     expect(log).toHaveLength(1);
     expect(JSON.stringify(log)).not.toMatch(/Nüsse|Pollen/);
   });
+
+  it('skips unchanged values, masks history of fields made sensitive, and is covered by export and anonymisation', async () => {
+    const size = (await admin.post('/custom-fields', { key: 'groesse', label: 'Größe', type: 'text' })).body;
+    const flag = (await admin.post('/custom-fields', { key: 'ehrenamt', label: 'Ehrenamt', type: 'checkbox' })).body;
+    const group = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN' })).body.id;
+    const m = (await admin.post('/members', { lastName: 'Hist', joinDate: '2015-01-01', groupIds: [group], custom: { [size.id]: '180' } })).body;
+    await admin.patch(`/members/${m.id}`, { custom: { [size.id]: '181' } });
+    await admin.patch(`/members/${m.id}`, { custom: { [size.id]: '181', [flag.id]: false } }); // nothing changed
+    const audits = await ctx.db.selectFrom('audit_event').select('id').where('action', '=', 'person.custom_updated').execute();
+    expect(audits).toHaveLength(1);
+    // A required field added later does not block saving other values.
+    const req = (await admin.post('/custom-fields', { key: 'pflicht', label: 'Pflicht', type: 'text', required: true })).body;
+    expect((await admin.patch(`/members/${m.id}`, { custom: { [size.id]: '182', [req.id]: null } })).status).toBe(200);
+
+    const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Trainer:in', [group]) });
+    const seen = (await trainer.get(`/members/${m.id}`)).body.timeline.map((t: { diff: unknown }) => JSON.stringify(t.diff)).join();
+    expect(seen).toContain('181');
+    await admin.patch(`/custom-fields/${size.id}`, { sensitive: true });
+    const masked = (await trainer.get(`/members/${m.id}`)).body.timeline.map((t: { diff: unknown }) => JSON.stringify(t.diff)).join();
+    expect(masked).not.toContain('181');
+
+    const res = await ctx.app.inject({ url: `/api/v1/persons/${m.personId}/export`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    await admin.post(`/members/${m.id}/resign`, { noticeDate: '2020-09-01', exitDate: '2020-12-31' });
+    expect((await admin.post(`/persons/${m.personId}/anonymise`, {})).status).toBe(200);
+    expect((await ctx.db.selectFrom('person').select('custom').where('id', '=', m.personId).executeTakeFirstOrThrow()).custom).toEqual({});
+  });
 });

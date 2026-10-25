@@ -148,7 +148,7 @@ export const memberListQuery = z.object({
   groupId: z.uuid().optional(),
   includeFormer: z.stringbool().optional(),
   /** one custom field filter: `<field id>:<value>` (text matches partly, others exactly) */
-  cf: z.string().regex(/^[0-9a-f-]{36}:.{1,100}$/).optional(),
+  cf: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:.{1,100}$/, 'Format: <Feld-ID>:<Wert>').optional(),
   sort: z.enum(['name', 'number', 'joinDate']).default('name'),
   cursor: z.string().max(40).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

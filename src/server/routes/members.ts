@@ -78,11 +78,12 @@ const listFilter = (q: z.infer<typeof memberListQuery>, actor: Actor, today: str
   }
   if (q.cf) {
     const [id, value] = [q.cf.slice(0, 36), q.cf.slice(37)];
+    const like = `%${value.replace(/[%_\\]/g, (c) => '\\' + c)}%`;
     // Text fields match partly, the others exactly (checkbox: "true"/"false"; multiselect: one of the values).
-    query = query.where(sql<boolean>`exists (select 1 from custom_field f where f.id = ${id}::uuid and f.organization_id = member.organization_id and (f.sensitive = false or ${seesSensitive(actor)})
+    query = query.where(sql<boolean>`exists (select 1 from custom_field f where f.id = ${id}::uuid and f.organization_id = member.organization_id and f.archived_at is null and (f.sensitive = false or ${seesSensitive(actor)})
       and case f.type
-        when 'text' then person.custom ->> f.id::text ilike '%' || ${value} || '%'
-        when 'multiline' then person.custom ->> f.id::text ilike '%' || ${value} || '%'
+        when 'text' then person.custom ->> f.id::text ilike ${like}
+        when 'multiline' then person.custom ->> f.id::text ilike ${like}
         when 'multiselect' then person.custom -> f.id::text ? ${value}
         else person.custom ->> f.id::text = ${value} end)`);
   }
@@ -194,7 +195,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
       throw new Problem(403, 'out-of-scope', 'Du kannst Mitglieder nur in Deinen eigenen Gruppen anlegen.', 'Wähle mindestens eine Deiner Gruppen.', { permission: 'members:write' });
     }
     const today = await orgToday(db, actor.organizationId);
-    const id = await db.transaction().execute((tx) => insertMember(tx, actor, req.body, today));
+    const id = await db.transaction().execute((tx) => insertMember(tx, actor, req.body, today, 'member.created', null, true));
     reply.status(201);
     return memberDetail(db, actor, id);
   });
@@ -361,15 +362,15 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
 
 /** The group must exist in the organisation and, for scoped actors, be one of their groups. */
 /** Person, membership (number from the pattern) and group memberships in the caller's transaction. */
-export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof memberCreate>, today: string, action = 'member.created', importRunId: string | null = null) {
+/** `requireCustom`: only the create form can ask for the club's required custom fields; imports and admitted applications cannot. */
+export async function insertMember(tx: Db, actor: Actor, body: z.output<typeof memberCreate>, today: string, action = 'member.created', importRunId: string | null = null, requireCustom = false) {
   const org = await tx.selectFrom('organization').select('member_number_pattern').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
   const person = await tx
     .insertInto('person')
     .values({ organization_id: actor.organizationId, ...(personValues(body) as { last_name: string }), import_run_id: importRunId })
     .returning('id')
     .executeTakeFirstOrThrow();
-  // Imports cannot know the club's required fields; everything else must fill them.
-  await writeCustom(tx, actor, person.id, body.custom, importRunId ? 'patch' : 'create');
+  await writeCustom(tx, actor, person.id, body.custom, requireCustom ? 'create' : 'patch');
   const status: MemberStatus = body.joinDate ? statusForJoin(body.joinDate, today) : 'applicant';
   const taken = async (n: string) => !!(await tx.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('membership_number', '=', n).executeTakeFirst());
   const number = body.membershipNumber ?? (await nextNumber(tx, actor.organizationId, 'member', org.member_number_pattern, body.joinDate ?? today, taken));

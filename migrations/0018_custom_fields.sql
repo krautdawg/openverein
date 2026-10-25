@@ -19,4 +19,5 @@ create table custom_field (
 );
 
 alter table person add column custom jsonb not null default '{}';
-create index person_custom_idx on person using gin (custom jsonb_path_ops);
+-- Default jsonb_ops: serves the "?" (has value) checks of counts and filters.
+create index person_custom_idx on person using gin (custom);

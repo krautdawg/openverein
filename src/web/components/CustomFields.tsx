@@ -17,7 +17,9 @@ export function readCustom(form: FormData, fields: CustomField[]) {
     else if (f.type === 'multiselect') out[f.id] = form.getAll(name(f));
     else {
       const v = (form.get(name(f)) as string | null)?.trim() ?? '';
-      out[f.id] = v === '' ? null : f.type === 'number' ? Number(v.replace(',', '.')) : v;
+      // German numbers: "1.234,5"; anything unparseable goes to the server as text and comes back as an error.
+      const n = Number(v.replace(/\./g, '').replace(',', '.'));
+      out[f.id] = v === '' ? null : f.type === 'number' ? (Number.isFinite(n) ? n : v) : v;
     }
   }
   return out;
@@ -42,8 +44,8 @@ export function CustomInputs({ fields, values = {}, error, only }: { fields: Cus
             return <div key={f.id} className="field">{label}<select id={id} name={name(f)} className="select" style={{ width: '100%' }} defaultValue={(v as string) ?? ''} aria-invalid={!!err}><option value="">–</option>{f.options.map((o) => <option key={o}>{o}</option>)}</select>{msg}</div>;
           case 'multiselect':
             return (
-              <fieldset key={f.id} className="field" style={{ border: 0, padding: 0, margin: 0 }}>
-                <legend className="label" style={{ marginBottom: 'var(--s-1)' }}>{f.label}</legend>
+              <fieldset key={f.id} className="field" style={{ border: 0, padding: 0, margin: 0 }} aria-invalid={!!err || undefined}>
+                <legend className="label" style={{ marginBottom: 'var(--s-1)' }}>{f.label}{f.required ? '' : ' (optional)'}</legend>
                 {f.options.map((o) => <label key={o} className="check"><input type="checkbox" name={name(f)} value={o} defaultChecked={Array.isArray(v) && v.includes(o)} /> {o}</label>)}
                 {msg}
               </fieldset>
