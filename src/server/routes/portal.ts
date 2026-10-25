@@ -73,6 +73,7 @@ function pendingText(field: ChangeField, value: string) {
 export async function pruneSignIns(db: Db) {
   await db.deleteFrom('login_code').where('created_at', '<', new Date(Date.now() - 7 * 86_400_000)).execute();
   await db.deleteFrom('portal_session').where('expires_at', '<', new Date()).execute();
+  await db.deleteFrom('portal_verify_failure').where('day', '<', sql<string>`current_date - 2`).execute();
 }
 
 export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -155,14 +156,17 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       const token = await db.transaction().execute(async (tx) => {
         // Serialise sign-ins per address so the failure budget cannot be raced.
         await sql`select pg_advisory_xact_lock(hashtext(${`portal:${key}`}))`.execute(tx);
-        const failures = await tx.selectFrom('login_code').select(sql<number>`coalesce(sum(attempts), 0)::int`.as('n')).where('email_hash', '=', key).where('created_at', '>', new Date(Date.now() - 86_400_000)).executeTakeFirstOrThrow();
-        if (failures.n >= MAX_FAILURES_PER_DAY) throw new Problem(429, 'too-many-attempts', 'Zu viele falsche Codes für diese Adresse.', 'Versuch es morgen wieder oder bitte den Verein um einen Code.');
+        // Failures count per address and day whether or not a code exists, so the answers do not tell members from
+        // non-members (Codex review of #9).
+        const failures = await tx.selectFrom('portal_verify_failure').select('n').where('email_hash', '=', key).where('day', '=', sql<string>`current_date`).executeTakeFirst();
+        if ((failures?.n ?? 0) >= MAX_FAILURES_PER_DAY) throw new Problem(429, 'too-many-attempts', 'Zu viele falsche Codes für diese Adresse.', 'Versuch es morgen wieder oder bitte den Verein um einen Code.');
+        const fail = () => tx.insertInto('portal_verify_failure').values({ email_hash: key, day: sql<string>`current_date`, n: 1 }).onConflict((oc) => oc.columns(['email_hash', 'day']).doUpdateSet({ n: sql<number>`portal_verify_failure.n + 1` })).execute();
         const live = await tx.selectFrom('login_code').selectAll().where('email_hash', '=', key).where('consumed_at', 'is', null).where('expires_at', '>', new Date()).where('attempts', '<', MAX_ATTEMPTS).orderBy('created_at', 'desc').execute();
-        if (!live.length) throw wrong();
         // Any live code counts (a mailed one and one the club handed out can both be valid).
         const c = live.find((x) => timingSafeEqual(Buffer.from(x.code_hash), Buffer.from(codeHash(x.id, req.body.code))));
         if (!c) {
-          await tx.updateTable('login_code').set({ attempts: live[0]!.attempts + 1 }).where('id', '=', live[0]!.id).execute();
+          await fail();
+          if (live.length) await tx.updateTable('login_code').set({ attempts: live[0]!.attempts + 1 }).where('id', '=', live[0]!.id).execute();
           return null;
         }
         await tx.updateTable('login_code').set({ consumed_at: new Date() }).where('email_hash', '=', key).where('consumed_at', 'is', null).execute();

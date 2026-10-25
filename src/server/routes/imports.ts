@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isValidIban, normalizeIban } from '../../shared/iban.ts';
+import { isValidBic, isValidIban, normalizeIban } from '../../shared/iban.ts';
 import { countryCode, parseCsvLines, parseDate, suggestMapping, TARGETS, uniqueHeaders, type Target } from '../../shared/import.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
@@ -53,6 +53,8 @@ interface Planned {
   row: Row;
   memberId?: string;
   personId?: string;
+  /** row versions of the matched member, so a change since the dry run makes the plan stale */
+  version?: string;
 }
 
 const like = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -116,15 +118,20 @@ export const importRoutes: FastifyPluginAsyncZod = async (app) => {
       if (row.iban && !isValidIban(normalizeIban(row.iban))) errors.push('IBAN ist ungültig.');
       if (row.iban && !row.mandateDate) notes.push('IBAN ohne Mandatsdatum: Das Mandat wird nicht übernommen.');
       if (row.mandateReference && !/^[A-Za-z0-9/?:().,'+ -]{1,35}$/.test(row.mandateReference)) errors.push('Mandatsreferenz enthält unzulässige Zeichen.');
+      // Same rules as a mandate entered by hand (Codex review of #8).
+      if (row.iban && row.mandateDate && parseDate(row.mandateDate) && parseDate(row.mandateDate)! > today) errors.push('Das Mandat ist auf einen Tag in der Zukunft datiert.');
+      if (row.bic && !isValidBic(row.bic.replace(/\s+/g, '').toUpperCase())) errors.push(`BIC „${row.bic}“ ist ungültig.`);
+      if (row.accountHolder && row.accountHolder.length > 70) errors.push('Kontoinhaber:in ist länger als 70 Zeichen.');
       if (row.country && !countryCode(row.country)) notes.push(`Land „${row.country}“ unbekannt; es bleibt Deutschland.`);
       if (row.membershipNumber && row.membershipNumber.length > 40) errors.push('Mitgliedsnummer ist länger als 40 Zeichen.');
+      const rowNewGroups: string[] = [];
       for (const g of splitGroups(row.groups)) {
         const known = groups.find((e) => e.name.toLowerCase() === g.toLowerCase());
         if (g.length > 120) errors.push(`Gruppenname „${g.slice(0, 30)}…“ ist zu lang.`);
         else if (known?.archived_at) errors.push(`Gruppe „${known.name}“ ist archiviert.`);
-        else if (!known && !newGroups.has(g.toLowerCase())) newGroups.set(g.toLowerCase(), g);
+        else if (!known) rowNewGroups.push(g);
       }
-      const key = body.matchKey === 'number' ? row.membershipNumber : body.matchKey === 'email' ? (row.email ? `${row.email.toLowerCase()}|${(row.firstName ?? '').toLowerCase()}` : undefined) : row.lastName && row.birthDate ? `${row.lastName.toLowerCase()}|${parseDate(row.birthDate)}` : undefined;
+      const key = body.matchKey === 'number' ? row.membershipNumber : body.matchKey === 'email' ? (row.email ? `${row.email.toLowerCase()}|${(row.firstName ?? '').toLowerCase()}` : undefined) : row.lastName && row.birthDate ? `${row.lastName.toLowerCase()}|${(row.firstName ?? '').toLowerCase()}|${parseDate(row.birthDate)}` : undefined;
       if (errors.length) {
         planned.push({ line, action: 'error', name, messages: [...errors, ...notes], row });
         continue;
@@ -136,11 +143,17 @@ export const importRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       if (key) seenKeys.add(key);
       // Match an existing member by the chosen key (families share e-mail addresses, so the first name counts too).
-      let m = q.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.id', 'member.person_id', 'member.join_date', 'member.membership_number']).where('member.organization_id', '=', actor.organizationId);
+      let m = q.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.id', 'member.person_id', 'member.join_date', 'member.membership_number', 'member.updated_at', 'person.updated_at as person_updated_at']).where('member.organization_id', '=', actor.organizationId);
       if (body.matchKey === 'number') m = row.membershipNumber ? m.where('member.membership_number', '=', row.membershipNumber) : m.where(sql<boolean>`false`);
       else if (body.matchKey === 'email') m = row.email ? m.where(sql<boolean>`lower(person.email) = ${row.email.toLowerCase()}`).where('person.first_name', 'ilike', like(row.firstName ?? '')) : m.where(sql<boolean>`false`);
-      else m = row.lastName && row.birthDate ? m.where('person.last_name', 'ilike', like(row.lastName)).where('person.birth_date', '=', parseDate(row.birthDate)) : m.where(sql<boolean>`false`);
-      const match = await m.executeTakeFirst();
+      else m = row.lastName && row.birthDate ? m.where('person.last_name', 'ilike', like(row.lastName)).where('person.first_name', 'ilike', like(row.firstName ?? '')).where('person.birth_date', '=', parseDate(row.birthDate)) : m.where(sql<boolean>`false`);
+      // A key that fits several members (twins, namesakes) is a conflict, never an arbitrary pick.
+      const matches = await m.limit(2).execute();
+      if (matches.length > 1) {
+        planned.push({ line, action: 'error', name, messages: ['Mehrere Mitglieder passen zu dieser Zeile. Ergänze die Mitgliedsnummer und importiere mit ihr als Schlüssel.'], row });
+        continue;
+      }
+      const match = matches[0];
       const effectiveJoin = match ? match.join_date : join;
       if (exit && effectiveJoin && exit < effectiveJoin) {
         planned.push({ line, action: 'error', name, messages: ['Austritt liegt vor dem Eintritt.'], row });
@@ -154,11 +167,14 @@ export const importRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         seenNumbers.add(row.membershipNumber);
       }
-      planned.push({ line, action: match ? 'update' : 'create', name, messages: notes, row, memberId: match?.id, personId: match?.person_id });
+      for (const g of rowNewGroups) if (!newGroups.has(g.toLowerCase())) newGroups.set(g.toLowerCase(), g);
+      planned.push({ line, action: match ? 'update' : 'create', name, messages: notes, row, memberId: match?.id, personId: match?.person_id, version: match ? `${match.updated_at.toISOString()}|${match.person_updated_at.toISOString()}` : undefined });
     }
     const c = { create: 0, update: 0, skip: 0, error: 0 };
     for (const p of planned) c[p.action]++;
-    const planHash = createHash('sha256').update(JSON.stringify([body.content, mapping, body.matchKey])).digest('hex').slice(0, 32);
+    // The hash binds what will happen (create or update which member, in which state, which new groups),
+    // not only the input: a member created or changed since the dry run makes the plan stale (Codex review of #8).
+    const planHash = createHash('sha256').update(JSON.stringify([body.content, mapping, body.matchKey, planned.map((p) => [p.line, p.action, p.memberId ?? null, p.version ?? null]), [...newGroups.keys()].sort()])).digest('hex').slice(0, 32);
     return { headers, mapping, unmapped: headers.filter((h) => !mapping[h]), planned, counts: c, newGroups: [...newGroups.values()], planHash, today };
   }
 

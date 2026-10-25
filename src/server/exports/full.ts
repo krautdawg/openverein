@@ -11,7 +11,7 @@ import { zip } from './zip.ts';
 export const EXPORT_SCHEMA_VERSION = '1';
 
 /** Sign-in secrets and live sessions never leave the instance. */
-const SKIP_TABLES = new Set(['session', 'portal_session', 'login_code', 'totp_recovery_code', 'idempotency_key', 'instance_setting', MIGRATIONS_TABLE]);
+const SKIP_TABLES = new Set(['session', 'portal_session', 'login_code', 'portal_verify_failure', 'totp_recovery_code', 'idempotency_key', 'instance_setting', MIGRATIONS_TABLE]);
 /** Credentials, tokens and keyed hashes are dropped; they are useless elsewhere and dangerous in a file. */
 const DROP_COLUMN = /^(password_hash|invite_token_hash|token_hash|feed_token_hash|token_mac|code_hash|email_hash|iban_hash|counterparty_iban_hash|totp_secret_encrypted|totp_pending_secret_encrypted|totp_last_step|secret_encrypted)$/;
 /** Tables without organization_id, exported through their parent. */

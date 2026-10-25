@@ -9,7 +9,7 @@ import type { ChangeField } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
-import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
+import { type Actor, isClubAdmin, requirePermission, requireStepUp, restrictedFields } from '../policy.ts';
 import { issueLoginCode } from './portal.ts';
 
 const tags = ['members'];
@@ -157,8 +157,10 @@ export const changeRoutes: FastifyPluginAsyncZod = async (app) => {
       const actor = requireActor(req);
       requirePermission(actor, 'members', 'write');
       if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
-      // The code opens every membership under the address, so only club-wide admins may hand one out.
-      if (scopeOf(actor, 'members', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Portal-Codes geben Zugänge für den ganzen Verein aus.', { permission: 'members:write (ganzer Verein)' });
+      // The code opens every membership under the address (and the portal shows invoices, mandates, documents):
+      // only administrators, with a fresh second factor (Codex review of #9).
+      if (!isClubAdmin(actor)) throw new Problem(403, 'forbidden', 'Portal-Codes geben nur Admins aus.', undefined, { permission: 'admin' });
+      requireStepUp(actor);
       const { row } = await loadMemberRow(db, actor, req.params.id, 'write');
       if (!row.email) throw new Problem(409, 'no-email', 'Das Mitglied hat keine E-Mail-Adresse; das Portal meldet über die Adresse an.');
       if (!['active', 'future', 'resigned'].includes(row.status)) throw new Problem(409, 'not-current', 'Nur aktuelle Mitglieder können sich im Portal anmelden.');
