@@ -665,3 +665,18 @@ input[type='range'] { accent-color: var(--accent); }
 @media (max-width: 600px) { .timeline li.claim { grid-template-columns: 1fr; } }
 /* A money field inside a sentence keeps its label for screen readers only. */
 .age-rule .field > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* General assembly */
+.agenda { border: 0; padding: 0; margin: 0; }
+.agenda legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--s-2); }
+.agenda ol { margin: 0 0 var(--s-2); padding-left: var(--s-5); display: grid; gap: var(--s-2); }
+.agenda li { display: flex; gap: var(--s-3); align-items: center; }
+.agenda li .input { flex: 1; }
+.agenda-items { margin: 0; padding-left: var(--s-5); display: grid; gap: var(--s-5); }
+.agenda-items > li > strong { display: block; margin-bottom: var(--s-1); }
+.agenda-result { display: grid; gap: var(--s-2); margin-top: var(--s-2); max-width: 640px; }
+.agenda-result .votes { display: flex; gap: var(--s-4); flex-wrap: wrap; font-size: var(--text-sm); }
+.agenda-result .votes .input { width: 72px; margin-left: var(--s-1); }
+.attendance { list-style: none; margin: 0; padding: 0; columns: 3 220px; column-gap: var(--s-5); }
+.attendance li { break-inside: avoid; padding: 2px 0; }
+.agenda-result .textarea { min-height: 56px; }

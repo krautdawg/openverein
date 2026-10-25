@@ -1,0 +1,4 @@
+- [x] tables and freeze trigger
+- [x] routes incl. invitation through the mail queue
+- [x] minutes PDF
+- [x] pages, nav, tests, e2e, a11y

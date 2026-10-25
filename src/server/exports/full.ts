@@ -20,6 +20,8 @@ const CHILDREN: Record<string, { parent: string; key: string }> = {
   donation_receipt_item: { parent: 'donation_receipt', key: 'receipt_id' },
   datev_export_entry: { parent: 'datev_export', key: 'export_id' },
   household_rule: { parent: 'household', key: 'household_id' },
+  assembly_item: { parent: 'assembly', key: 'assembly_id' },
+  assembly_attendance: { parent: 'assembly', key: 'assembly_id' },
 };
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');

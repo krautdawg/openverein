@@ -27,7 +27,7 @@ files/<sha256>       every stored file once, named by its SHA-256 (see data/file
 
 ## Rows
 
-- Tables and columns are those of the database at `databaseVersion` (see `migrations/`). Every table with an `organization_id` is exported with the club's rows; `receipt_line`, `donation_receipt_item`, `datev_export_entry` and `household_rule` through their parent.
+- Tables and columns are those of the database at `databaseVersion` (see `migrations/`). Every table with an `organization_id` is exported with the club's rows; `receipt_line`, `donation_receipt_item`, `datev_export_entry`, `household_rule`, `assembly_item` and `assembly_attendance` through their parent.
 - Dates and timestamps are ISO strings; binary columns (stored PDFs, DATEV ZIPs) are `{ "base64": "…" }` in JSONL and left out of the CSV.
 - Encrypted columns are exported decrypted under the name without `_encrypted` (for example `sepa_mandate.iban`); IBAN change requests from the portal are decrypted in `change_request.old_value` / `new_value`.
 - CSV headers come from the schema, so empty tables still have their header row.
