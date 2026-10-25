@@ -234,3 +234,10 @@ The system SHALL read uploaded XRechnung, UBL, CII and ZUGFeRD files and suggest
 - **WHEN** a ZUGFeRD PDF with an invoice of 238,00 € at 19 % is uploaded
 - **THEN** the receipt form shows the supplier, the invoice number and one line of 238,00 € with 19 %
 
+### Requirement: Budget against the books
+The system SHALL keep planned net amounts per income and expense account and year and show them next to the booked net amounts with the variance.
+
+#### Scenario: Overspent account
+- **WHEN** 150 € are planned for material and 180 € are booked
+- **THEN** the variance shows +30 € marked as over plan
+
