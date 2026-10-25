@@ -73,6 +73,11 @@ export interface OrganizationTable {
   birthday_greetings: Generated<'off' | 'round' | 'all'>;
   anniversary_greetings: Generated<boolean>;
   hostname: string | null;
+  oidc_enabled: Generated<boolean>;
+  oidc_issuer: string | null;
+  oidc_client_id: string | null;
+  oidc_client_secret_encrypted: string | null;
+  oidc_label: string | null;
 }
 
 export interface AppUserTable {

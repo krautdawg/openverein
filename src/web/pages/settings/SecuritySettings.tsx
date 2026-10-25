@@ -106,6 +106,7 @@ export function SecuritySettings({ me }: { me: Me }) {
         </ul>
         {(sessions.data?.length ?? 0) > 1 && <div className="actions-row"><button className="btn" onClick={() => void revokeOthers()}>Andere Anmeldungen beenden</button></div>}
       </section>
+      {me.roles.includes('Admin') && <OidcSettings />}
     </>
   );
 }
@@ -115,4 +116,48 @@ function browserName(ua: string | null) {
   const browser = /Firefox/.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Browser';
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '';
   return [browser, os].filter(Boolean).join(' auf ');
+}
+
+interface OidcState { enabled: boolean; issuer: string | null; clientId: string | null; label: string | null; hasSecret: boolean; redirectUri: string }
+
+/** Sign-in through the club's identity provider (Google Workspace, Microsoft, Nextcloud …): admins only. */
+function OidcSettings() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['oidc-settings'], queryFn: () => api<OidcState>('/settings/oidc') });
+  const [error, setError] = useState<ApiError>();
+  const [saved, setSaved] = useState(false);
+  if (!data) return null;
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setError(undefined);
+    setSaved(false);
+    try {
+      qc.setQueryData(['oidc-settings'], await api<OidcState>('/settings/oidc', { method: 'PUT', body: { enabled: f.get('enabled') === 'on', issuer: f.get('issuer') || null, clientId: f.get('clientId') || null, clientSecret: f.get('clientSecret') || undefined, label: f.get('label') || null } }));
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err : undefined);
+    }
+  }
+  return (
+    <section className="section" aria-labelledby="oidc">
+      <h2 id="oidc">Anmeldung über das Vereins-Konto</h2>
+      <p className="muted" style={{ maxWidth: '70ch', marginBottom: 'var(--s-4)' }}>Wenn Euer Verein Konten bei Google Workspace, Microsoft oder Nextcloud hat, melden sich Zugänge auch damit an. Es zählt die bestätigte E-Mail-Adresse; neue Zugänge entstehen so nicht, nur eingeladene melden sich an. Wer einen zweiten Faktor hat, gibt danach weiter den Code ein.</p>
+      <form className="inline-form" noValidate onSubmit={save} aria-label="Anmeldung über das Vereins-Konto" style={{ maxWidth: 720 }}>
+        {error && <div className="alert alert-error" role="alert">{error.problem.errors?.map((x) => x.message).join(' ') ?? error.problem.title}</div>}
+        {saved && <div className="alert alert-ok" role="status">Gespeichert.</div>}
+        <label className="check"><input type="checkbox" name="enabled" defaultChecked={data.enabled} /> Eingeschaltet</label>
+        <div className="form-row">
+          <Field label="Issuer" name="issuer" defaultValue={data.issuer ?? ''} placeholder="https://accounts.google.com" error={error?.fieldError('issuer')} />
+          <Field label="Bezeichnung auf der Anmeldeseite" name="label" defaultValue={data.label ?? ''} placeholder="Vereins-Google" />
+        </div>
+        <div className="form-row">
+          <Field label="Client-ID" name="clientId" defaultValue={data.clientId ?? ''} autoComplete="off" />
+          <Field label="Client-Secret" name="clientSecret" type="password" autoComplete="new-password" placeholder={data.hasSecret ? 'gespeichert, nur zum Ändern eintragen' : ''} />
+        </div>
+        <p className="meta">Beim Anbieter als Weiterleitungsadresse eintragen: <code style={{ overflowWrap: 'anywhere' }}>{data.redirectUri}</code></p>
+        <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">Speichern</button></div>
+      </form>
+    </section>
+  );
 }

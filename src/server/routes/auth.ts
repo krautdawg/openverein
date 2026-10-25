@@ -37,7 +37,7 @@ async function meOf(db: Db, user: AppUser, grants?: Grant[]) {
 }
 
 // Sign-in ticket between password and code: user id and expiry, signed. Valid five minutes.
-const ticketFor = (userId: string) => {
+export const ticketFor = (userId: string) => {
   const exp = Date.now() + 5 * 60_000;
   return `${userId}.${exp}.${blindIndex(`login-ticket:${userId}:${exp}`).slice(0, 32)}`;
 };
@@ -60,7 +60,7 @@ export async function checkSecondFactor(tx: Db, user: AppUser, code: string): Pr
   return r ? 'recovery' : null;
 }
 
-const userActor = (u: AppUser) => ({ userId: u.id, name: u.name });
+export const userActor = (u: AppUser) => ({ userId: u.id, name: u.name });
 
 export const authRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;

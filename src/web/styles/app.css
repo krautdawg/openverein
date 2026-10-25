@@ -727,3 +727,6 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 /* Arranging the overview: one row per section, show toggle left, move buttons right. */
 .arrange-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); max-width: 40rem; }
 .arrange-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-1) 0; border-bottom: 1px solid var(--line); }
+
+/* Sign-in: the alternative below the password form. */
+.auth-or { text-align: center; margin: var(--s-4) 0 var(--s-3); }

@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
 import { AuthLayout } from '../components/AuthLayout.tsx';
@@ -12,9 +13,16 @@ export function Login() {
   const setMe = useSetMe();
   const navigate = useNavigate();
   const { data: cfg } = useInstanceConfig();
-  const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [ticket, setTicket] = useState<string>();
+  // Back from the club's identity provider: a ticket for the code step, or the reason it failed (in the fragment, not the URL).
+  const hash = new URLSearchParams(window.location.hash.slice(1));
+  const [ticket, setTicket] = useState<string | undefined>(hash.get('ticket') ?? undefined);
+  const [error, setError] = useState<string | undefined>(OIDC_ERRORS[hash.get('fehler') ?? '']);
+  const oidc = useQuery({ queryKey: ['oidc'], queryFn: () => api<{ enabled: boolean; label: string }>('/auth/oidc') });
+  // The fragment is read once; it should not come back on reload.
+  useEffect(() => {
+    if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+  }, []);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -73,6 +81,19 @@ export function Login() {
         <Field label="Passwort" name="password" type="password" autoComplete="current-password" required defaultValue={cfg?.demoLogin?.password} />
         <button className="btn btn-primary btn-block" aria-busy={busy} disabled={busy}>Anmelden</button>
       </form>
+      {oidc.data?.enabled && (
+        <>
+          <p className="meta auth-or">oder</p>
+          <a className="btn btn-block" href="/api/v1/auth/oidc/start">Mit {oidc.data.label} anmelden</a>
+        </>
+      )}
     </AuthLayout>
   );
 }
+
+const OIDC_ERRORS: Record<string, string> = {
+  abgelaufen: 'Die Anmeldung hat zu lange gedauert. Bitte versuch es noch einmal.',
+  'nicht-eingerichtet': 'Die Anmeldung über das Vereins-Konto ist nicht mehr eingerichtet.',
+  anbieter: 'Der Anbieter hat die Anmeldung nicht bestätigt.',
+  unbekannt: 'Zu diesem Konto gibt es hier keinen Zugang (oder die E-Mail-Adresse ist beim Anbieter nicht bestätigt). Bitte den Verein um eine Einladung.',
+};
