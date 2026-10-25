@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import type { Db, Sphere } from '../db.ts';
+import type { Db, JournalEntryTable, Sphere } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import { orgToday } from '../members/query.ts';
 
@@ -17,7 +17,7 @@ export interface Line {
 export async function postEntry(
   tx: Db,
   organizationId: string,
-  e: { date: string; text: string; source: 'manual' | 'allocation' | 'allocation_reversal' | 'reversal' | 'receipt' | 'import'; sourceId?: string | null; reversesId?: string | null; createdBy: string | null; lines: Line[] },
+  e: { date: string; text: string; source: JournalEntryTable['source']; sourceId?: string | null; reversesId?: string | null; createdBy: string | null; lines: Line[] },
 ) {
   const lines = e.lines.filter((l) => (l.debitCents ?? 0) > 0 || (l.creditCents ?? 0) > 0);
   // Gapless numbers per club: one writer at a time.

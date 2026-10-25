@@ -1,4 +1,4 @@
-import { BookOpen, CalendarDays, Coins, FileText, FolderOpen, Landmark, LayoutGrid, Mail, Settings, Shapes, Users, type LucideIcon } from 'lucide-react';
+import { BookOpen, CalendarDays, Coins, FileText, FolderOpen, HandHeart, Landmark, LayoutGrid, Mail, Settings, Shapes, Users, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   label: string;
@@ -20,6 +20,7 @@ export const nav: NavItem[] = [
   { label: 'Beiträge', path: '/beitraege', icon: Coins, keywords: 'beitragsarten beitragslauf gebühren fees', module: 'fees' },
   { label: 'Rechnungen', path: '/rechnungen', icon: FileText, keywords: 'offene posten mahnung zahlung invoices', module: 'invoices' },
   { label: 'Buchhaltung', path: '/buchhaltung', icon: BookOpen, keywords: 'eür journal buchung konten kasse datev steuer sphäre', module: 'ledger' },
+  { label: 'Spenden', path: '/spenden', icon: HandHeart, keywords: 'spende zuwendungsbestätigung spendenquittung sammelbestätigung', module: 'donations' },
   { label: 'Bank', path: '/bank', icon: Landmark, keywords: 'konto kontoauszug camt abgleich lastschrift sepa einzug', module: 'banking' },
   { label: 'Einstellungen', path: '/einstellungen', icon: Settings, keywords: 'verein stammdaten zugänge rollen api protokoll settings' },
 ];

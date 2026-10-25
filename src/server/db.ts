@@ -41,6 +41,13 @@ export interface OrganizationTable {
   mail_paused_reason: string | null;
   electronic_mandates_agreed: Generated<boolean>;
   join_rule: Generated<'application_date' | 'acceptance_date' | 'month_first' | 'next_month_first'>;
+  exemption_kind: 'freistellung' | 'feststellung' | null;
+  exemption_office: string | null;
+  exemption_tax_number: string | null;
+  exemption_date: string | null;
+  exemption_period: string | null;
+  exemption_purposes: string | null;
+  receipt_signer: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -773,7 +780,7 @@ export interface JournalEntryTable {
   number: number;
   entry_date: string;
   text: string;
-  source: 'manual' | 'allocation' | 'allocation_reversal' | 'reversal' | 'receipt' | 'import';
+  source: 'manual' | 'allocation' | 'allocation_reversal' | 'reversal' | 'receipt' | 'import' | 'donation';
   source_id: string | null;
   reverses_id: string | null;
   created_by: string | null;
@@ -856,6 +863,48 @@ export interface Database {
   journal_line: JournalLineTable;
   datev_export: DatevExportTable;
   datev_export_entry: DatevExportEntryTable;
+  donation: DonationTable;
+  donation_receipt: DonationReceiptTable;
+  donation_receipt_item: DonationReceiptItemTable;
+}
+
+export interface DonationTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  donated_on: string;
+  amount_cents: number;
+  waiver: Generated<boolean>;
+  note: string | null;
+  journal_entry_id: string | null;
+  voided_at: Date | null;
+  void_reason: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface DonationReceiptTable {
+  id: Generated<string>;
+  organization_id: string;
+  number: string;
+  kind: 'single' | 'collective';
+  person_id: string;
+  issued_on: string;
+  total_cents: number;
+  template: string;
+  pdf: Buffer;
+  sha256: string;
+  status: Generated<'issued' | 'cancelled'>;
+  cancel_reason: string | null;
+  cancelled_at: Date | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface DonationReceiptItemTable {
+  receipt_id: string;
+  donation_id: string;
+  live: Generated<boolean>;
 }
 
 export type AppUser = Selectable<AppUserTable>;
