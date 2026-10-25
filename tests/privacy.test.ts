@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { appendFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,8 +52,16 @@ describe('privacy', () => {
     expect((await admin.post(`/persons/${m.personId}/anonymise`, {})).body.blockers).toEqual(['Löschsperre: Rechtsstreit Hallenschaden']);
     await admin.put(`/persons/${m.personId}/legal-hold`, { reason: null });
 
+    // Roadmap S20: anonymising leaves the books as they were (EÜR and journal totals).
+    const books = async () => ({
+      euer: (await admin.get('/ledger/reports/euer?from=2026-01-01&to=2026-12-31')).body,
+      journal: await ctx.db.selectFrom('journal_line').select([sql<string>`sum(debit_cents)`.as('d'), sql<string>`sum(credit_cents)`.as('c'), sql<number>`count(*)::int`.as('n')]).executeTakeFirstOrThrow(),
+    });
+    const before = await books();
+    expect(before.journal.n).toBeGreaterThan(0);
     const done = await admin.post(`/persons/${m.personId}/anonymise`, {});
     expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(await books()).toEqual(before);
     const p = await ctx.db.selectFrom('person').selectAll().where('id', '=', m.personId).executeTakeFirstOrThrow();
     expect([p.first_name, p.last_name, p.email, p.street]).toEqual([null, 'Anonymisiert', null, null]);
     // Audit entries about the person keep the action, not the values.
