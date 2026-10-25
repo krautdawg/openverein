@@ -1,11 +1,13 @@
 import { Check } from 'lucide-react';
 import { Link } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '../../shared/auth.ts';
 import { ChangeInbox } from '../components/ChangeInbox.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { api } from '../lib/api.ts';
 import { useTitle } from '../lib/useTitle.ts';
+import type { Task } from '../../shared/tasks.ts';
+import { TaskRow } from './Tasks.tsx';
 
 interface OverviewData {
   members: { active: number; future: number; applicants: number; resigned: number; joinedThisYear: number; leftThisYear: number } | null;
@@ -54,6 +56,7 @@ export function Overview({ me }: { me: Me }) {
         </section>
       )}
       {me.permissions.members !== 'none' && <ChangeInbox canWrite={me.permissions.members === 'write'} />}
+      <MyTasks meId={me.id} />
       <section className="section" aria-labelledby="first-steps">
         <h2 id="first-steps">Erste Schritte</h2>
         <ul className="checklist">
@@ -67,5 +70,21 @@ export function Overview({ me }: { me: Me }) {
         </ul>
       </section>
     </div>
+  );
+}
+
+/** Open tasks assigned to me, soonest first; hidden when there are none. */
+function MyTasks({ meId }: { meId: string }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['tasks', 'mine'], queryFn: () => api<Task[]>('/tasks?filter=mine') });
+  if (!data?.length) return null;
+  return (
+    <section className="section" aria-labelledby="my-tasks">
+      <h2 id="my-tasks">Deine Aufgaben</h2>
+      <ul className="task-list" aria-label="Deine Aufgaben">
+        {data.slice(0, 5).map((t) => <TaskRow key={t.id} t={t} meId={meId} onChange={() => qc.invalidateQueries({ queryKey: ['tasks'] })} />)}
+      </ul>
+      <p className="meta" style={{ marginTop: 'var(--s-2)' }}><Link to="/aufgaben">{data.length > 5 ? `Alle ${data.length} Aufgaben` : 'Zu den Aufgaben'}</Link></p>
+    </section>
   );
 }

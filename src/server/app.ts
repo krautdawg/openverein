@@ -45,6 +45,7 @@ import { pollRoutes } from './routes/polls.ts';
 import { inventoryRoutes } from './routes/inventory.ts';
 import { contactRoutes } from './routes/contacts.ts';
 import { offerRoutes } from './routes/offers.ts';
+import { taskRoutes } from './routes/tasks.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -162,6 +163,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(inventoryRoutes);
       await api.register(contactRoutes);
       await api.register(offerRoutes);
+      await api.register(taskRoutes);
     },
     { prefix: '/api/v1' },
   );
