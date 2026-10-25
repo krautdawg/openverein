@@ -162,3 +162,10 @@ The system SHALL let the payer of a household manage the household's memberships
 - **WHEN** the payer signs in to the portal
 - **THEN** the child's membership is shown as managed by the payer and can be changed or resigned
 
+### Requirement: Member polls
+The system SHALL let the board run polls that eligible members answer once per membership in the portal, show members results only after the end, and show the board only counts.
+
+#### Scenario: Group poll
+- **WHEN** a poll is limited to the board group
+- **THEN** members outside the group do not see it and cannot answer it
+
