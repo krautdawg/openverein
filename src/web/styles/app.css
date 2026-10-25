@@ -680,3 +680,4 @@ input[type='range'] { accent-color: var(--accent); }
 .attendance { list-style: none; margin: 0; padding: 0; columns: 3 220px; column-gap: var(--s-5); }
 .attendance li { break-inside: avoid; padding: 2px 0; }
 .agenda-result .textarea { min-height: 56px; }
+td[data-over] { color: var(--danger); font-weight: 600; }

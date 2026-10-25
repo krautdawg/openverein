@@ -35,6 +35,7 @@ export function LedgerLayout({ me, children, action }: { me: Me; children: React
         <NavLink to="/buchhaltung/euer">EÜR</NavLink>
         <NavLink to="/buchhaltung/belege">Belege</NavLink>
         <NavLink to="/buchhaltung/kassenbuch">Kassenbuch</NavLink>
+        <NavLink to="/buchhaltung/pauschalen">Pauschalen</NavLink>
         <NavLink to="/buchhaltung/konten">Konten</NavLink>
         <NavLink to="/buchhaltung/export">Export</NavLink>
         <NavLink to="/buchhaltung/einstellungen">Einstellungen</NavLink>
