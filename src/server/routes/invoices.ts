@@ -1,4 +1,4 @@
-import { PDFDocument } from 'pdf-lib';
+import { mergeLetters, postalCodeOf } from '../letters.ts';
 import { decryptBytes } from '../crypto.ts';
 import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
@@ -179,24 +179,16 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/invoices/letters.pdf', { schema: { tags, summary: 'Briefe drucken: ausgestellte Rechnungen als ein PDF, nach Postleitzahl sortiert und für Duplexdruck auf gerade Seitenzahlen aufgefüllt', body: z.object({ invoiceIds: z.array(z.uuid()).min(1).max(500) }) } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'read');
-    const letters: { pdf: Buffer; number: string; postalCode: string }[] = [];
+    const letters: { pdf: Buffer; sortKey: string; postalCode: string }[] = [];
     for (const id of new Set(req.body.invoiceIds)) {
       await detail(actor, id); // scope check
       const { pdf, number } = await storedPdf(db, actor.organizationId, id);
       const snap = (await db.selectFrom('invoice').select('recipient').where('id', '=', id).executeTakeFirstOrThrow()).recipient as IssueSnapshot;
-      // Sorted by postal code for the post's bulk rates; addresses without one go last.
-      letters.push({ pdf, number, postalCode: snap.recipient.lines.join(' ').match(/\b\d{5}\b/)?.[0] ?? '99999z' });
+      letters.push({ pdf, sortKey: number, postalCode: postalCodeOf(snap.recipient.lines) });
     }
-    letters.sort((a, b) => a.postalCode.localeCompare(b.postalCode) || a.number.localeCompare(b.number));
-    const out = await PDFDocument.create();
-    for (const l of letters) {
-      const src = await PDFDocument.load(l.pdf);
-      for (const page of await out.copyPages(src, src.getPageIndices())) out.addPage(page);
-      // Duplex: every letter starts on a front page.
-      if (src.getPageCount() % 2) out.addPage([595.28, 841.89]);
-    }
-    await audit(db, actor.organizationId, actor, { action: 'invoice.letters_printed', entityType: 'invoice', entityId: req.body.invoiceIds[0]!, diff: { numbers: [null, letters.map((l) => l.number)] } });
-    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="Briefe-${new Date().toISOString().slice(0, 10)}.pdf"`).header('cache-control', 'private, no-store').send(Buffer.from(await out.save()));
+    const merged = await mergeLetters(letters);
+    await audit(db, actor.organizationId, actor, { action: 'invoice.letters_printed', entityType: 'invoice', entityId: req.body.invoiceIds[0]!, diff: { numbers: [null, letters.map((l) => l.sortKey)] } });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="Briefe-${new Date().toISOString().slice(0, 10)}.pdf"`).header('cache-control', 'private, no-store').send(merged);
   });
 
   app.get('/invoices/:id/xrechnung.xml', { schema: { tags, summary: 'E-Rechnung (XRechnung, CII) der ausgestellten Rechnung, unverändert wie bei der Ausstellung erzeugt', params: idParam } }, async (req, reply) => {

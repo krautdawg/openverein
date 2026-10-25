@@ -1,5 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { processQueue } from '../src/server/mail/worker.ts';
+import { setMailer } from '../src/server/mail/transport.ts';
 import { client, reset, setupClub, testApp } from './helpers.ts';
+
+const MAILPIT = process.env.MAILPIT_URL ?? 'http://localhost:18025';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
@@ -93,5 +97,27 @@ describe('donations', () => {
       { template: 'BMF-Muster Geldzuwendung (Stand 2023)', kind: 'single', total_cents: 5000 },
       { template: 'BMF-Muster Sachzuwendung (Stand 2023)', kind: 'single', total_cents: 25000 },
     ]);
+  });
+
+  it('sends receipts by e-mail with the PDF and collects the rest as one letter PDF', async () => {
+    setMailer(null);
+    await admin.put('/donations/settings', settings);
+    const withMail = await admin.post('/donations', { donor: { ...donor, email: 'spender@example.org' }, date: '2026-03-01', amountCents: 10000 });
+    const withoutMail = await admin.post('/donations', { donor: { ...donor, lastName: 'Papier' }, date: '2026-03-02', amountCents: 2000 });
+    await admin.post('/donation-receipts/annual', { year: 2026 });
+    const receipts = (await admin.get('/donation-receipts?year=2026')).body as { id: string; personId: string }[];
+    expect(receipts).toHaveLength(2);
+    const sent = await admin.post('/donation-receipts/send', { receiptIds: receipts.map((r) => r.id) });
+    expect(sent.status, JSON.stringify(sent.body)).toBe(201);
+    expect(sent.body).toMatchObject({ sent: 1, alreadySent: 0, toPrint: [expect.objectContaining({ reason: 'keine E-Mail-Adresse' })] });
+    expect((await admin.post('/donation-receipts/send', { receiptIds: receipts.map((r) => r.id) })).body.alreadySent).toBe(1);
+    await processQueue(ctx.db);
+    const found = (await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent('to:spender@example.org')}`)).json()).messages as { Subject: string; Attachments: number }[];
+    expect(found[0]).toMatchObject({ Attachments: 1 });
+    expect(found[0]!.Subject).toMatch(/^Deine Zuwendungsbestätigung ZB-2026/);
+    const letters = await ctx.app.inject({ method: 'POST', url: '/api/v1/donation-receipts/letters.pdf', headers: { cookie, 'content-type': 'application/json' }, payload: { receiptIds: [sent.body.toPrint[0].receiptId] } });
+    expect(letters.statusCode).toBe(200);
+    expect(letters.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(withMail.status + withoutMail.status).toBe(402);
   });
 });

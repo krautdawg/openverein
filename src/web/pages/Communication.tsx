@@ -13,7 +13,7 @@ import { useTitle } from '../lib/useTitle.ts';
 import type { MailTemplate } from './settings/MailSettings.tsx';
 
 interface Recipients { recipients: { memberId: string; name: string; email: string }[]; excluded: { memberId: string; name: string; reason: string }[] }
-interface Message { id: string; kind: 'free' | 'invoices'; category: 'notice' | 'newsletter'; subject: string; body: string; status: 'sending' | 'sent'; createdBy: string; createdAt: string; counts: { total: number; sent: number; queued: number; failed: number } }
+interface Message { id: string; kind: 'free' | 'invoices' | 'donation_receipts'; category: 'notice' | 'newsletter'; subject: string; body: string; status: 'sending' | 'sent'; createdBy: string; createdAt: string; counts: { total: number; sent: number; queued: number; failed: number } }
 interface Delivery { id: string; memberId: string | null; name: string; email: string; status: string; error: string | null; sentAt: string | null; invoiceNumber: string | null }
 
 const DELIVERY_LABEL: Record<string, string> = { queued: 'Wartet', sending: 'Wird gesendet', sent: 'Zugestellt an den Mailserver', failed: 'Fehlgeschlagen', bounced: 'Unzustellbar', skipped: 'Ausgelassen' };
@@ -207,7 +207,7 @@ export function Communication({ me }: { me: Me }) {
               <tbody>
                 {messages.data?.map((m) => (
                   <tr key={m.id} data-href tabIndex={0} onClick={() => navigate(`/kommunikation/${m.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/kommunikation/${m.id}`)}>
-                    <td><span className="name">{m.subject}</span>{m.kind === 'invoices' && <span className="pill" style={{ marginLeft: 8 }}>Rechnungen</span>}{m.category === 'newsletter' && <span className="pill" style={{ marginLeft: 8 }}>Rundschreiben</span>}</td>
+                    <td><span className="name">{m.subject}</span>{m.kind === 'invoices' && <span className="pill" style={{ marginLeft: 8 }}>Rechnungen</span>}{m.kind === 'donation_receipts' && <span className="pill" style={{ marginLeft: 8 }}>Zuwendungsbestätigungen</span>}{m.category === 'newsletter' && <span className="pill" style={{ marginLeft: 8 }}>Rundschreiben</span>}</td>
                     <td className="hide-sm">{m.createdBy}</td>
                     <td className="num hide-sm">{new Date(m.createdAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</td>
                     <td className="num">{m.counts.sent} / {m.counts.total}{m.counts.failed > 0 && <span style={{ color: 'var(--danger)' }}> · {m.counts.failed} Fehler</span>}{m.status === 'sending' && <span className="muted"> · läuft</span>}</td>

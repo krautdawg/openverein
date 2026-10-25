@@ -76,7 +76,7 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
     .innerJoin('person', 'person.id', 'delivery.person_id')
     .leftJoin('member', 'member.id', 'delivery.member_id')
     .select([
-      'delivery.id', 'delivery.email', 'delivery.attempts', 'delivery.invoice_id', 'delivery.organization_id', 'delivery.message_id',
+      'delivery.id', 'delivery.email', 'delivery.attempts', 'delivery.invoice_id', 'delivery.donation_receipt_id', 'delivery.organization_id', 'delivery.message_id',
       'message.subject', 'message.body', 'message.category', 'message.recipient_filter',
       'organization.name as org_name', 'organization.mail_from_name', 'organization.mail_from_address', 'organization.mail_reply_to',
       'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.custom', 'member.membership_number',
@@ -119,6 +119,13 @@ async function sendOne(db: Db, id: string, baseUrl: string | undefined) {
     // E-invoice recipients get the XRechnung next to the PDF; the XML is the legally relevant document for them.
     const e = await db.selectFrom('invoice_einvoice').select('xml').where('invoice_id', '=', d.invoice_id).executeTakeFirst();
     if (e) attachments.push({ filename: `${number}.xml`, content: decryptBytes(e.xml), contentType: 'application/xml' });
+  }
+  if (d.donation_receipt_id) {
+    const r = await db.selectFrom('donation_receipt').select(['number', 'status', 'total_cents', 'pdf']).where('id', '=', d.donation_receipt_id).executeTakeFirstOrThrow();
+    if (r.status !== 'issued') return done({ status: 'skipped', error: 'Bestätigung inzwischen storniert' });
+    values.bestaetigung = r.number;
+    values.betrag = (Number(r.total_cents) / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+    attachments.push({ filename: `${r.number}.pdf`, content: r.pdf, contentType: 'application/pdf' });
   }
   let text = fill(d.body, values);
   const unsubscribe = d.category === 'newsletter' && baseUrl ? `${baseUrl}/abmelden#${unsubscribeToken(d.id)}` : null;

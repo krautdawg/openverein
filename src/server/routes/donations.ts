@@ -3,6 +3,10 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { donation, donationInput, donationSettings, receipt } from '../../shared/donations.ts';
+import { SYSTEM_TEMPLATES } from '../../shared/mail.ts';
+import { mergeLetters } from '../letters.ts';
+import { emailHash } from '../mail/worker.ts';
+import { createMessage } from './messages.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
@@ -196,6 +200,52 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'donations', 'read');
     return receiptsDto(actor.organizationId, { year: req.query.year });
+  });
+
+  app.post('/donation-receipts/send', { schema: { tags, summary: 'Zuwendungsbestätigungen per E-Mail mit PDF verschicken; wer Briefe bevorzugt oder keine Adresse hat, wird zum Drucken gelistet', body: z.object({ receiptIds: z.array(z.uuid()).min(1).max(5000), resend: z.boolean().default(false) }), response: { 201: z.object({ sent: z.number(), alreadySent: z.number(), messageIds: z.array(z.uuid()), toPrint: z.array(z.object({ receiptId: z.uuid(), number: z.string(), name: z.string(), reason: z.string() })) }) } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'donations', 'write');
+    requireClubWide(actor, 'communication', 'write');
+    const rows = await db.selectFrom('donation_receipt as r').innerJoin('person', 'person.id', 'r.person_id')
+      .select(['r.id', 'r.number', 'r.person_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
+      .where('r.organization_id', '=', actor.organizationId).where('r.status', '=', 'issued').where('r.id', 'in', req.body.receiptIds).orderBy('r.number').execute();
+    const sentBefore = new Set(req.body.resend || !rows.length ? [] : (await db.selectFrom('delivery').select('donation_receipt_id').where('donation_receipt_id', 'in', rows.map((r) => r.id)).where('status', 'in', ['queued', 'sending', 'sent']).execute()).map((d) => d.donation_receipt_id));
+    const suppressed = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId).where('reason', 'in', ['bounce', 'manual']).execute()).map((x) => x.email_hash));
+    const send: { personId: string; memberId: string | null; email: string; donationReceiptId: string }[] = [];
+    const toPrint: { receiptId: string; number: string; name: string; reason: string }[] = [];
+    let alreadySent = 0;
+    for (const r of rows) {
+      if (sentBefore.has(r.id)) { alreadySent++; continue; }
+      const reason = r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !r.email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(r.email)) ? 'Adresse unzustellbar' : null;
+      if (reason) toPrint.push({ receiptId: r.id, number: r.number, name: nameOf(r), reason });
+      else send.push({ personId: r.person_id, memberId: null, email: r.email!, donationReceiptId: r.id });
+    }
+    const own = await db.selectFrom('mail_template').select(['subject', 'body']).where('organization_id', '=', actor.organizationId).where('key', '=', 'donation_receipt').executeTakeFirst();
+    const text = own ?? SYSTEM_TEMPLATES.donation_receipt;
+    // One delivery per person and message: several receipts for one person go out as separate messages.
+    const batches: (typeof send)[] = [];
+    for (const x of send) {
+      const b = batches.find((bb) => !bb.some((y) => y.personId === x.personId));
+      if (b) b.push(x);
+      else batches.push([x]);
+    }
+    const messageIds: string[] = [];
+    await db.transaction().execute(async (tx) => {
+      for (const b of batches) messageIds.push(await createMessage(tx, actor, { kind: 'donation_receipts', category: 'notice', subject: text.subject, body: text.body, filter: { receiptIds: b.map((x) => x.donationReceiptId) } }, b));
+    });
+    reply.status(201);
+    return { sent: send.length, alreadySent, messageIds, toPrint };
+  });
+
+  app.post('/donation-receipts/letters.pdf', { schema: { tags, summary: 'Zuwendungsbestätigungen als ein PDF zum Drucken (nach Postleitzahl, für Duplexdruck)', body: z.object({ receiptIds: z.array(z.uuid()).min(1).max(5000) }) } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requireClubWide(actor, 'donations', 'read');
+    const rows = await db.selectFrom('donation_receipt as r').innerJoin('person', 'person.id', 'r.person_id').select(['r.number', 'r.pdf', 'person.postal_code'])
+      .where('r.organization_id', '=', actor.organizationId).where('r.status', '=', 'issued').where('r.id', 'in', req.body.receiptIds).execute();
+    if (!rows.length) throw notFound('Zuwendungsbestätigung');
+    const merged = await mergeLetters(rows.map((r) => ({ pdf: r.pdf, postalCode: r.postal_code ?? '99999z', sortKey: r.number })));
+    await audit(db, actor.organizationId, actor, { action: 'donation_receipt.letters_printed', entityType: 'organization', entityId: actor.organizationId, diff: { numbers: [null, rows.map((r) => r.number)] } });
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="Zuwendungsbestaetigungen-${new Date().toISOString().slice(0, 10)}.pdf"`).header('cache-control', 'private, no-store').send(merged);
   });
 
   app.post('/donation-receipts', { schema: { tags, summary: 'Zuwendungsbestätigung ausstellen (eine Spende: Einzel-, mehrere: Sammelbestätigung)', body: z.object({ personId: z.uuid(), donationIds: z.array(z.uuid()).min(1).max(500) }), response: { 201: receipt } } }, async (req, reply) => {
