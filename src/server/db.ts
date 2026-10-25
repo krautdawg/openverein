@@ -571,7 +571,7 @@ export interface ParticipationTable {
 export interface MessageTable {
   id: Generated<string>;
   organization_id: string;
-  kind: Generated<'free' | 'invoices'>;
+  kind: Generated<'free' | 'invoices' | 'donation_receipts'>;
   category: Generated<'notice' | 'newsletter'>;
   subject: string;
   body: string;
@@ -599,6 +599,7 @@ export interface DeliveryTable {
   provider_id: string | null;
   sent_at: Date | null;
   created_at: Timestamp;
+  donation_receipt_id: string | null;
 }
 
 export interface MailTemplateTable {

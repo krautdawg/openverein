@@ -280,7 +280,7 @@ export function DonationReceipts({ me }: { me: Me }) {
 
   return (
     <DonationsLayout me={me}>
-      <div className="toolbar">{picker}<span className="muted">Ausgestellt in {year} oder {year + 1}</span></div>
+      <div className="toolbar">{picker}<span className="muted">Ausgestellt in {year} oder {year + 1}</span>{me.permissions.donations === 'write' && me.permissions.communication === 'write' && !!list.data?.some((r) => r.status === 'issued') && <SendReceipts ids={list.data.filter((r) => r.status === 'issued').map((r) => r.id)} />}</div>
       <div className="table-wrap">
         {list.data?.length === 0 ? (
           <p className="empty">Noch keine Bestätigungen.</p>
@@ -366,4 +366,45 @@ export function DonationSettingsPage({ me }: { me: Me }) {
       )}
     </DonationsLayout>
   );
+}
+
+/** Sends the shown receipts by e-mail (each only once) and offers the rest as one letter PDF. */
+function SendReceipts({ ids }: { ids: string[] }) {
+  const [result, setResult] = useState<{ sent: number; alreadySent: number; toPrint: { receiptId: string; number: string; name: string; reason: string }[] }>();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string>();
+  async function send() {
+    setError(undefined);
+    try {
+      setResult(await api('/donation-receipts/send', { method: 'POST', body: { receiptIds: ids } }));
+      setConfirming(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? problemText(err) : 'Das hat nicht geklappt.');
+    }
+  }
+  async function letters() {
+    const res = await fetch('/api/v1/donation-receipts/letters.pdf', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ receiptIds: result!.toPrint.map((p) => p.receiptId) }), credentials: 'same-origin' });
+    if (!res.ok) return setError('Das PDF ließ sich nicht erstellen.');
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Zuwendungsbestaetigungen.pdf';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+  if (result) return (
+    <span role="status" className="meta">
+      {result.sent} per E-Mail unterwegs{result.alreadySent ? `, ${result.alreadySent} schon früher verschickt` : ''}.
+      {result.toPrint.length > 0 && <> {result.toPrint.length} als Brief: <button className="btn btn-ghost" onClick={() => void letters()}>Briefe als PDF</button></>}
+      {error && <span className="error"> {error}</span>}
+    </span>
+  );
+  return confirming ? (
+    <span className="actions-inline">
+      <span>{ids.length} Bestätigungen per E-Mail verschicken?</span>
+      <button className="btn btn-primary" onClick={() => void send()}>Ja, verschicken</button>
+      <button className="btn btn-ghost" onClick={() => setConfirming(false)}>Abbrechen</button>
+      {error && <span className="error" role="alert">{error}</span>}
+    </span>
+  ) : <button className="btn" onClick={() => setConfirming(true)}>Bestätigungen verschicken</button>;
 }

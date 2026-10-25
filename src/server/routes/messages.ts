@@ -36,7 +36,7 @@ const messageInput = z.object({
 
 const messageDto = z.object({
   id: z.uuid(),
-  kind: z.enum(['free', 'invoices']),
+  kind: z.enum(['free', 'invoices', 'donation_receipts']),
   category: z.enum(['notice', 'newsletter']),
   subject: z.string(),
   body: z.string(),
@@ -106,14 +106,14 @@ export async function resolveRecipients(db: Db, actor: Actor, f: z.infer<typeof 
 }
 
 
-export async function createMessage(tx: Db, actor: Actor, v: { kind: 'free' | 'invoices'; category: 'notice' | 'newsletter'; subject: string; body: string; filter: unknown }, recipients: { personId: string; memberId: string | null; email: string; invoiceId?: string }[]) {
+export async function createMessage(tx: Db, actor: Actor, v: { kind: 'free' | 'invoices' | 'donation_receipts'; category: 'notice' | 'newsletter'; subject: string; body: string; filter: unknown }, recipients: { personId: string; memberId: string | null; email: string; invoiceId?: string; donationReceiptId?: string }[]) {
   const m = await tx
     .insertInto('message')
     .values({ organization_id: actor.organizationId, kind: v.kind, category: v.category, subject: v.subject, body: v.body, recipient_filter: JSON.stringify(v.filter), created_by: actor.userId, created_by_label: actor.kind === 'token' ? `API: ${actor.name}` : actor.name })
     .returning('id')
     .executeTakeFirstOrThrow();
   for (const r of recipients) {
-    await tx.insertInto('delivery').values({ organization_id: actor.organizationId, message_id: m.id, person_id: r.personId, member_id: r.memberId, email: r.email, invoice_id: r.invoiceId ?? null }).execute();
+    await tx.insertInto('delivery').values({ organization_id: actor.organizationId, message_id: m.id, person_id: r.personId, member_id: r.memberId, email: r.email, invoice_id: r.invoiceId ?? null, donation_receipt_id: r.donationReceiptId ?? null }).execute();
   }
   // Audit the action and the count, not the addresses.
   await audit(tx, actor.organizationId, actor, { action: 'message.sent', entityType: 'message', entityId: m.id, diff: { subject: [null, v.subject], recipients: [null, recipients.length], category: [null, v.category] } });

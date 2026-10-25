@@ -16,6 +16,7 @@ export const PLACEHOLDERS = {
   code: 'Anmeldecode (nur beim Anmeldecode)',
   entscheidung: 'Entscheidung mit Begründung (bei Änderungswünschen, Anträgen und Auslagen)',
   austritt: 'Austrittsdatum (nur bei Kündigungen)',
+  bestaetigung: 'Nummer der Zuwendungsbestätigung (nur beim Versand von Bestätigungen)',
 } as const;
 /** Fixed placeholders plus `custom.<key>` for the club's own (non-sensitive) fields. */
 export type PlaceholderValues = Partial<Record<keyof typeof PLACEHOLDERS, string>> & { [custom: `custom.${string}`]: string };
@@ -48,7 +49,7 @@ export function textToHtml(text: string) {
     .join('\n');
 }
 
-export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | 'application_received' | 'application_accepted' | 'application_rejected' | 'expense_decided';
+export type SystemTemplateKey = 'invoice' | 'dunning' | 'invitation' | 'login_code' | 'change_decided' | 'resignation_received' | 'application_received' | 'application_accepted' | 'application_rejected' | 'expense_decided' | 'donation_receipt';
 export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject: string; body: string }> = {
   invoice: {
     name: 'Rechnung',
@@ -84,6 +85,11 @@ export const SYSTEM_TEMPLATES: Record<SystemTemplateKey, { name: string; subject
     name: 'Aufnahme bestätigt',
     subject: 'Willkommen bei {{verein}}',
     body: 'Hallo {{vorname}},\n\nwillkommen im Verein! Deine Mitgliedsnummer ist {{mitgliedsnummer}}.{{entscheidung}}\n\nViele Grüße\n{{verein}}',
+  },
+  donation_receipt: {
+    name: 'Zuwendungsbestätigung',
+    subject: 'Deine Zuwendungsbestätigung {{bestaetigung}}',
+    body: 'Hallo {{vorname}},\n\nvielen Dank für Deine Unterstützung! Anbei Deine Zuwendungsbestätigung {{bestaetigung}} über {{betrag}} für das Finanzamt.\n\nViele Grüße\n{{verein}}',
   },
   expense_decided: {
     name: 'Auslage entschieden',
