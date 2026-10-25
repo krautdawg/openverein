@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { uploadName } from '../http/upload.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import PDFDocument from 'pdfkit';
 import { sql } from 'kysely';
@@ -102,14 +103,14 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     await tx.updateTable('file').set({ retention_class: 'voucher', retain_until: addYears(`${today.slice(0, 4)}-12-31`, 8) }).where('id', '=', fileId).execute();
   }
 
-  app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200) }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable(), einvoice: z.object({ format: z.enum(['cii', 'ubl']), supplier: z.string().nullable(), number: z.string().nullable(), receiptDate: z.string().nullable(), dueDate: z.string().nullable(), totalCents: z.number().nullable(), groups: z.array(z.object({ ratePct: z.number(), grossCents: z.number() })) }).nullable() }) } } }, async (req, reply) => {
+  app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200).optional() }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable(), einvoice: z.object({ format: z.enum(['cii', 'ubl']), supplier: z.string().nullable(), number: z.string().nullable(), receiptDate: z.string().nullable(), dueDate: z.string().nullable(), totalCents: z.number().nullable(), groups: z.array(z.object({ ratePct: z.number(), grossCents: z.number() })) }).nullable() }) } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
     const bytes = req.body as Buffer;
     if (!Buffer.isBuffer(bytes) || !bytes.length) throw new Problem(400, 'empty', 'Die Datei ist leer.');
     const sha = await putBlob(bytes);
     // Temporary until a receipt uses it: abandoned uploads expire like other temporary files.
-    const f = await db.insertInto('file').values({ organization_id: actor.organizationId, folder_id: null, member_id: null, purpose: 'receipt', sha256: sha, size_bytes: bytes.length, mime_type: String(req.headers['x-file-type'] ?? 'application/octet-stream').slice(0, 100).replace(/[^\w.+/-]/g, '') || 'application/octet-stream', name: req.query.name, retention_class: 'temporary', retain_until: null, uploaded_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
+    const f = await db.insertInto('file').values({ organization_id: actor.organizationId, folder_id: null, member_id: null, purpose: 'receipt', sha256: sha, size_bytes: bytes.length, mime_type: String(req.headers['x-file-type'] ?? 'application/octet-stream').slice(0, 100).replace(/[^\w.+/-]/g, '') || 'application/octet-stream', name: uploadName(req, req.query.name, 200), retention_class: 'temporary', retain_until: null, uploaded_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
     const dup = await db.selectFrom('receipt').innerJoin('file', 'file.id', 'receipt.file_id').select(['receipt.supplier', 'receipt.receipt_date']).where('receipt.organization_id', '=', actor.organizationId).where('file.sha256', '=', sha).where('receipt.status', '<>', 'void').executeTakeFirst();
     reply.status(201);
     // E-invoices (XRechnung, ZUGFeRD) are stored unchanged; what they say is offered to prefill the form.

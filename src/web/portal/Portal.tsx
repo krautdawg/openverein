@@ -429,7 +429,7 @@ function PortalExpenses({ me }: { me: PortalMe }) {
     }
     setBusy(true);
     try {
-      const up = await fetch(`/api/v1/portal/expenses/files?name=${encodeURIComponent(file.name.slice(0, 200))}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-type': file.type || 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+      const up = await fetch('/api/v1/portal/expenses/files', { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'x-file-type': file.type || 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name.slice(0, 200)) }, body: file, credentials: 'same-origin' });
       if (!up.ok) throw new ApiError(await up.json());
       const { id: fileId } = (await up.json()) as { id: string };
       await api('/portal/expenses', { method: 'POST', body: { memberId: f.get('memberId') ?? first?.memberId, purpose: f.get('purpose'), spentOn: f.get('spentOn'), amountCents: Number(f.get('amountCents')), accountHolder: f.get('accountHolder'), iban: f.get('iban'), fileId } });

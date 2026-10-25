@@ -659,6 +659,7 @@ export interface FileTable {
   purpose: Generated<'document' | 'receipt' | 'export'>;
   uploaded_by: string | null;
   created_at: Generated<Date>;
+  temporary_since: Generated<Date | null>;
 }
 
 export interface LoginCodeTable {
