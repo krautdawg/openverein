@@ -60,8 +60,9 @@ export function parseCamt053(xml: string): Statement[] {
     const transactions: BankTx[] = [];
     for (const n of arr(get(s, 'Ntry') as Node | Node[])) {
       // Only booked entries count (pending and information entries are not on the account yet).
+      // Missing, proprietary or unknown statuses are not treated as booked (Codex review of #4).
       const status = text(get(n, 'Sts', 'Cd')) ?? text(get(n, 'Sts'));
-      if (status && status !== 'BOOK') continue;
+      if (status !== 'BOOK') continue;
       const ccy = (get(n, 'Amt') as Node | undefined)?.['@Ccy'];
       if (ccy && ccy !== 'EUR') throw new Error(`Der Auszug enthält Buchungen in ${String(ccy)}; OpenVerein kennt nur Euro.`);
       const sign = text(get(n, 'CdtDbtInd')) === 'DBIT' ? -1 : 1;
@@ -71,7 +72,9 @@ export function parseCamt053(xml: string): Statement[] {
       const detailAmount = (d: unknown) => get(d, 'AmtDtls', 'TxAmt', 'Amt') ?? get(d, 'Amt') ?? get(d, 'AmtDtls', 'InstdAmt', 'Amt');
       // Batch bookings are split into their single transactions only when the details add up to the entry.
       const split = details.length > 1 && details.every((d) => text(detailAmount(d)) !== null) && details.reduce((sum, d) => sum + cents(detailAmount(d)), 0) === cents(get(n, 'Amt'));
-      const parts = split ? details : [details[0]];
+      // An aggregate that cannot be split keeps no single detail's identity (end-to-end ID, party, return reason):
+      // the amount belongs to several movements, so it must not be matched as if it were one of them.
+      const parts = split ? details : [details.length > 1 ? undefined : details[0]];
       for (const d of parts) {
         const amt = split ? detailAmount(d) : get(n, 'Amt');
         const party = sign > 0 ? 'Dbtr' : 'Cdtr';

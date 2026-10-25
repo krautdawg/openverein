@@ -79,7 +79,7 @@ export const runCreate = z.object({
   invoiceIds: z.array(z.uuid()).min(1, 'Wähle mindestens eine Rechnung.').max(10_000),
 });
 
-export const RUN_STATUS_LABEL = { draft: 'Entwurf', generated: 'Datei erzeugt', downloaded: 'Heruntergeladen', submitted: 'Bei der Bank eingereicht', settled: 'Gutgeschrieben', released: 'Freigegeben (nicht eingereicht)' } as const;
+export const RUN_STATUS_LABEL = { draft: 'Entwurf', generated: 'Datei erzeugt', downloaded: 'Heruntergeladen', submitted: 'Bei der Bank eingereicht', settled: 'Abgeschlossen', released: 'Freigegeben (nicht eingereicht)' } as const;
 export const run = z.object({
   id: z.uuid(),
   kind: z.enum(['debit', 'transfer']),

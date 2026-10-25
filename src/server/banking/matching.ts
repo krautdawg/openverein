@@ -42,9 +42,11 @@ export function invoiceNumberRegex(pattern: string) {
 /** Invoice numbers mentioned in a remittance text (banks often break lines inside them). */
 export const numbersIn = (text: string, re: RegExp): string[] => [...new Set([...(text.replace(/\s+/g, '').match(re) ?? []), ...(text.match(re) ?? [])].map((n) => n.toUpperCase()))];
 
-async function allocate(tx: Db, t: Tx, invoiceId: string, amountCents: number, method: 'transfer' | 'direct_debit', actor: AuditActor | null, collectionItemId: string | null = null) {
+async function allocate(tx: Db, t: Tx, invoiceId: string, amountCents: number, method: 'transfer' | 'direct_debit', actor: AuditActor | null, rule: string, collectionItemId: string | null = null) {
   await tx.insertInto('allocation').values({ organization_id: t.organization_id, invoice_id: invoiceId, amount_cents: amountCents, booked_on: t.booking_date, method, bank_transaction_id: t.id, collection_item_id: collectionItemId, note: null, created_by: actor?.userId ?? null }).execute();
   await refreshPayment(tx, invoiceId);
+  // GoBD traceability: which bank movement settled which receivable, by which rule.
+  await audit(tx, t.organization_id, actor, { action: 'invoice.payment_matched', entityType: 'invoice', entityId: invoiceId, diff: { bankTransaction: [null, t.id], amountCents: [null, amountCents], rule: [null, rule], collectionItem: [null, collectionItemId] } });
 }
 
 /**
@@ -67,7 +69,7 @@ async function settleItems(tx: Db, t: Tx, itemIds: string[], actor: AuditActor |
     }
     if (total !== item.amount_cents) return false;
   }
-  for (const p of plan) await allocate(tx, t, p.invoiceId, p.amount, t.amount_cents < 0 ? 'transfer' : 'direct_debit', actor, p.itemId);
+  for (const p of plan) await allocate(tx, t, p.invoiceId, p.amount, t.amount_cents < 0 ? 'transfer' : 'direct_debit', actor, 'Einzugsposition (End-to-End-Referenz oder Sammelbuchung)', p.itemId);
   await tx.updateTable('collection_item').set({ status: 'settled' }).where('id', 'in', itemIds).execute();
   // One-off mandates are used up once collected.
   await sql`update sepa_mandate set status = 'expired', updated_at = now() where type = 'one_off' and status = 'active'
@@ -94,6 +96,9 @@ export async function processReturn(tx: Db, t: Tx, itemId: string, actor: AuditA
     await refreshPayment(tx, a.invoice_id);
   }
   await tx.updateTable('collection_item').set({ status: 'returned' }).where('id', '=', itemId).execute();
+  // A run without included items left is finished, also when its last item came back (Codex review of #4).
+  await sql`update collection_run r set status = 'settled' where r.id = ${item.run_id}
+    and not exists (select 1 from collection_item i where i.run_id = r.id and i.status = 'included') and r.status not in ('released', 'settled')`.execute(tx);
   await tx.updateTable('collection_item_invoice').set({ live: false }).where('item_id', '=', itemId).execute();
   const fee = Math.max(0, -t.amount_cents - item.amount_cents);
   await tx.insertInto('return_debit').values({ organization_id: t.organization_id, bank_transaction_id: t.id, collection_item_id: itemId, reason_code: t.return_reason, fee_cents: fee, created_by: actor?.userId ?? null }).execute();
@@ -179,7 +184,7 @@ export async function autoMatch(db: Db, organizationId: string, actor: AuditActo
       if (numbers.length === 1) {
         const inv = await tx.selectFrom('invoice').select(['id', 'total_cents', 'paid_cents', 'status']).where('organization_id', '=', organizationId).where(sql`upper(number)`, '=', numbers[0]!).forUpdate().executeTakeFirst();
         if (inv && ['open', 'partially_paid'].includes(inv.status) && inv.total_cents - inv.paid_cents === locked.amount_cents && !(await isLive(tx, inv.id))) {
-          await allocate(tx, locked, inv.id, locked.amount_cents, 'transfer', actor);
+          await allocate(tx, locked, inv.id, locked.amount_cents, 'transfer', actor, 'Rechnungsnummer und Betrag');
           await tx.updateTable('bank_transaction').set({ status: 'matched' }).where('id', '=', locked.id).execute();
           matched++;
         }
