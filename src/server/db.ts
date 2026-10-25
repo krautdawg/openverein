@@ -933,6 +933,12 @@ export interface HonourTable {
   created_at: Generated<Date>;
 }
 
+export interface PortalVerifyFailureTable {
+  email_hash: string;
+  day: string;
+  n: Generated<number>;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -1026,6 +1032,7 @@ export interface Database {
   task: TaskTable;
   greeting_sent: GreetingSentTable;
   honour: HonourTable;
+  portal_verify_failure: PortalVerifyFailureTable;
 }
 
 export interface InventoryItemTable {

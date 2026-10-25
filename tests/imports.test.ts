@@ -80,4 +80,19 @@ describe('member import', () => {
     expect(again.status, JSON.stringify(again.body)).toBe(201);
     expect(again.body.counts).toMatchObject({ update: 2 });
   });
+
+  it('Codex review #8: namesakes are a conflict, the confirmation binds the plan, mandate dates follow the manual rules', async () => {
+    for (let i = 0; i < 2; i++) await admin.post('/members', { firstName: 'Max', lastName: 'Muster', birthDate: '2000-01-01', joinDate: '2020-01-01' });
+    const twin = await admin.post('/imports/members/preview', { content: 'Nachname;Vorname;Geburtsdatum;Eintritt\nMuster;Max;01.01.2000;01.01.2020', matchKey: 'name_birth' });
+    expect(twin.status, JSON.stringify(twin.body)).toBe(200);
+    expect(twin.body.rows[0]).toMatchObject({ action: 'error', messages: [expect.stringContaining('Mehrere Mitglieder')] });
+
+    const content = 'Nachname;Vorname;Eintritt;Mitgliedsnummer;IBAN;Mandatsdatum\nNeu;Nina;01.01.2024;N-1;;\nZukunft;Zoe;01.01.2024;N-2;DE02120300000000202051;01.01.2099';
+    const p = await admin.post('/imports/members/preview', { content, matchKey: 'number' });
+    expect(p.body.rows.find((r: { name: string }) => r.name.startsWith('Zukunft')).messages).toContain('Das Mandat ist auf einen Tag in der Zukunft datiert.');
+    // Someone creates the member the dry run wanted to create: confirming the old plan is refused.
+    await admin.post('/members', { firstName: 'Nina', lastName: 'Neu', joinDate: '2024-01-01', membershipNumber: 'N-1' });
+    const run = await admin.post('/imports/members', { content, matchKey: 'number', planHash: p.body.planHash });
+    expect(run.status).toBe(409);
+  });
 });

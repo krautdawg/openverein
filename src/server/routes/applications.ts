@@ -115,7 +115,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
       const token = tokenAge(f.slug, req.body.token);
       // A genuine token that is too old means a person left the tab open: ask for a reload instead of filing it as spam.
       if (token && token.age > TOKEN_TTL_MS) throw new Problem(409, 'form-expired', 'Das Formular war zu lange offen.', 'Lade die Seite neu; Deine Eingaben musst Du leider noch einmal machen.');
-      const recent = await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('form_id', '=', f.id).where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
+      const recent = await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('form_id', '=', f.id).where('status', '<>', 'spam').where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
       if (recent.n >= FORM_HOURLY_CAP) throw new Problem(429, 'busy', 'Gerade gehen sehr viele Anträge ein.', 'Versuch es in einer Stunde noch einmal.');
       const reused = token ? await db.selectFrom('application').select('id').where('token_mac', '=', token.mac).executeTakeFirst() : undefined;
       const today = await orgToday(db, f.organization_id);
@@ -245,11 +245,8 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     const out = [];
     for (const r of rows) {
       const data = r.payload as ApplicationData;
-      if (!data.firstName) {
-        // Scrubbed after the retention period.
-        out.push({ id: r.id, formTitle: forms.find((f) => f.id === r.form_id)?.title ?? '', status: r.status, data: { firstName: '', lastName: '(gelöscht)', birthDate: r.application_date, email: '', street: '', postalCode: '', city: '', groupIds: [] }, consent: r.consent as { text: string; version: number; acceptedAt: string }, groups: [], feePlan: null, minor: false, duplicates: [], memberId: r.member_id, reason: r.reason, createdAt: r.created_at.toISOString() });
-        continue;
-      }
+      // Scrubbed after the retention period: nothing left to show (the decision stays in the audit log).
+      if (!data.firstName) continue;
       // Only new applications need the duplicate check; decided ones skip the queries.
       const dupes = r.status === 'new' ? await duplicatesOf(q, actor, data) : [];
       const shown = {
@@ -392,5 +389,6 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
 /** Retention: spam goes after 30 days, rejected applications are scrubbed after 6 months (hourly job). */
 export async function pruneApplications(db: Db) {
   await db.deleteFrom('application').where('status', '=', 'spam').where('created_at', '<', new Date(Date.now() - 30 * 86_400_000)).execute();
-  await db.updateTable('application').set({ payload: JSON.stringify({}), iban_encrypted: null }).where('status', '=', 'rejected').where('decided_at', '<', new Date(Date.now() - 183 * 86_400_000)).where(sql<boolean>`payload <> '{}'::jsonb`).execute();
+  // Everything that identifies the applicant goes: data, IBAN and its ending, the keyed e-mail hash, the free-text reason.
+  await db.updateTable('application').set({ payload: JSON.stringify({}), iban_encrypted: null, iban_last4: null, reason: null, email_hash: sql<string>`md5(random()::text || id::text)` }).where('status', '=', 'rejected').where('decided_at', '<', new Date(Date.now() - 183 * 86_400_000)).where(sql<boolean>`payload <> '{}'::jsonb`).execute();
 }

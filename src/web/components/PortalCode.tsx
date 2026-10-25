@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { api, ApiError } from '../lib/api.ts';
+import { useMe } from '../lib/session.tsx';
 
 /** For members whose mail does not arrive: a code shown once, valid for 24 hours. */
 export function PortalCode({ memberId }: { memberId: string }) {
   const [code, setCode] = useState<{ code: string; email: string }>();
   const [error, setError] = useState<string>();
+  // Only administrators may issue portal codes (the API enforces it, with a fresh second factor).
+  const isAdmin = !!useMe().data?.roles.includes('Admin');
   async function issue() {
     setError(undefined);
     try {
@@ -14,7 +17,8 @@ export function PortalCode({ memberId }: { memberId: string }) {
     }
   }
   if (code) {
-    return (
+    if (!isAdmin) return null;
+  return (
       <div className="alert alert-ok" role="status" style={{ marginTop: 'var(--s-3)' }}>
         Portal-Code für {code.email}: <strong className="token-once" style={{ display: 'inline', padding: '0 4px' }}>{code.code}</strong>
         <div className="meta">Einmal sichtbar, 24 Stunden gültig. Anmelden unter {location.origin}/portal mit dieser Adresse und dem Code.</div>

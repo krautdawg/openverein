@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { decrypt } from '../src/server/crypto.ts';
 import { setMailer } from '../src/server/mail/transport.ts';
-import { client, reset, setupClub, testApp } from './helpers.ts';
+import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
@@ -267,4 +267,10 @@ describe('member portal', () => {
     expect((await get('/portal/me', paul)).json().members.map((m: { name: string }) => m.name)).toEqual(['Paul Haus']);
   });
 
+
+  it('Codex review #9: only admins issue portal codes', async () => {
+    const m = (await admin.post('/members', { firstName: 'Paul', lastName: 'Portal', email: 'paul@example.org', joinDate: '2020-01-01' })).body.id;
+    const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Abteilungsleitung') });
+    expect((await lead.post(`/members/${m}/portal-code`, {})).status).toBe(403);
+  });
 });

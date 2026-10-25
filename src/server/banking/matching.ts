@@ -71,6 +71,8 @@ async function settleItems(tx: Db, t: Tx, itemIds: string[], actor: AuditActor |
   }
   for (const p of plan) await allocate(tx, t, p.invoiceId, p.amount, t.amount_cents < 0 ? 'transfer' : 'direct_debit', actor, 'Einzugsposition (End-to-End-Referenz oder Sammelbuchung)', p.itemId);
   await tx.updateTable('collection_item').set({ status: 'settled' }).where('id', 'in', itemIds).execute();
+  // A settled item proves the bank processed its amendment (also when the run was never marked submitted).
+  await sql`update sepa_mandate m set amendment_pending = false from collection_item ci where ci.id = any(${itemIds}::uuid[]) and ci.mandate_id = m.id and ci.amended_from_iban_encrypted is not null`.execute(tx);
   // One-off mandates are used up once collected.
   await sql`update sepa_mandate set status = 'expired', updated_at = now() where type = 'one_off' and status = 'active'
     and id in (select mandate_id from collection_item where id = any(${itemIds}::uuid[]) and mandate_id is not null)

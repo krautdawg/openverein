@@ -96,6 +96,15 @@ describe('applications', () => {
     expect((await admin.post(`/applications/${dup.id}/accept`, { ignoreDuplicates: true })).status).toBe(200);
     const rest = (await admin.get('/applications')).body;
     expect((await admin.post('/applications/decide', { ids: rest.map((x: { id: string }) => x.id), action: 'reject', reason: 'Die Gruppe ist voll.' })).body.decided).toBe(1);
+    // After the retention period everything identifying goes, and the list still loads (Codex review of #10).
+    await ctx.db.updateTable('application').set({ decided_at: new Date(Date.now() - 200 * 86_400_000) }).where('status', '=', 'rejected').execute();
+    const { pruneApplications } = await import('../src/server/routes/applications.ts');
+    await pruneApplications(ctx.db);
+    const scrubbed = await ctx.db.selectFrom('application').select(['payload', 'iban_last4', 'reason']).where('status', '=', 'rejected').execute();
+    expect(scrubbed.every((x) => JSON.stringify(x.payload) === '{}' && x.iban_last4 === null && x.reason === null)).toBe(true);
+    const list = await admin.get('/applications?status=rejected');
+    expect(list.status).toBe(200);
+    expect(list.body).toEqual([]);
   });
 
   it('requires a guardian for minors', async () => {

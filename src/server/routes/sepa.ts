@@ -319,8 +319,9 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
           await tx.updateTable('sepa_mandate').set({ last_collected_on: collectionDate, first_collected: true }).where('id', 'in', [...new Set(items.map((i) => i.mandate.id))]).execute();
           // The amendment travels with this run (with the IBAN the bank knew); a released run hands it back.
           for (const i of items.filter((x) => x.mandate.amendment_pending)) {
+            // The amendment stays pending until a file carrying it reaches the bank (submitted or settled), so a second
+            // run generated meanwhile carries it too (Codex review of #8).
             await tx.updateTable('collection_item').set({ amended_from_iban_encrypted: i.mandate.amended_from_iban_encrypted }).where('id', '=', i.itemId).execute();
-            await tx.updateTable('sepa_mandate').set({ amendment_pending: false }).where('id', '=', i.mandate.id).execute();
           }
         }
         await tx.updateTable('collection_run').set({ status: 'generated', generated_at: new Date() }).where('id', '=', r.id).execute();
@@ -362,6 +363,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!r) throw notFound('Einzug');
       if (!['generated', 'downloaded'].includes(r.status)) throw new Problem(409, 'wrong-status', 'Das geht in diesem Status nicht.');
       await tx.updateTable('collection_run').set({ status: 'submitted', submitted_at: new Date() }).where('id', '=', r.id).execute();
+      // The bank now has the amendment: later files use the new account without it.
+      await sql`update sepa_mandate m set amendment_pending = false from collection_item ci where ci.run_id = ${r.id} and ci.mandate_id = m.id and ci.amended_from_iban_encrypted is not null`.execute(tx);
       await audit(tx, actor.organizationId, actor, { action: 'collection_run.submitted', entityType: 'collection_run', entityId: r.id });
     });
     return runDto(actor, req.params.id);
@@ -429,6 +432,7 @@ export async function insertMandate(
 ) {
   const count = await tx.selectFrom('sepa_mandate').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', v.personId).executeTakeFirstOrThrow();
   const reference = v.reference ?? `${v.membershipNumber}-${count.n + 1}`.replace(/[^A-Za-z0-9/?:().,'+ -]/g, '-').slice(0, 35);
+  if (v.signedOn > v.today) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'signedOn', message: 'Das Mandat ist auf einen Tag in der Zukunft datiert.' }] });
   // One active mandate per person: a new one replaces the old, never while a run still collects with it (locked here,
   // as a run locks it too: Codex review of #4).
   for (const o of await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', v.personId).where('status', 'in', ['active', 'pending_evidence']).forUpdate().execute()) await assertNotInLiveRun(tx, o.id);
