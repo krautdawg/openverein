@@ -255,3 +255,10 @@ The system SHALL send issued donation receipts by e-mail with their stored PDF, 
 - **WHEN** the year's receipts are sent and one donor has no e-mail address
 - **THEN** that receipt is listed for printing and appears in the letter PDF
 
+### Requirement: Printed dunning letters
+The system SHALL render a reminder letter for each selected open invoice and refuse when none is open any more.
+
+#### Scenario: Invoice paid meanwhile
+- **WHEN** dunning letters are requested only for an invoice that has been paid in full
+- **THEN** the request is refused with 409 and no PDF is produced
+
