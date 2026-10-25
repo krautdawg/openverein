@@ -123,10 +123,21 @@ export const bankTx = z.object({
   remittance: z.string(),
   endToEndId: z.string().nullable(),
   returnReason: z.string().nullable(),
-  status: z.enum(['unmatched', 'matched', 'ignored']),
+  status: z.enum(['unmatched', 'matched', 'ignored', 'booked']),
   note: z.string().nullable(),
+  /** journal entry number when booked straight to a ledger account */
+  journalNumber: z.number().nullable(),
   allocations: z.array(z.object({ invoiceId: z.uuid(), number: z.string().nullable(), amountCents: z.number() })),
   suggestions: z.array(suggestion),
 });
 export type BankTx = z.infer<typeof bankTx>;
 export const allocateInput = z.object({ allocations: z.array(z.object({ invoiceId: z.uuid(), amountCents: z.number().int().positive() })).min(1).max(100) });
+
+/** Several bank movements without invoice to one ledger account, sphere and cost centre (all income or all expense). */
+export const bankBookInput = z.object({
+  transactionIds: z.array(z.uuid()).min(1).max(500),
+  accountId: z.uuid(),
+  sphere: z.enum(['ideell', 'vermoegen', 'zweck', 'wirtschaft']).optional(),
+  costCenterId: z.uuid().nullish(),
+  taxRateId: z.uuid().nullish(),
+});

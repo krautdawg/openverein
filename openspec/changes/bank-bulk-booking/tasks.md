@@ -1,0 +1,3 @@
+- [x] status, link, route
+- [x] reversal on undo
+- [x] UI, tests, e2e
