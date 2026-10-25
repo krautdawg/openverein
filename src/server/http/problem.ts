@@ -27,6 +27,7 @@ const base = 'https://openverein.org/problems/';
 /** Safe German messages for known constraints; modules add theirs. */
 export const CONSTRAINT_MESSAGES: Record<string, string> = {
   app_user_email_key: 'Es gibt schon ein Konto mit dieser E-Mail-Adresse.',
+  ledger_period_locked: 'Dieser Zeitraum ist abgeschlossen (GoBD). Buchungen und Zahlungen mit diesem Datum sind gesperrt.',
 };
 
 export function sendProblem(reply: FastifyReply, p: Problem, instance?: string) {

@@ -93,6 +93,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .returningAll()
           .executeTakeFirstOrThrow();
         await sql`select ov_seed_builtin_roles(${org.id}::uuid)`.execute(tx);
+        await sql`select ov_seed_ledger(${org.id}::uuid)`.execute(tx);
         const admin = await tx.selectFrom('role').select('id').where('organization_id', '=', org.id).where('builtin_key', '=', 'admin').executeTakeFirstOrThrow();
         await tx.insertInto('role_grant').values({ organization_id: org.id, user_id: user.id, role_id: admin.id }).execute();
         await audit(tx, org.id, userActor(user), { action: 'organization.setup', entityType: 'organization', entityId: org.id });

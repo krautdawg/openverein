@@ -578,3 +578,5 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .mfa-banner { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); align-items: center; padding: var(--s-2) var(--s-4); background: var(--warn-soft); color: var(--ink); font-size: var(--text-sm); border-bottom: 1px solid var(--line); }
 .recovery-codes { columns: 2; margin: var(--s-3) 0 0; padding-left: 1.4em; font-variant-numeric: tabular-nums; }
 .recovery-codes code { font-size: var(--text-sm); }
+
+.booking-line { border: 0; border-top: 1px solid var(--line); padding: var(--s-3) 0 0; margin: 0; display: grid; gap: var(--s-3); min-width: 0; }
