@@ -14,3 +14,10 @@ The system SHALL give a member a portal function only if one of their current gr
 - **WHEN** a member's group denies bank changes
 - **THEN** an IBAN change request from the portal is refused with 403
 
+### Requirement: Own donation receipts in the portal
+The system SHALL show members the donation receipts issued to their own person and provide the stored PDF of valid receipts only.
+
+#### Scenario: Cancelled receipt
+- **WHEN** a receipt is cancelled
+- **THEN** the portal lists it as cancelled and refuses its PDF
+
