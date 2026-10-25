@@ -13,6 +13,16 @@ export function FullExport() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
+  // The download needs a fresh second factor: a short-lived link is fetched through the API (which asks for the code).
+  async function download(id: string) {
+    setError(undefined);
+    try {
+      const { url } = await api<{ url: string }>(`/exports/full/${id}/link`, { method: 'POST' });
+      window.location.assign(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
+    }
+  }
   async function run() {
     setBusy(true);
     setError(undefined);
@@ -44,7 +54,7 @@ export function FullExport() {
             {list.data?.map((x) => (
               <li key={x.id} style={{ gridTemplateColumns: '1fr auto' }}>
                 <span>{new Date(x.createdAt).toLocaleString('de-DE')} <span className="meta">· {bytes(x.sizeBytes)} · bis {new Date(x.expiresAt).toLocaleDateString('de-DE')} · SHA-256 {x.sha256.slice(0, 12)}…</span></span>
-                <a href={`/api/v1/exports/full/${x.id}`}>Herunterladen</a>
+                <button className="btn btn-ghost" onClick={() => void download(x.id)}>Herunterladen</button>
               </li>
             ))}
           </ul>

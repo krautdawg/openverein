@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { sql } from 'kysely';
+import { blindIndex, decryptBytes, encryptBytes } from '../crypto.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { audit } from '../audit.ts';
@@ -23,7 +25,7 @@ export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/exports/full', { schema: { tags, summary: 'Gesamtexporte der letzten 7 Tage', response: { 200: z.array(dto) } } }, async (req) => {
     const actor = requireActor(req);
     requireAdmin(actor);
-    const rows = await db.selectFrom('file').select(['id', 'size_bytes', 'sha256', 'created_at']).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').where('superseded_at', 'is', null).orderBy('created_at', 'desc').execute();
+    const rows = await db.selectFrom('file').select(['id', 'size_bytes', 'sha256', 'created_at']).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').where('superseded_at', 'is', null).where('created_at', '>', new Date(Date.now() - 7 * 86_400_000)).orderBy('created_at', 'desc').execute();
     return rows.map(toDto);
   });
 
@@ -31,7 +33,18 @@ export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireAdmin(actor);
     requireStepUp(actor);
-    const { file, manifest } = await buildFullExport(db, actor.organizationId);
+    // One export at a time per club: it is heavy, and a retried request must not build a second copy.
+    const lock = await sql<{ ok: boolean }>`select pg_try_advisory_lock(hashtext(${`full-export:${actor.organizationId}`})) as ok`.execute(db);
+    if (!lock.rows[0]?.ok) throw new Problem(409, 'export-running', 'Ein Gesamtexport läuft gerade.', 'Warte einen Moment und lade die Liste neu.');
+    let built: Awaited<ReturnType<typeof buildFullExport>>;
+    try {
+      built = await buildFullExport(db, actor.organizationId);
+    } finally {
+      await sql`select pg_advisory_unlock(hashtext(${`full-export:${actor.organizationId}`}))`.execute(db);
+    }
+    const { file: plain, manifest } = built;
+    // Decrypted bank data never rests in plaintext: the stored blob is encrypted with the data key.
+    const file = encryptBytes(plain);
     const sha = await putBlob(file);
     const f = await db.transaction().execute(async (tx) => {
       const f = await tx.insertInto('file').values({ organization_id: actor.organizationId, folder_id: null, member_id: null, purpose: 'export', sha256: sha, size_bytes: file.length, mime_type: 'application/zip', name: `OpenVerein-Export-${manifest.exportedAt.slice(0, 10)}.zip`, retention_class: 'temporary', retain_until: null, uploaded_by: actor.userId }).returning(['id', 'size_bytes', 'sha256', 'created_at']).executeTakeFirstOrThrow();
@@ -42,12 +55,26 @@ export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
     return toDto(f);
   });
 
-  app.get('/exports/full/:id', { schema: { tags, summary: 'Gesamtexport herunterladen (jeder Abruf wird protokolliert)', params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
+  const linkSig = (id: string, userId: string, exp: number) => blindIndex(`full-export-download:${id}:${userId}:${exp}`);
+
+  app.post('/exports/full/:id/link', { schema: { tags, summary: 'Download-Link für einen Gesamtexport (nach frischem zweiten Faktor, 60 Sekunden gültig)', params: z.object({ id: z.uuid() }), body: z.object({}).optional(), response: { 200: z.object({ url: z.string() }) } } }, async (req) => {
     const actor = requireActor(req);
     requireAdmin(actor);
+    requireStepUp(actor);
+    const f = await db.selectFrom('file').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').executeTakeFirst();
+    if (!f) throw notFound('Export');
+    const exp = Date.now() + 60_000;
+    return { url: `/api/v1/exports/full/${f.id}?exp=${exp}&sig=${linkSig(f.id, actor.id, exp)}` };
+  });
+
+  app.get('/exports/full/:id', { schema: { tags, summary: 'Gesamtexport herunterladen, nur über einen frischen Download-Link (jeder Abruf wird protokolliert)', params: z.object({ id: z.uuid() }), querystring: z.object({ exp: z.coerce.number(), sig: z.string().regex(/^[0-9a-f]{64}$/) }) } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requireAdmin(actor);
+    const { exp, sig } = req.query;
+    if (exp < Date.now() || !timingSafeEqual(Buffer.from(sig), Buffer.from(linkSig(req.params.id, actor.id, exp)))) throw new Problem(403, 'link-expired', 'Der Download-Link ist abgelaufen.', 'Fordere ihn neu an.');
     const f = await db.selectFrom('file').select(['id', 'sha256', 'name']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').executeTakeFirst();
     if (!f) throw notFound('Export');
-    const bytes = await getBlob(f.sha256);
+    const bytes = decryptBytes(await getBlob(f.sha256));
     await audit(db, actor.organizationId, actor, { action: 'export.full_downloaded', entityType: 'file', entityId: f.id, diff: { sha256: [null, createHash('sha256').update(bytes).digest('hex')] } });
     return reply.header('content-type', 'application/zip').header('content-disposition', `attachment; filename="${f.name}"`).header('cache-control', 'private, no-store').send(bytes);
   });

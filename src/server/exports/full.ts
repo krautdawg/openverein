@@ -4,6 +4,7 @@ import { decrypt } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { getBlob } from '../files/store.ts';
 import { MIGRATIONS_TABLE } from '../migrate.ts';
+import { Problem } from '../http/problem.ts';
 import { zip } from './zip.ts';
 
 /** Bumped whenever the shape of the export changes; documented in docs/export-schema.md. */
@@ -25,25 +26,35 @@ const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const csvCell = (v: unknown) => {
   if (v === null || v === undefined) return '';
   let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  // Formula guard for text only: negative amounts stay numbers.
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[";\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 };
 
-/** Plain values for JSON: dates as ISO strings, bytes as base64, encrypted columns decrypted under their plain name. */
-function clean(row: Record<string, unknown>) {
+/**
+ * Plain values for JSON: dates as ISO strings, bytes as base64, encrypted columns decrypted under their plain name.
+ * Values that cannot be decrypted are counted (manifest `undecryptable`), never silently dropped.
+ */
+function clean(table: string, row: Record<string, unknown>, failed: Record<string, number>) {
+  const tryDecrypt = (column: string, v: unknown) => {
+    if (typeof v !== 'string' || !v) return null;
+    try {
+      return decrypt(v);
+    } catch {
+      failed[`${table}.${column}`] = (failed[`${table}.${column}`] ?? 0) + 1;
+      return null;
+    }
+  };
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (DROP_COLUMN.test(k)) continue;
     if (k.endsWith('_encrypted')) {
-      let plain: string | null = null;
-      if (typeof v === 'string' && v) {
-        try {
-          plain = decrypt(v);
-        } catch {
-          plain = null;
-        }
-      }
-      out[k.slice(0, -'_encrypted'.length)] = plain;
+      out[k.slice(0, -'_encrypted'.length)] = tryDecrypt(k, v);
+      continue;
+    }
+    // Bank changes from the portal keep both values encrypted in the generic value columns.
+    if (table === 'change_request' && row.field === 'iban' && (k === 'old_value' || k === 'new_value') && typeof v === 'string' && v.startsWith('v1:')) {
+      out[k] = tryDecrypt(k, v);
       continue;
     }
     out[k] = v instanceof Date ? v.toISOString() : Buffer.isBuffer(v) ? { base64: v.toString('base64') } : v;
@@ -56,6 +67,14 @@ function clean(row: Record<string, unknown>) {
  * `files/<sha256>`, and `manifest.json` with schema version, counts and the SHA-256 of every other file.
  */
 export async function buildFullExport(db: Db, organizationId: string) {
+  // One consistent snapshot: no invoice lines without their invoice because something was booked meanwhile.
+  return db.transaction().setIsolationLevel('repeatable read').setAccessMode('read only').execute((tx) => build(tx, organizationId));
+}
+
+async function build(db: Db, organizationId: string) {
+  const columnsOf = new Map<string, string[]>();
+  for (const c of (await sql<{ t: string; c: string }>`select table_name as t, column_name as c from information_schema.columns where table_schema = 'public' order by ordinal_position`.execute(db)).rows) columnsOf.set(c.t, [...(columnsOf.get(c.t) ?? []), c.c]);
+  const failed: Record<string, number> = {};
   const tables = (await sql<{ t: string; has_org: boolean }>`
     select t.table_name as t, exists (select 1 from information_schema.columns c where c.table_schema = 'public' and c.table_name = t.table_name and c.column_name = 'organization_id') as has_org
     from information_schema.tables t where t.table_schema = 'public' and t.table_type = 'BASE TABLE' order by 1`.execute(db)).rows;
@@ -69,10 +88,11 @@ export async function buildFullExport(db: Db, organizationId: string) {
     else if (CHILDREN[t]) {
       const { parent, key } = CHILDREN[t];
       rows = (await sql<Record<string, unknown>>`select c.* from ${sql.table(t)} c join ${sql.table(parent)} p on p.id = c.${sql.ref(key)} where p.organization_id = ${organizationId}`.execute(db)).rows;
-    } else continue;
-    const cleaned = rows.map(clean);
+    } else throw new Error(`full export: table ${t} has no organization_id and no parent; add it to CHILDREN or SKIP_TABLES`);
+    const cleaned = rows.map((r) => clean(t, r, failed));
     counts[t] = cleaned.length;
-    const columns = [...new Set(cleaned.flatMap((r) => Object.keys(r)))];
+    // Header from the schema, so empty tables still say what they would hold.
+    const columns = (columnsOf.get(t) ?? []).filter((c) => !DROP_COLUMN.test(c)).map((c) => (c.endsWith('_encrypted') ? c.slice(0, -'_encrypted'.length) : c));
     entries.push({ name: `data/${t}.jsonl`, data: Buffer.from(cleaned.map((r) => JSON.stringify(r)).join('\n') + (cleaned.length ? '\n' : ''), 'utf8') });
     // CSV for spreadsheets: same rows, bytes left out (they are in the JSONL).
     const csvCols = columns.filter((c) => !cleaned.some((r) => r[c] && typeof r[c] === 'object' && 'base64' in (r[c] as object)));
@@ -81,13 +101,16 @@ export async function buildFullExport(db: Db, organizationId: string) {
   // Stored files once per content hash; deleted or missing blobs are listed, not fatal.
   const blobs = await db.selectFrom('file').select('sha256').distinct().where('organization_id', '=', organizationId).where('purpose', '<>', 'export').execute();
   const missing: string[] = [];
+  const corrupt: string[] = [];
   for (const { sha256 } of blobs) {
     try {
       entries.push({ name: `files/${sha256}`, data: await getBlob(sha256) });
-    } catch {
-      missing.push(sha256);
+    } catch (err) {
+      (err instanceof Problem && err.type === 'integrity' ? corrupt : missing).push(sha256);
     }
   }
+  // shortcut: built in memory without ZIP64 (65,535 entries, 4 GB); stream with ZIP64 once a club's file store gets that big.
+  if (entries.length + 1 > 65_535) throw new Problem(413, 'too-large', 'Der Export ist für diese Version zu groß (über 65.535 Dateien).');
   const last = (await sql<{ name: string }>`select name from ${sql.table(MIGRATIONS_TABLE)} order by name desc limit 1`.execute(db)).rows[0]?.name ?? null;
   const manifest = {
     schemaVersion: EXPORT_SCHEMA_VERSION,
@@ -96,6 +119,8 @@ export async function buildFullExport(db: Db, organizationId: string) {
     databaseVersion: last,
     counts,
     missingFiles: missing,
+    corruptFiles: corrupt,
+    undecryptable: failed,
     files: Object.fromEntries(entries.map((e) => [e.name, sha(e.data)])),
   };
   const file = zip([{ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') }, ...entries]);

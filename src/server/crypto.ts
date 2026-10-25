@@ -37,6 +37,19 @@ export function decrypt(stored: string) {
 }
 
 /** Deterministic keyed hash for equality lookups (IBAN matching). */
+/** Bytes at rest (full exports): iv | tag | ciphertext, same key as the field encryption. */
+export function encryptBytes(plain: Buffer) {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', k().enc, iv);
+  const body = Buffer.concat([c.update(plain), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), body]);
+}
+export function decryptBytes(stored: Buffer) {
+  const d = createDecipheriv('aes-256-gcm', k().enc, stored.subarray(0, 12));
+  d.setAuthTag(stored.subarray(12, 28));
+  return Buffer.concat([d.update(stored.subarray(28)), d.final()]);
+}
+
 export const blindIndex = (value: string) => createHmac('sha256', k().mac).update(value).digest('hex');
 
 export const maskIban = (iban: string) => `${iban.slice(0, 2)}•• •••• •••• •••• ••${iban.slice(-4, -2)} ${iban.slice(-2)}`;

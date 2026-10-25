@@ -8,6 +8,6 @@ test('full export: an admin creates and downloads the club export', async ({ pag
   const item = page.getByRole('list', { name: 'Exporte' }).getByRole('listitem').first();
   await expect(item).toContainText('SHA-256');
   const download = page.waitForEvent('download');
-  await item.getByRole('link', { name: 'Herunterladen' }).click();
+  await item.getByRole('button', { name: 'Herunterladen' }).click();
   expect((await download).suggestedFilename()).toMatch(/^OpenVerein-Export-\d{4}-\d{2}-\d{2}\.zip$/);
 });

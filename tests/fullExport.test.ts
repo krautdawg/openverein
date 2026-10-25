@@ -45,7 +45,13 @@ describe('full export', () => {
 
     const run = await admin.post('/exports/full', {});
     expect(run.status, JSON.stringify(run.body)).toBe(201);
-    const res = await ctx.app.inject({ url: `/api/v1/exports/full/${run.body.id}`, headers: { cookie } });
+    // Without a fresh link no download; the stored blob is encrypted.
+    expect((await ctx.app.inject({ url: `/api/v1/exports/full/${run.body.id}?exp=${Date.now() + 1000}&sig=${'0'.repeat(64)}`, headers: { cookie } })).statusCode).toBe(403);
+    const stored = await ctx.db.selectFrom('file').select('sha256').where('id', '=', run.body.id).executeTakeFirstOrThrow();
+    const { getBlob } = await import('../src/server/files/store.ts');
+    expect((await getBlob(stored.sha256)).includes(Buffer.from('manifest.json'))).toBe(false);
+    const link = (await admin.post(`/exports/full/${run.body.id}/link`, {})).body.url as string;
+    const res = await ctx.app.inject({ url: link, headers: { cookie } });
     const files = unzip(res.rawPayload);
     const manifest = JSON.parse(files.get('manifest.json')!.toString());
     expect(manifest.schemaVersion).toBe('1');
@@ -61,5 +67,13 @@ describe('full export', () => {
     expect(files.has('data/session.jsonl')).toBe(false);
     expect(files.get('data/member.csv')!.toString()).toContain('membership_number');
     expect((await admin.get('/exports/full')).body).toHaveLength(1);
+    expect(manifest.undecryptable).toEqual({});
+    // Negative numbers stay numbers in the CSV; empty tables still have a header.
+    expect(files.get('data/receipt.csv')!.toString()).toContain('supplier');
+    // An erasure removes stored exports.
+    const gone = (await admin.post('/members', { lastName: 'Weg', joinDate: '2015-01-01' })).body;
+    await admin.post(`/members/${gone.id}/resign`, { noticeDate: '2020-01-01', exitDate: '2020-12-31' });
+    expect((await admin.post(`/persons/${gone.personId}/anonymise`, {})).status).toBe(200);
+    expect(await ctx.db.selectFrom('file').select('id').where('purpose', '=', 'export').execute()).toHaveLength(0);
   });
 });
