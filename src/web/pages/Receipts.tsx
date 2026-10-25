@@ -11,7 +11,7 @@ import { Field } from '../components/Field.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError, uploadFile } from '../lib/api.ts';
 import { todayLocal } from '../lib/hooks.ts';
-import { parseEuro } from '../lib/money.ts';
+import { euroInput, parseEuro } from '../lib/money.ts';
 import { useTitle } from '../lib/useTitle.ts';
 import { AccountSelect, LedgerLayout, RangePicker, useAccounts, type Settings, type TaxRate } from './Ledger.tsx';
 
@@ -93,6 +93,8 @@ function ReceiptSheet({ onClose }: { onClose: () => void }) {
   const [lines, setLines] = useState([0]);
   const [paid, setPaid] = useState(false);
   const [file, setFile] = useState<{ id: string; name: string; duplicateOf: string | null }>();
+  // What an e-invoice says (supplier, number, dates, gross per VAT rate): fills the form once, editable.
+  const [prefill, setPrefill] = useState<Einvoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [warnings, setWarnings] = useState<string[]>();
@@ -104,8 +106,13 @@ function ReceiptSheet({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(undefined);
     try {
-      const r = await uploadFile<{ id: string; duplicateOf: string | null }>('/receipts/files', f, { name: f.name });
+      const r = await uploadFile<{ id: string; duplicateOf: string | null; einvoice: Einvoice | null }>('/receipts/files', f, { name: f.name });
       setFile({ id: r.id, name: f.name, duplicateOf: r.duplicateOf });
+      if (r.einvoice) {
+        setPrefill(r.einvoice);
+        if (r.einvoice.receiptDate) setDate(r.einvoice.receiptDate);
+        if (r.einvoice.groups.length) setLines(r.einvoice.groups.map((_, i) => i));
+      }
     } catch (err) {
       setError(problemText(err));
     } finally {
@@ -151,29 +158,34 @@ function ReceiptSheet({ onClose }: { onClose: () => void }) {
             onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) void attach(f); }}
           >
             {file ? <p>{file.name}{file.duplicateOf && <span className="error"> · Dieselbe Datei gehört schon zu: {file.duplicateOf}</span>}</p> : <p className="muted">PDF, Foto oder E-Rechnung (ZUGFeRD, XRechnung) hierher ziehen</p>}
+            {prefill && <p className="meta" role="status">E-Rechnung erkannt ({prefill.format === 'cii' ? 'CII' : 'UBL'}): Angaben übernommen{prefill.totalCents !== null ? `, Summe ${euro(prefill.totalCents)}` : ''}. Bitte Konten wählen und prüfen.</p>}
             <button type="button" className="btn" aria-busy={busy} disabled={busy} onClick={() => input.current?.click()}>{file ? 'Andere Datei' : 'Datei wählen oder fotografieren'}</button>
             <input ref={input} type="file" accept="application/pdf,image/*,.xml" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void attach(f); e.target.value = ''; }} />
           </div>
-          <div className="form-row">
-            <Field label="Von (Lieferant)" name="supplier" placeholder="z. B. Stadt Musterstadt" autoComplete="off" />
-            <Field label="Rechnungsnummer" name="number" autoComplete="off" />
+          <div className="form-row" key={`head-${prefill?.number ?? ''}`}>
+            <Field label="Von (Lieferant)" name="supplier" placeholder="z. B. Stadt Musterstadt" autoComplete="off" defaultValue={prefill?.supplier ?? ''} />
+            <Field label="Rechnungsnummer" name="number" autoComplete="off" defaultValue={prefill?.number ?? ''} />
           </div>
           <div className="form-row">
             <Field label="Belegdatum" name="date" type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
-            <Field label="Fällig am (optional)" name="due" type="date" />
+            <Field key={`due-${prefill?.dueDate ?? ''}`} label="Fällig am (optional)" name="due" type="date" defaultValue={prefill?.dueDate ?? ''} />
           </div>
-          {lines.map((i, n) => (
-            <fieldset key={i} className="booking-line" aria-label={`Position ${n + 1}`}>
+          {lines.map((i, n) => {
+            const g = prefill?.groups[n];
+            const rate = g ? validRates.find((r) => r.rateBp === g.ratePct * 100)?.id ?? '' : '';
+            return (
+            <fieldset key={`${i}-${prefill?.number ?? ''}`} className="booking-line" aria-label={`Position ${n + 1}`}>
               <div className="form-row">
-                <div className="field"><label htmlFor={`amount-${i}`}>Betrag brutto</label><input id={`amount-${i}`} name={`amount-${i}`} className="input num" inputMode="decimal" /></div>
+                <div className="field"><label htmlFor={`amount-${i}`}>Betrag brutto</label><input id={`amount-${i}`} name={`amount-${i}`} className="input num" inputMode="decimal" defaultValue={g ? euroInput(g.grossCents) : ''} /></div>
                 <AccountSelect label="Ausgabenkonto" name={`account-${i}`} accounts={expense} />
               </div>
               <div className="form-row">
-                <div className="field"><label htmlFor={`rate-${i}`}>Umsatzsteuer</label><select id={`rate-${i}`} name={`rate-${i}`} className="select" defaultValue=""><option value="">keine</option>{validRates.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select></div>
+                <div className="field"><label htmlFor={`rate-${i}`}>Umsatzsteuer</label><select id={`rate-${i}`} name={`rate-${i}`} className="select" defaultValue={rate} key={`${rate}-${validRates.length}`}><option value="">keine</option>{validRates.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select></div>
                 <div className="field"><label htmlFor={`text-${i}`}>Text (optional)</label><input id={`text-${i}`} name={`text-${i}`} className="input" /></div>
               </div>
             </fieldset>
-          ))}
+            );
+          })}
           <button type="button" className="btn btn-ghost" style={{ justifySelf: 'start' }} onClick={() => setLines([...lines, Math.max(...lines) + 1])}><Plus size={16} aria-hidden /> Weitere Position</button>
           <label className="check"><input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} /> Schon bezahlt (wird dann gleich gebucht)</label>
           {paid && <PayFields />}
@@ -407,3 +419,5 @@ function DecideClaim({ claim, action, onClose }: { claim: ExpenseClaim; action: 
     </Sheet>
   );
 }
+
+interface Einvoice { format: 'cii' | 'ubl'; supplier: string | null; number: string | null; receiptDate: string | null; dueDate: string | null; totalCents: number | null; groups: { ratePct: number; grossCents: number }[] }

@@ -17,6 +17,7 @@ import { notFound, Problem } from '../http/problem.ts';
 import { assertCashNotNegative, bookingLines, lockJournal, postEntry, reverseEntry } from '../ledger/service.ts';
 import { orgToday } from '../members/query.ts';
 import { requireClubWide, restrictedFields, type Actor } from '../policy.ts';
+import { readEinvoice } from '../receipts/einvoice.ts';
 import { decrypt } from '../crypto.ts';
 
 const tags = ['ledger'];
@@ -100,7 +101,7 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     await tx.updateTable('file').set({ retention_class: 'voucher', retain_until: addYears(`${today.slice(0, 4)}-12-31`, 8) }).where('id', '=', fileId).execute();
   }
 
-  app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200) }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable() }) } } }, async (req, reply) => {
+  app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200) }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable(), einvoice: z.object({ format: z.enum(['cii', 'ubl']), supplier: z.string().nullable(), number: z.string().nullable(), receiptDate: z.string().nullable(), dueDate: z.string().nullable(), totalCents: z.number().nullable(), groups: z.array(z.object({ ratePct: z.number(), grossCents: z.number() })) }).nullable() }) } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
     const bytes = req.body as Buffer;
@@ -110,7 +111,8 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     const f = await db.insertInto('file').values({ organization_id: actor.organizationId, folder_id: null, member_id: null, purpose: 'receipt', sha256: sha, size_bytes: bytes.length, mime_type: String(req.headers['x-file-type'] ?? 'application/octet-stream').slice(0, 100).replace(/[^\w.+/-]/g, '') || 'application/octet-stream', name: req.query.name, retention_class: 'temporary', retain_until: null, uploaded_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
     const dup = await db.selectFrom('receipt').innerJoin('file', 'file.id', 'receipt.file_id').select(['receipt.supplier', 'receipt.receipt_date']).where('receipt.organization_id', '=', actor.organizationId).where('file.sha256', '=', sha).where('receipt.status', '<>', 'void').executeTakeFirst();
     reply.status(201);
-    return { id: f.id, sha256: sha, duplicateOf: dup ? `${dup.supplier}, ${formatDate(dup.receipt_date)}` : null };
+    // E-invoices (XRechnung, ZUGFeRD) are stored unchanged; what they say is offered to prefill the form.
+    return { id: f.id, sha256: sha, duplicateOf: dup ? `${dup.supplier}, ${formatDate(dup.receipt_date)}` : null, einvoice: await readEinvoice(bytes) };
   });
 
   app.get('/receipts', { schema: { tags, summary: 'Eingangsbelege', querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100).optional(), status: z.enum(['open', 'paid', 'void']).optional() }), response: { 200: z.array(receipt) } } }, async (req) => {
