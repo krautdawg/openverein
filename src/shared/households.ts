@@ -15,7 +15,8 @@ export const householdRuleInput = z
     kind: z.enum(HOUSEHOLD_RULE_KINDS),
     fromNth: z.number().int().min(2).max(20).nullish(),
     percentBp: z.number().int().min(1).max(10_000).nullish(),
-    capCents: z.number().int().min(0).max(10_000_000).nullish(),
+    // A cap of 0 would mark periods as billed without any invoice.
+    capCents: z.number().int().min(1).max(10_000_000).nullish(),
   })
   .refine((r) => r.kind !== 'percent' || (r.fromNth && r.percentBp), { message: 'Prozent und ab welchem Mitglied angeben.', path: ['percentBp'] })
   .refine((r) => r.kind !== 'cap' || r.capCents !== undefined && r.capCents !== null, { message: 'Höchstbetrag angeben.', path: ['capCents'] })

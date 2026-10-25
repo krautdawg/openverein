@@ -115,7 +115,7 @@ export async function previewHouseholds(db: import('../db.ts').Db, organizationI
       perMember: d.perMember,
       label: d.label,
       // Changes to payer, members, birth dates or the rule make a stored preview stale.
-      hash: JSON.stringify([hm[0]!.payer_person_id, rule?.id ?? null, sorted.map((m) => [m.id, m.birth_date])]),
+      hash: JSON.stringify([hm[0]!.payer_person_id, rule && [rule.id, rule.kind, rule.from_nth, rule.percent_bp, rule.cap_cents], sorted.map((m) => [m.id, m.birth_date])]),
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

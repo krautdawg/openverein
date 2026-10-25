@@ -58,4 +58,28 @@ describe('households', () => {
     await admin.post(`/households/${hh.id}/rules`, { validFrom: '2026-01-01', kind: 'cap', capCents: 20000 });
     expect((await admin.post(`/fee-runs/${run.id}/post`, {})).body.type).toContain('stale-preview');
   });
+
+  it('bills the whole household in a group run, notices in-place rule edits, and collects with the payer mandate', async () => {
+    const plan = (await admin.post('/fee-plans', { name: 'Erwachsene', version: { validFrom: '2020-01-01', amountCents: 12000, intervalMonths: 12 } })).body.id;
+    const youth = (await admin.post('/groups', { name: 'Jugend', shortCode: 'JUG' })).body.id;
+    const parent = await familyMember(plan, 'Paula', '1980-01-01');
+    const child = (await admin.post('/members', { firstName: 'Carl', lastName: 'Familie', birthDate: '2014-01-01', joinDate: '2026-01-01', groupIds: [youth] })).body;
+    await admin.post(`/members/${child.id}/fee-assignments`, { feePlanId: plan, validFrom: '2026-01-01' });
+    await admin.patch('/organization', { creditorId: 'DE98ZZZ09999999999' });
+    await admin.post(`/members/${parent.id}/mandates`, { iban: 'DE02120300000000202051', signedOn: '2026-01-01', accountHolder: 'Paula Familie' });
+    const hh = (await admin.post('/households', { name: 'Fam', payerPersonId: parent.personId, memberIds: [parent.id, child.id] })).body;
+    await admin.post(`/households/${hh.id}/rules`, { validFrom: '2026-01-01', kind: 'percent', fromNth: 2, percentBp: 5000 });
+
+    const run = (await admin.post('/fee-runs', { until: '2026-12-31', issueDate: '2026-02-01', groupId: youth })).body;
+    expect(run.members.map((m: { name: string }) => m.name).sort()).toEqual(['Familie, Carl', 'Familie, Paula']);
+    expect(run.households[0].discountCents).toBe(6000);
+    // Same validFrom, other percentage: the stored preview is stale.
+    await admin.post(`/households/${hh.id}/rules`, { validFrom: '2026-01-01', kind: 'percent', fromNth: 2, percentBp: 2500 });
+    expect((await admin.post(`/fee-runs/${run.id}/post`, {})).body.type).toContain('stale-preview');
+    const fresh = (await admin.post('/fee-runs', { until: '2026-12-31', issueDate: '2026-02-01' })).body;
+    expect((await admin.post(`/fee-runs/${fresh.id}/post`, {})).status).toBe(200);
+    const inv = (await ctx.db.selectFrom('invoice').select('recipient').where('kind', '=', 'membership').executeTakeFirstOrThrow()).recipient as { paymentMethod: string; mandateReference: string | null };
+    expect(inv.paymentMethod).toBe('direct_debit');
+    expect(inv.mandateReference).toBeTruthy();
+  });
 });

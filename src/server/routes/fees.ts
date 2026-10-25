@@ -303,9 +303,30 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function computePreview(actor: Actor, until: string, groupId: string | null, conn: Db = db) {
     const today = await orgToday(conn, actor.organizationId);
-    const { members, versions } = await loadInputs(conn, actor.organizationId, { groupId, today, scope: scopeOf(actor, 'fees', 'write') });
+    const scope = scopeOf(actor, 'fees', 'write');
+    const { members, versions } = await loadInputs(conn, actor.organizationId, { groupId, today, scope });
+    // A household is billed as a whole: its other members join the run even outside the group filter.
+    const inRun = members.map((m) => m.memberId);
+    const extra = inRun.length
+      ? await conn.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.id', 'person.last_name', 'person.first_name'])
+          .where('member.organization_id', '=', actor.organizationId).where('member.status', 'not in', ['applicant', 'rejected'])
+          .where('member.household_id', 'in', conn.selectFrom('member').select('household_id').where('id', 'in', inRun).where('household_id', 'is not', null))
+          .where('member.id', 'not in', inRun).execute()
+      : [];
+    if (extra.length) {
+      const more = await loadInputs(conn, actor.organizationId, { memberIds: extra.map((e) => e.id), today, scope });
+      if (more.members.length < extra.length) throw new Problem(409, 'household-outside-scope', 'Ein Haushalt reicht über Deine Gruppen hinaus.', 'Haushalte werden gemeinsam abgerechnet; diesen Lauf kann nur ein Zugang für den ganzen Verein buchen.');
+      members.push(...more.members);
+      for (const [k, v] of more.versions) versions.set(k, v);
+    }
     const mandates = await membersWithMandate(conn, actor.organizationId);
-    return members.map((m) => previewFor(m, versions, until, today, mandates.has(m.memberId))).filter((p) => p.lines.length > 0 || p.skipped.length > 0);
+    // Household members pay through the payer: the payer's mandate counts, not their own.
+    const payers = await conn.selectFrom('member').innerJoin('household', 'household.id', 'member.household_id').leftJoin('sepa_mandate as m', (j) => j.onRef('m.person_id', '=', 'household.payer_person_id').on('m.status', '=', 'active'))
+      .select(['member.id', 'm.id as mandate']).where('member.id', 'in', members.length ? members.map((m) => m.memberId) : ['00000000-0000-0000-0000-000000000000']).execute();
+    const payerMandate = new Map(payers.map((p) => [p.id, !!p.mandate]));
+    return members
+      .map((m) => previewFor(m, versions, until, today, payerMandate.has(m.memberId) ? payerMandate.get(m.memberId)! : mandates.has(m.memberId)))
+      .filter((p) => p.lines.length > 0 || p.skipped.length > 0);
   }
 
   app.get('/fee-runs', { schema: { tags, summary: 'Beitragsläufe', response: { 200: z.array(feeRunSummary) } } }, async (req) => {
@@ -420,7 +441,9 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
           if (h.discountCents > 0) created.push({ text: h.label, quantity: 1, unitCents: -h.discountCents, taxRate: 0, discount: true });
           if (created.reduce((s, c) => s + c.unitCents, 0) <= 0) continue;
           const invId = await createDraft(tx, { organizationId: actor.organizationId, kind: 'membership', personId: h.payerPersonId, memberId: h.anchorMemberId, dueDate: run.due_date, feeRunId: run.id, coverText: `Beiträge für den Haushalt ${h.name}`, createdBy: actor.userId }, created);
-          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date);
+          // The payer's active mandate makes it a direct debit (pre-notified on the invoice), else the anchor's method.
+          const payerMandate = await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', h.payerPersonId).where('status', '=', 'active').executeTakeFirst();
+          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date, payerMandate ? { paymentMethod: 'direct_debit' } : {});
           invoices++;
         }
         await tx.updateTable('fee_run').set({ status: 'posted', posted_at: new Date() }).where('id', '=', run.id).execute();

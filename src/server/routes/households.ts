@@ -7,7 +7,7 @@ import type { Db } from '../db.ts';
 import { ruleLabel } from '../fees/household.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { orgToday } from '../members/query.ts';
-import { requireClubWide, type Actor } from '../policy.ts';
+import { requireClubWide, restrictedFields, type Actor } from '../policy.ts';
 
 const tags = ['members'];
 const idParam = z.object({ id: z.uuid() });
@@ -18,6 +18,7 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function dto(actor: Actor, ids?: string[]) {
     const today = await orgToday(db, actor.organizationId);
+    const hideBirth = restrictedFields(actor).has('birth_date');
     let q = db.selectFrom('household').innerJoin('person', 'person.id', 'household.payer_person_id').select(['household.id', 'household.name', 'household.payer_person_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name']).where('household.organization_id', '=', actor.organizationId);
     if (ids) q = q.where('household.id', 'in', ids);
     const rows = await q.orderBy('household.name').execute();
@@ -32,7 +33,7 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
         name: h.name,
         payerPersonId: h.payer_person_id,
         payerName: nameOf(h),
-        members: members.filter((m) => m.household_id === h.id).map((m) => ({ memberId: m.id, personId: m.person_id, name: nameOf(m), membershipNumber: m.membership_number, status: m.status, birthDate: m.birth_date })),
+        members: members.filter((m) => m.household_id === h.id).map((m) => ({ memberId: m.id, personId: m.person_id, name: nameOf(m), membershipNumber: m.membership_number, status: m.status, birthDate: hideBirth ? null : m.birth_date })),
         rules: own,
         currentRule: current?.label ?? 'Kein Familienrabatt',
       };
@@ -54,9 +55,10 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
     return dto(actor);
   });
 
-  app.post('/households', { schema: { tags, summary: 'Haushalt anlegen', body: householdInput, response: { 201: household } } }, async (req, reply) => {
+  app.post('/households', { schema: { tags, summary: 'Haushalt anlegen (bestimmt, wer die Beiträge zahlt: braucht auch Beitragsrechte)', body: householdInput, response: { 201: household } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
+    requireClubWide(actor, 'fees', 'write');
     const b = req.body;
     const id = await db.transaction().execute(async (tx) => {
       if (!(await tx.selectFrom('person').select('id').where('id', '=', b.payerPersonId).where('organization_id', '=', actor.organizationId).where('anonymised_at', 'is', null).executeTakeFirst())) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'payerPersonId', message: 'Zahlende Person nicht gefunden.' }] });
@@ -74,14 +76,16 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
     const b = req.body;
+    // Payer and members decide who is billed and who gets the discount.
+    if (b.payerPersonId || b.memberIds) requireClubWide(actor, 'fees', 'write');
     await db.transaction().execute(async (tx) => {
       const h = await tx.selectFrom('household').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!h) throw notFound('Haushalt');
       const payer = b.payerPersonId ?? h.payer_person_id;
       if (b.payerPersonId && !(await tx.selectFrom('person').select('id').where('id', '=', b.payerPersonId).where('organization_id', '=', actor.organizationId).where('anonymised_at', 'is', null).executeTakeFirst())) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'payerPersonId', message: 'Zahlende Person nicht gefunden.' }] });
+      const current = await tx.selectFrom('member').select(['id', 'person_id']).where('household_id', '=', h.id).execute();
       if (b.memberIds) {
         await assertMembers(tx, actor, b.memberIds, h.id);
-        const current = await tx.selectFrom('member').select(['id', 'person_id']).where('household_id', '=', h.id).execute();
         const removed = current.filter((m) => !b.memberIds!.includes(m.id));
         // The payer's own membership leaves only together with a new payer.
         if (removed.some((m) => m.person_id === payer)) throw new Problem(409, 'payer-removed', 'Die zahlende Person verlässt den Haushalt.', 'Wähle zuerst eine andere zahlende Person.');
@@ -89,7 +93,7 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
         if (b.memberIds.length) await tx.updateTable('member').set({ household_id: h.id, updated_at: new Date() }).where('id', 'in', b.memberIds).execute();
       }
       await tx.updateTable('household').set({ ...(b.name ? { name: b.name } : {}), payer_person_id: payer, updated_at: new Date() }).where('id', '=', h.id).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'household.updated', entityType: 'household', entityId: h.id, diff: { name: [h.name, b.name ?? h.name], payer: [h.payer_person_id, payer], members: [null, b.memberIds?.length ?? null] } });
+      await audit(tx, actor.organizationId, actor, { action: 'household.updated', entityType: 'household', entityId: h.id, diff: { name: [h.name, b.name ?? h.name], payer: [h.payer_person_id, payer], members: [current.map((m) => m.id), b.memberIds ?? current.map((m) => m.id)] } });
     });
     return (await dto(actor, [req.params.id]))[0]!;
   });
@@ -102,12 +106,13 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const h = await tx.selectFrom('household').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!h) throw notFound('Haushalt');
+      const prior = await tx.selectFrom('household_rule').selectAll().where('household_id', '=', h.id).where('valid_from', '=', b.validFrom).executeTakeFirst();
       await tx
         .insertInto('household_rule')
         .values({ household_id: h.id, valid_from: b.validFrom, kind: b.kind, from_nth: b.fromNth ?? null, percent_bp: b.percentBp ?? null, cap_cents: b.capCents ?? null })
         .onConflict((oc) => oc.columns(['household_id', 'valid_from']).doUpdateSet({ kind: b.kind, from_nth: b.fromNth ?? null, percent_bp: b.percentBp ?? null, cap_cents: b.capCents ?? null }))
         .execute();
-      await audit(tx, actor.organizationId, actor, { action: 'household.rule', entityType: 'household', entityId: h.id, diff: { validFrom: [null, b.validFrom], kind: [null, b.kind], fromNth: [null, b.fromNth ?? null], percentBp: [null, b.percentBp ?? null], capCents: [null, b.capCents ?? null] } });
+      await audit(tx, actor.organizationId, actor, { action: 'household.rule', entityType: 'household', entityId: h.id, diff: { validFrom: [prior?.valid_from ?? null, b.validFrom], kind: [prior?.kind ?? null, b.kind], fromNth: [prior?.from_nth ?? null, b.fromNth ?? null], percentBp: [prior?.percent_bp ?? null, b.percentBp ?? null], capCents: [prior?.cap_cents ?? null, b.capCents ?? null] } });
     });
     return (await dto(actor, [req.params.id]))[0]!;
   });

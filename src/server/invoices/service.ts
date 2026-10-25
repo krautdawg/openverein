@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { addDays, formatDate } from '../../shared/dates.ts';
+import type { PaymentMethod } from '../db.ts';
 import type { Db, InvoiceKind } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import { nextNumber } from '../members/numbers.ts';
@@ -33,7 +34,7 @@ function personLines(p: { kind: string; first_name: string | null; last_name: st
  * Issues a draft: assigns the next gapless number in this transaction, freezes recipient and letterhead,
  * fixes the total from the lines and opens the receivable. Content is immutable afterwards (DB trigger).
  */
-export async function issueInvoice(tx: Db, organizationId: string, invoiceId: string, issueDate: string, dueDate?: string | null) {
+export async function issueInvoice(tx: Db, organizationId: string, invoiceId: string, issueDate: string, dueDate?: string | null, opts: { paymentMethod?: PaymentMethod } = {}) {
   const inv = await tx.selectFrom('invoice').selectAll().where('id', '=', invoiceId).where('organization_id', '=', organizationId).forUpdate().executeTakeFirstOrThrow();
   if (inv.status !== 'draft') throw new Problem(409, 'not-draft', 'Die Rechnung ist bereits ausgestellt.');
   const lines = await tx.selectFrom('invoice_line').select(['total_cents']).where('invoice_id', '=', inv.id).execute();
@@ -53,7 +54,7 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     recipient: personLines(person),
     membershipNumber: member?.membership_number ?? null,
     org: { name: org.name, street: org.street, postalCode: org.postal_code, city: org.city, email: org.email, iban: org.iban, bic: org.bic, bankName: org.bank_name, isDemo: org.is_demo },
-    paymentMethod: member?.payment_method ?? null,
+    paymentMethod: opts.paymentMethod ?? member?.payment_method ?? null,
     cancelsNumber: cancels?.number ?? null,
     mandateReference: mandate?.reference ?? null,
     creditorId: org.creditor_id,

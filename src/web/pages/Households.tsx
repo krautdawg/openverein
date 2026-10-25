@@ -48,6 +48,7 @@ export function Households({ me }: { me: Me }) {
     <div className="page">
       <p style={{ marginBottom: 'var(--s-4)' }}><Link to="/mitglieder">← Mitglieder</Link></p>
       <PageHead title="Haushalte" intro="Familien und Haushalte bekommen eine gemeinsame Beitragsrechnung an die zahlende Person, auf Wunsch mit Familienrabatt. Eingezogen wird mit deren Mandat." actions={canWrite ? <button className="btn btn-primary" onClick={() => setOpen('new')}><Plus size={16} aria-hidden /> Haushalt anlegen</button> : undefined} />
+      {list.error && <div className="alert alert-error" role="alert">{problemText(list.error)}</div>}
       <div className="table-wrap">
         {list.data?.length === 0 ? (
           <p className="empty">Noch keine Haushalte.</p>
@@ -130,7 +131,7 @@ function HouseholdSheet({ h, canWrite, canRules, onClose }: { h: Household; canW
   async function addRule(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const num = (k: string) => (f.get(k) ? Number(f.get(k)) : null);
+    const num = (k: string) => (f.get(k) ? Number(String(f.get(k)).replace(',', '.')) : null);
     await run(() => api(`/households/${h.id}/rules`, { method: 'POST', body: { validFrom: f.get('validFrom'), kind, fromNth: num('fromNth'), percentBp: num('percent') === null ? null : Math.round(num('percent')! * 100), capCents: kind === 'cap' ? parseEuro(String(f.get('cap') ?? '')) : null } }));
   }
 
@@ -170,7 +171,7 @@ function HouseholdSheet({ h, canWrite, canRules, onClose }: { h: Household; canW
             </div>
             {(kind === 'percent' || kind === 'children_free') && (
               <div className="form-row">
-                <div className="field"><label htmlFor="r-nth">{kind === 'percent' ? 'Ab dem … Mitglied' : 'Ab dem … Kind'}</label><input id="r-nth" name="fromNth" className="input num" inputMode="numeric" defaultValue={kind === 'percent' ? 2 : 3} /></div>
+                <div className="field"><label htmlFor="r-nth">{kind === 'percent' ? 'Ab dem … Mitglied' : 'Ab dem … Kind'}</label><input id="r-nth" key={kind} name="fromNth" className="input num" inputMode="numeric" defaultValue={kind === 'percent' ? 2 : 3} /></div>
                 {kind === 'percent' && <div className="field"><label htmlFor="r-pct">Rabatt in %</label><input id="r-pct" name="percent" className="input num" inputMode="decimal" defaultValue={25} /></div>}
               </div>
             )}

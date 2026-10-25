@@ -305,6 +305,7 @@ export const importRoutes: FastifyPluginAsyncZod = async (app) => {
         ['später erfasste Gruppenmitgliedschaften', () => tx.selectFrom('group_membership').select('id').where((eb) => eb.or([eb('member_id', 'in', members), eb('group_id', 'in', groupsOfRun)])).where((eb) => eb.or([eb('import_run_id', 'is', null), eb('import_run_id', '!=', run.id)])).executeTakeFirst()],
         ['Untergruppen der neuen Gruppen', () => tx.selectFrom('club_group').select('id').where('parent_id', 'in', groupsOfRun).executeTakeFirst()],
         ['Beitragsläufe der neuen Gruppen', () => tx.selectFrom('fee_run').select('id').where('group_id', 'in', groupsOfRun).executeTakeFirst()],
+        ['Haushalte', () => tx.selectFrom('household').select('id').where('payer_person_id', 'in', persons).executeTakeFirst()],
         ['Terminrückmeldungen', () => tx.selectFrom('participation').select('id').where('member_id', 'in', members).executeTakeFirst()],
         ['E-Mails', () => tx.selectFrom('delivery').select('id').where('person_id', 'in', persons).executeTakeFirst()],
         ['Dateien', () => tx.selectFrom('file').select('id').where('member_id', 'in', members).executeTakeFirst()],
