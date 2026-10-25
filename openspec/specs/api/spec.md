@@ -117,3 +117,10 @@ The system SHALL refuse a member change with 412 when the request carries an If-
 - **WHEN** one admin saves a member and a second admin then saves a change based on the version read before
 - **THEN** the second change is refused with 412 and the record keeps the first change
 
+### Requirement: Signed webhooks from an outbox
+The system SHALL queue a webhook delivery in the same transaction as every audited change of a subscribed topic, post it with an HMAC signature, and retry failed deliveries with backoff.
+
+#### Scenario: Receiver down
+- **WHEN** the receiver answers 500 to a member.created delivery
+- **THEN** the delivery stays queued with the attempt counted, and the next attempt after the backoff is signed and marked delivered on 2xx
+
