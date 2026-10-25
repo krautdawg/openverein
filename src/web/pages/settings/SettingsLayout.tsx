@@ -14,6 +14,7 @@ export function SettingsLayout({ me }: { me: Me }) {
     { to: '/einstellungen/zugaenge', label: 'Zugänge', show: me.permissions.settings !== 'none' },
     { to: '/einstellungen/rollen', label: 'Rollen', show: me.permissions.settings !== 'none' },
     { to: '/einstellungen/api', label: 'API-Schlüssel', show: me.permissions.api !== 'none' },
+    { to: '/einstellungen/export', label: 'Gesamtexport', show: me.roles.includes('Admin') },
     { to: '/einstellungen/protokoll', label: 'Protokoll', show: me.permissions.audit !== 'none' },
   ];
   return (

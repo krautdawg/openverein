@@ -26,6 +26,7 @@ import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
 import { PrivacySettings } from './pages/settings/PrivacySettings.tsx';
+import { FullExport } from './pages/settings/FullExport.tsx';
 import { CustomFieldSettings } from './pages/settings/CustomFieldSettings.tsx';
 import { SecuritySettings } from './pages/settings/SecuritySettings.tsx';
 import { Applications } from './pages/Applications.tsx';
@@ -125,6 +126,7 @@ function AdminApp() {
           <Route path="aufnahme" element={<ApplicationSettings me={me.data} />} />
           <Route path="import" element={<ImportSettings me={me.data} />} />
           <Route path="datenschutz" element={<PrivacySettings me={me.data} />} />
+          <Route path="export" element={<FullExport />} />
           <Route path="felder" element={<CustomFieldSettings me={me.data} />} />
           <Route path="sicherheit" element={<SecuritySettings me={me.data} />} />
           <Route path="zugaenge" element={<Users me={me.data} />} />

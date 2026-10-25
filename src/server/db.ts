@@ -617,7 +617,7 @@ export interface FileTable {
   legal_hold: Generated<boolean>;
   previous_id: string | null;
   superseded_at: Date | null;
-  purpose: Generated<'document' | 'receipt'>;
+  purpose: Generated<'document' | 'receipt' | 'export'>;
   uploaded_by: string | null;
   created_at: Generated<Date>;
 }

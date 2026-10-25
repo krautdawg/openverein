@@ -32,6 +32,7 @@ import { householdRoutes } from './routes/households.ts';
 import { receiptRoutes } from './routes/receipts.ts';
 import { duplicateRoutes } from './routes/duplicates.ts';
 import { viewRoutes } from './routes/views.ts';
+import { fullExportRoutes } from './routes/fullExport.ts';
 import { sepaRoutes } from './routes/sepa.ts';
 import { invoiceRoutes } from './routes/invoices.ts';
 import { groupRoutes } from './routes/groups.ts';
@@ -136,6 +137,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(receiptRoutes);
       await api.register(duplicateRoutes);
       await api.register(viewRoutes);
+      await api.register(fullExportRoutes);
     },
     { prefix: '/api/v1' },
   );
