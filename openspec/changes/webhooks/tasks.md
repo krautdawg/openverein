@@ -1,0 +1,4 @@
+- [x] tables and outbox trigger
+- [x] worker with signature, retries, SSRF guard
+- [x] routes, settings page
+- [x] tests, e2e, a11y

@@ -8,7 +8,7 @@ const ROUTES = [
   '/buchhaltung', '/buchhaltung/euer', '/buchhaltung/konten', '/buchhaltung/einstellungen', '/buchhaltung/export', '/buchhaltung/belege', '/buchhaltung/kassenbuch', '/buchhaltung/pauschalen',
   '/spenden', '/spenden/bestaetigungen', '/spenden/einstellungen', '/antraege', '/kommunikation', '/dokumente',
   '/einstellungen', '/einstellungen/email', '/einstellungen/aufnahme', '/einstellungen/import', '/einstellungen/datenschutz', '/einstellungen/export',
-  '/einstellungen/felder', '/einstellungen/sicherheit', '/einstellungen/zugaenge', '/einstellungen/rollen', '/einstellungen/api', '/einstellungen/protokoll',
+  '/einstellungen/felder', '/einstellungen/sicherheit', '/einstellungen/zugaenge', '/einstellungen/rollen', '/einstellungen/api', '/einstellungen/webhooks', '/einstellungen/protokoll',
 ];
 
 /** Serious and critical WCAG 2.2 A/AA findings on the page as it is now. */
