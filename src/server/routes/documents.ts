@@ -62,7 +62,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
   }
 
   async function loadFile(actor: Actor, id: string, mode: 'read' | 'write') {
-    const f = await db.selectFrom('file').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+    const f = await db.selectFrom('file').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'document').executeTakeFirst();
     if (!f) throw notFound('Datei');
     await assertPlace(actor, f, mode);
     // Place, retention and hold belong to the whole document; they change only through its current version.
@@ -182,7 +182,7 @@ export const documentRoutes: FastifyPluginAsyncZod = async (app) => {
       const place = { folder_id: req.query.folderId ?? null, member_id: req.query.memberId ?? null };
       if (place.folder_id && place.member_id) throw new Problem(400, 'validation', 'Entweder Ordner oder Mitglied.');
       await assertPlace(actor, place, 'read');
-      let q = db.selectFrom('file').selectAll().where('organization_id', '=', actor.organizationId).where('superseded_at', 'is', null);
+      let q = db.selectFrom('file').selectAll().where('organization_id', '=', actor.organizationId).where('superseded_at', 'is', null).where('purpose', '=', 'document');
       q = place.member_id ? q.where('member_id', '=', place.member_id) : q.where('member_id', 'is', null).where('folder_id', place.folder_id ? '=' : 'is', place.folder_id);
       return dtos(await q.orderBy('name').execute());
     },

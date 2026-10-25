@@ -184,3 +184,33 @@ export async function assertCashNotNegative(tx: Db, organizationId: string, acco
   if (low + deltaCents < 0) throw new Problem(409, 'cash-negative', 'Die Kasse würde ins Minus rutschen.', `Bestand an diesem Tag oder später: ${(low / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}. Erfasse zuerst die Einzahlung.`);
   void organizationId;
 }
+
+/** Lines for an income or expense booking: money against net per account, tax per rate on the rate's account. */
+/** `moneyAccountId: null` only validates the lines (receipts recorded before payment); `rateDate` is the supply date. */
+export async function bookingLines(tx: Db, organizationId: string, b: { kind: 'income' | 'expense'; date: string; rateDate?: string; moneyAccountId: string | null; lines: { grossCents: number; accountId: string; taxRateId?: string | null; sphere?: Sphere | null; costCenterId?: string | null; text?: string | null }[] }) {
+  const accounts = await tx.selectFrom('ledger_account').selectAll().where('organization_id', '=', organizationId).execute();
+  const rates = await tx.selectFrom('tax_rate').selectAll().where('organization_id', '=', organizationId).execute();
+  const centres = new Set((await tx.selectFrom('cost_center').select('id').where('organization_id', '=', organizationId).execute()).map((c) => c.id));
+  const rateDate = b.rateDate ?? b.date;
+  const money = accounts.find((a) => a.id === b.moneyAccountId && a.kind === 'money' && !a.retired_at);
+  if (!money && b.moneyAccountId !== null) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'moneyAccountId', message: 'Bitte ein Geldkonto (Kasse oder Bank) wählen.' }] });
+  const lines: Line[] = [];
+  let total = 0;
+  for (const [i, l] of b.lines.entries()) {
+    const acc = accounts.find((a) => a.id === l.accountId);
+    if (!acc || acc.retired_at || acc.kind !== b.kind) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.accountId`, message: b.kind === 'income' ? 'Bitte ein Einnahmenkonto wählen.' : 'Bitte ein Ausgabenkonto wählen.' }] });
+    const rate = l.taxRateId ? rates.find((r) => r.id === l.taxRateId) : null;
+    if (l.costCenterId && !centres.has(l.costCenterId)) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.costCenterId`, message: 'Kostenstelle nicht gefunden.' }] });
+    if (l.taxRateId && (!rate || rate.valid_from > rateDate || (rate.valid_to && rate.valid_to < rateDate))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.taxRateId`, message: 'Dieser Steuersatz galt an dem Tag nicht.' }] });
+    const sph = l.sphere ?? acc.default_sphere;
+    const { net, tax } = splitGross(l.grossCents, rate?.rate_bp ?? 0);
+    // Input tax is only refundable in the taxable spheres; elsewhere the gross amount is the expense.
+    const taxAccount = b.kind === 'income' ? rate?.output_account_id : sph === 'zweck' || sph === 'wirtschaft' ? rate?.input_account_id : null;
+    const side = (c: number) => (b.kind === 'income' ? { creditCents: c } : { debitCents: c });
+    lines.push({ accountId: acc.id, ...side(tax && taxAccount ? net : l.grossCents), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate?.id ?? null, text: l.text ?? null });
+    if (tax && taxAccount) lines.push({ accountId: taxAccount, ...side(tax), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate!.id, text: l.text ?? null });
+    total += l.grossCents;
+  }
+  if (money) lines.unshift({ accountId: money.id, ...(b.kind === 'income' ? { debitCents: total } : { creditCents: total }), sphere: lines[0]!.sphere });
+  return { lines, money: money!, total };
+}

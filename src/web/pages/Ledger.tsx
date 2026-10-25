@@ -16,23 +16,25 @@ import { parseEuro } from '../lib/money.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 type Sphere = (typeof SPHERES)[number];
-interface Account { id: string; number: string; name: string; kind: keyof typeof ACCOUNT_KIND_LABEL; defaultSphere: Sphere; datevNumber: string | null; hidden: boolean; retired: boolean; used: boolean }
-interface TaxRate { id: string; label: string; rateBp: number; validFrom: string; validTo: string | null }
+export interface Account { id: string; number: string; name: string; kind: keyof typeof ACCOUNT_KIND_LABEL; defaultSphere: Sphere; datevNumber: string | null; hidden: boolean; retired: boolean; used: boolean }
+export interface TaxRate { id: string; label: string; rateBp: number; validFrom: string; validTo: string | null }
 interface Entry { id: string; number: number; date: string; text: string; source: string; reversesNumber: number | null; reversedBy: number | null; createdBy: string | null; lines: { accountId: string; accountNumber: string; accountName: string; debitCents: number; creditCents: number; sphere: Sphere; costCenter: string | null; taxRate: string | null; text: string | null }[] }
 interface Euer { from: string; to: string; rows: { accountId: string; number: string; name: string; kind: 'income' | 'expense'; sphere: Sphere; netCents: number }[]; spheres: { sphere: Sphere; incomeCents: number; expenseCents: number; resultCents: number }[]; vat: { outputCents: number; inputCents: number }; totals: { incomeCents: number; expenseCents: number; resultCents: number }; warnings: { kind: string; message: string; href: string | null }[] }
-interface Settings { bankAccountId: string | null; cashAccountId: string | null; feeAccountId: string | null; otherIncomeAccountId: string | null; dunningAccountId: string | null; lockDate: string | null; bankAccounts: { id: string; name: string; ibanLast4: string; ledgerAccountId: string | null }[] }
+export interface Settings { bankAccountId: string | null; cashAccountId: string | null; feeAccountId: string | null; otherIncomeAccountId: string | null; dunningAccountId: string | null; lockDate: string | null; bankAccounts: { id: string; name: string; ibanLast4: string; ledgerAccountId: string | null }[] }
 
 const SOURCE_LABEL: Record<string, string> = { manual: 'Buchung', allocation: 'Zahlung', allocation_reversal: 'Zahlung zurückgenommen', reversal: 'Storno', receipt: 'Beleg', import: 'Import', donation: 'Spende' };
-const useAccounts = () => useQuery({ queryKey: ['ledger-accounts'], queryFn: () => api<Account[]>('/ledger/accounts') });
+export const useAccounts = () => useQuery({ queryKey: ['ledger-accounts'], queryFn: () => api<Account[]>('/ledger/accounts') });
 const year = () => todayLocal().slice(0, 4);
 
-function LedgerLayout({ me, children, action }: { me: Me; children: React.ReactNode; action?: React.ReactNode }) {
+export function LedgerLayout({ me, children, action }: { me: Me; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div className="page">
       <PageHead title="Buchhaltung" intro="Einnahmen-Überschuss-Rechnung nach Zufluss: Zahlungen auf Rechnungen werden automatisch gebucht, alles andere buchst Du hier. Gebuchtes wird nie geändert, nur storniert." actions={me.permissions.ledger === 'write' ? action : undefined} />
       <nav className="subnav" aria-label="Buchhaltung">
         <NavLink to="/buchhaltung" end>Journal</NavLink>
         <NavLink to="/buchhaltung/euer">EÜR</NavLink>
+        <NavLink to="/buchhaltung/belege">Belege</NavLink>
+        <NavLink to="/buchhaltung/kassenbuch">Kassenbuch</NavLink>
         <NavLink to="/buchhaltung/konten">Konten</NavLink>
         <NavLink to="/buchhaltung/export">Export</NavLink>
         <NavLink to="/buchhaltung/einstellungen">Einstellungen</NavLink>
@@ -87,7 +89,7 @@ export function Journal({ me }: { me: Me }) {
   );
 }
 
-function RangePicker({ from, to, onChange }: { from: string; to: string; onChange: (from: string, to: string) => void }) {
+export function RangePicker({ from, to, onChange }: { from: string; to: string; onChange: (from: string, to: string) => void }) {
   const y = Number(from.slice(0, 4));
   return (
     <div className="toolbar">
@@ -244,7 +246,7 @@ function BookingSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AccountSelect({ label, name, accounts, defaultValue, error }: { label: string; name: string; accounts: Account[]; defaultValue?: string; error?: string }) {
+export function AccountSelect({ label, name, accounts, defaultValue, error }: { label: string; name: string; accounts: Account[]; defaultValue?: string; error?: string }) {
   return (
     <div className="field">
       <label htmlFor={name}>{label}</label>
