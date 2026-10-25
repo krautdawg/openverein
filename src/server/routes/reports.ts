@@ -1,10 +1,13 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { isHonouredAnniversary, isRoundBirthday, sameDay } from '../../shared/honours.ts';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { requireActor } from '../auth/session.ts';
 import { csvCell } from './members.ts';
 import { displayName } from '../../shared/members.ts';
-import { applyScope, orgToday } from '../members/query.ts';
+import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
+import { audit } from '../audit.ts';
+import { notFound } from '../http/problem.ts';
 import { requireClubWide, requirePermission, restrictedFields, type Actor } from '../policy.ts';
 
 /** Age brackets of the DOSB/LSB census; the age is the year of the census minus the year of birth. */
@@ -81,12 +84,13 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
   });
 
   const honour = z.object({ memberId: z.uuid(), name: z.string(), date: z.string(), years: z.number() });
+  const awarded = z.object({ id: z.uuid(), memberId: z.uuid(), name: z.string(), title: z.string(), awardedOn: z.string(), decision: z.string().nullable() });
   app.get('/reports/honours', {
     schema: {
       tags: ['members'],
       summary: 'Ehrungen eines Jahres: Vereinsjubiläen (ab 10 Jahre, alle 5 Jahre) und runde Geburtstage der aktuellen Mitglieder',
       querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100) }),
-      response: { 200: z.object({ anniversaries: z.array(honour), birthdays: z.array(honour).nullable() }) },
+      response: { 200: z.object({ anniversaries: z.array(honour), birthdays: z.array(honour).nullable(), awarded: z.array(awarded) }) },
     },
   }, async (req) => {
     const actor = requireActor(req);
@@ -100,22 +104,46 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
       .where(applyScope(actor, today, 'read'));
     const rows = await base.execute();
     const nameOf = (r: (typeof rows)[number]) => displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name });
-    // Same day in the honour year; 29 February falls on 28 February in other years.
-    const sameDay = (d: string) => (d.slice(5) === '02-29' && !(year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? `${year}-02-28` : `${year}${d.slice(4)}`);
     const anniversaries = rows
       .filter((r) => r.join_date)
       .map((r) => ({ r, years: year - Number(r.join_date!.slice(0, 4)) }))
-      .filter(({ years }) => years >= 10 && years % 5 === 0)
-      .map(({ r, years }) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.join_date!), years }))
+      .filter(({ years }) => isHonouredAnniversary(years))
+      .map(({ r, years }) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.join_date!, year), years }))
       .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'de'));
-    const ROUND = new Set([18, 30, 40, 50, 60, 65, 70, 75, 80, 85, 90, 95]);
     const birthdays = restrictedFields(actor).has('birth_date')
       ? null
       : rows
           .filter((r) => r.birth_date && r.kind === 'natural')
-          .map((r) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.birth_date!), years: year - Number(r.birth_date!.slice(0, 4)) }))
-          .filter((h) => ROUND.has(h.years) || h.years >= 100)
+          .map((r) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.birth_date!, year), years: year - Number(r.birth_date!.slice(0, 4)) }))
+          .filter((h) => isRoundBirthday(h.years))
           .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'de'));
-    return { anniversaries, birthdays };
+    // Honours awarded in that year, for the members this user may see.
+    const visible = new Map(rows.map((r) => [r.id, nameOf(r)]));
+    const given = await db.selectFrom('honour').selectAll().where('organization_id', '=', actor.organizationId).where('awarded_on', '>=', `${year}-01-01`).where('awarded_on', '<=', `${year}-12-31`).orderBy('awarded_on').execute();
+    const awardedList = given.filter((h) => visible.has(h.member_id)).map((h) => ({ id: h.id, memberId: h.member_id, name: visible.get(h.member_id)!, title: h.title, awardedOn: h.awarded_on, decision: h.decision }));
+    return { anniversaries, birthdays, awarded: awardedList };
+  });
+
+  app.post('/members/:id/honours', { schema: { tags: ['members'], summary: 'Verliehene Ehrung eintragen (z. B. Ehrennadel), mit Datum und Beschluss', params: z.object({ id: z.uuid() }), body: z.object({ title: z.string().trim().min(1, 'Pflichtfeld.').max(200), awardedOn: z.iso.date(), decision: z.string().trim().max(500).nullish() }), response: { 201: awarded } } }, async (req, reply) => {
+    const actor = requireActor(req);
+    const { row } = await loadMemberRow(db, actor, req.params.id, 'write');
+    const h = await db.transaction().execute(async (tx) => {
+      const h = await tx.insertInto('honour').values({ organization_id: actor.organizationId, member_id: row.id, title: req.body.title, awarded_on: req.body.awardedOn, decision: req.body.decision ?? null, created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();
+      await audit(tx, actor.organizationId, actor, { action: 'member.honoured', entityType: 'member', entityId: row.id, diff: { honour: [null, `${h.title} (${h.awarded_on})`] } });
+      return h;
+    });
+    reply.status(201);
+    return { id: h.id, memberId: row.id, name: displayName({ kind: row.kind, firstName: row.first_name, lastName: row.last_name, companyName: row.company_name }), title: h.title, awardedOn: h.awarded_on, decision: h.decision };
+  });
+
+  app.delete('/members/:id/honours/:honourId', { schema: { tags: ['members'], summary: 'Eingetragene Ehrung entfernen (Tippfehler)', params: z.object({ id: z.uuid(), honourId: z.uuid() }) } }, async (req, reply) => {
+    const actor = requireActor(req);
+    const { row } = await loadMemberRow(db, actor, req.params.id, 'write');
+    await db.transaction().execute(async (tx) => {
+      const h = await tx.deleteFrom('honour').where('id', '=', req.params.honourId).where('member_id', '=', row.id).returningAll().executeTakeFirst();
+      if (!h) throw notFound('Ehrung');
+      await audit(tx, actor.organizationId, actor, { action: 'member.honour_removed', entityType: 'member', entityId: row.id, diff: { honour: [`${h.title} (${h.awarded_on})`, null] } });
+    });
+    return reply.status(204).send();
   });
 };

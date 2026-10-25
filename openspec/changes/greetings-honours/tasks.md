@@ -1,0 +1,3 @@
+- [x] rules, greeting run, templates
+- [x] honours register
+- [x] settings, page, tests, e2e

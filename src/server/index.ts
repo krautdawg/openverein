@@ -10,6 +10,7 @@ import { startMailWorker } from './mail/worker.ts';
 import { pruneJobs, startJobWorker } from './jobs/worker.ts';
 import { pruneWebhookDeliveries, startWebhookWorker } from './webhooks/worker.ts';
 import { runFeeSchedules } from './routes/fees.ts';
+import { pruneGreetings, runGreetings } from './members/greetings.ts';
 import { refreshMemberStatuses } from './members/status.ts';
 import { applyAgeMoves } from './members/ageMoves.ts';
 import { migrate } from './migrate.ts';
@@ -55,6 +56,8 @@ const refresh = () =>
     pruneIdempotencyKeys(db),
     pruneWebhookDeliveries(db),
     pruneJobs(db),
+    runGreetings(db).then((n) => n && app.log.info(`${n} greeting mails sent`)),
+    pruneGreetings(db),
     runFeeSchedules(db).then((n) => n && app.log.info(`${n} scheduled fee-run previews created`)),
   ]).catch((err) => app.log.error(err));
 await refresh();

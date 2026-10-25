@@ -72,7 +72,7 @@ export function MailSettings({ me }: { me: Me }) {
 
       <section className="section" aria-labelledby="texts">
         <h2 id="texts">Texte</h2>
-        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '70ch' }}>Diese Texte nutzt OpenVerein beim Rechnungs- und Mahnversand und für Einladungen. Eigene Vorlagen legst Du beim Schreiben einer E-Mail an.</p>
+        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '70ch' }}>Diese Texte nutzt OpenVerein beim Rechnungs- und Mahnversand, für Einladungen und Glückwünsche. Eigene Vorlagen legst Du beim Schreiben einer E-Mail an.</p>
         <ul className="timeline">
           {templates.data?.map((t) => (
             <li key={t.id} style={{ gridTemplateColumns: '1fr auto' }}>
