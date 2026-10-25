@@ -1,0 +1,4 @@
+- [x] ids endpoint
+- [x] job kind member_bulk
+- [x] UI: select all, confirm, e-mail
+- [x] Tests and e2e

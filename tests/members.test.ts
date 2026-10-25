@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { processJobs } from '../src/server/jobs/worker.ts';
 import { refreshMemberStatuses } from '../src/server/members/status.ts';
 import { client, enrollTotp, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
@@ -146,6 +147,29 @@ describe('groups', () => {
     const res = await admin.post('/members/bulk', { ids: [a.id, b.id, '01900000-0000-7000-8000-000000000000'], action: 'add_to_group', groupId: g, date: '2025-01-01' });
     expect(res.body.succeeded).toBe(1);
     expect(res.body.skipped).toHaveLength(2);
+  });
+
+  it('selects all filter matches and runs bulk actions over 100 members as a job', async () => {
+    const g = await group('Turnen', 'TUR');
+    const created: string[] = [];
+    // 101 members straight in the database: the API path for one member is tested elsewhere.
+    const org = await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow();
+    for (let i = 0; i < 101; i++) {
+      const person = await ctx.db.insertInto('person').values({ organization_id: org.id, kind: 'natural', last_name: `Masse${String(i).padStart(3, '0')}` }).returning('id').executeTakeFirstOrThrow();
+      const m = await ctx.db.insertInto('member').values({ organization_id: org.id, person_id: person.id, status: 'active', join_date: '2024-01-01', membership_number: `M${i}` }).returning('id').executeTakeFirstOrThrow();
+      created.push(m.id);
+    }
+    const all = (await admin.get('/members/ids?q=Masse')).body;
+    expect(all.total).toBe(101);
+    expect(all.sample).toEqual(['Masse000', 'Masse001', 'Masse002', 'Masse003', 'Masse004']);
+
+    const started = await admin.post('/members/bulk', { ids: all.ids, action: 'add_to_group', groupId: g, date: '2025-01-01' });
+    expect(started.status, JSON.stringify(started.body)).toBe(202);
+    expect(started.body.kind).toBe('member_bulk');
+    await processJobs(ctx.db);
+    const job = (await admin.get(`/jobs/${started.body.id}`)).body;
+    expect(job).toMatchObject({ status: 'done', label: 'Sammelaktion Mitglieder', result: { succeeded: 101, skipped: [] } });
+    expect((await admin.get(`/members?groupId=${g}&limit=200`)).body.total).toBe(101);
   });
 });
 
