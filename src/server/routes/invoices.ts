@@ -170,8 +170,6 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'read');
     await detail(actor, req.params.id); // scope check
-    // A direct-debit e-invoice carries the full IBAN: only for roles that may see IBANs.
-    if (restrictedFields(actor).has('iban')) throw forbidden('members.field.iban');
     const { pdf, number } = await storedPdf(db, actor.organizationId, req.params.id);
     reply.header('content-type', 'application/pdf').header('content-disposition', `inline; filename="${number}.pdf"`).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(pdf);
@@ -181,6 +179,8 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'read');
     await detail(actor, req.params.id); // scope check
+    // A direct-debit e-invoice carries the full IBAN: only for roles that may see IBANs.
+    if (restrictedFields(actor).has('iban')) throw forbidden('members.field.iban');
     const e = await db.selectFrom('invoice_einvoice').innerJoin('invoice', 'invoice.id', 'invoice_einvoice.invoice_id').select(['invoice_einvoice.xml', 'invoice.number']).where('invoice_einvoice.invoice_id', '=', req.params.id).where('invoice_einvoice.organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!e) throw notFound('E-Rechnung');
     return reply.header('content-type', 'application/xml; charset=utf-8').header('content-disposition', `attachment; filename="${e.number}.xml"`).header('cache-control', 'private, no-store').send(decryptBytes(e.xml));

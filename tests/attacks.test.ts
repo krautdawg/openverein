@@ -15,6 +15,7 @@ const OUTSIDE = { lastName: 'Zzyzxfussball', email: 'zzyzx@example.org', iban: '
 const INSIDE_IBAN = 'DE89370400440532013000';
 let adminCookie: string;
 let ids: string[] = [];
+let insideIds: string[] = [];
 let outsideMemberId: string;
 let outsidePersonId: string;
 let tennis: string;
@@ -26,16 +27,27 @@ beforeAll(async () => {
   await admin.patch('/organization', { street: 'Platz 1', postalCode: '12345', city: 'Musterstadt', iban: 'DE75512108001245126199', creditorId: 'DE98ZZZ09999999999' });
   tennis = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN', kind: 'division' })).body.id;
   const football = (await admin.post('/groups', { name: 'Fußball', shortCode: 'FB', kind: 'division' })).body.id;
-  const inside = (await admin.post('/members', { lastName: 'Innen', email: 'innen@example.org', joinDate: '2024-01-01', groupIds: [tennis] })).body;
+  const inside = (await admin.post('/members', { lastName: 'Innen', email: 'innen@example.org', street: 'Weg 2', postalCode: '12345', city: 'Musterstadt', joinDate: '2024-01-01', groupIds: [tennis] })).body;
   const outside = (await admin.post('/members', { firstName: 'Olga', lastName: OUTSIDE.lastName, email: OUTSIDE.email, phone: '0301234567', joinDate: '2024-01-01', groupIds: [football] })).body;
   expect(outside.id).toBeTruthy();
   await admin.post(`/members/${inside.id}/mandates`, { signedOn: '2024-01-01', accountHolder: 'Innen', iban: INSIDE_IBAN });
+  // An e-invoiced direct debit: its XML carries the payer's full IBAN.
+  await admin.patch('/organization', { email: 'kasse@example.org', vatId: 'DE123456789', einvoiceContactName: 'Erika Mustermann', einvoiceContactPhone: '+49 30 1234567' });
+  expect((await admin.patch(`/members/${inside.id}/payment-method`, { paymentMethod: 'direct_debit' })).status).toBe(200);
+  const patched = await admin.patch(`/members/${inside.id}`, { einvoiceFormat: 'xrechnung', buyerReference: '04011000-12345-67', einvoiceAddress: 'rechnung@innen.example' });
+  expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+  const einvoice = (await admin.post('/invoices', { memberId: inside.id, lines: [{ text: 'Hallennutzung', unitCents: 11900, taxRate: 19 }] })).body;
+  const issuedE = await admin.post(`/invoices/${einvoice.id}/issue`, {});
+  expect(issuedE.status, JSON.stringify(issuedE.body)).toBe(200);
+  const xml = await ctx.app.inject({ url: `/api/v1/invoices/${einvoice.id}/xrechnung.xml`, headers: { cookie: adminCookie } });
+  expect(xml.body).toContain(INSIDE_IBAN);
+  insideIds = [einvoice.id];
   const mandate = (await admin.post(`/members/${outside.id}/mandates`, { signedOn: '2024-01-01', accountHolder: 'Olga Zzyzxfussball', iban: OUTSIDE.iban })).body;
   const invoice = (await admin.post('/invoices', { memberId: outside.id, lines: [{ text: 'Beitrag', unitCents: 6000 }] })).body;
   await admin.post(`/invoices/${invoice.id}/issue`, {});
   outsideMemberId = outside.id;
   outsidePersonId = outside.personId;
-  ids = [outside.id, outside.personId, mandate?.id, invoice.id, football, inside.id].filter(Boolean);
+  ids = [outside.id, outside.personId, mandate?.id, invoice.id, football, ...insideIds, inside.id].filter(Boolean);
 });
 
 /** Every route of a method from the OpenAPI document, with path parameters filled in (lists also filtered by the outside member). */
@@ -71,6 +83,9 @@ describe('permission attacks', () => {
   it('a division lead sees nothing of another division on any GET route, and no IBAN at all', async () => {
     const lead = await userWithRole(ctx.app, adminCookie, 'Abteilungsleitung', [tennis]);
     expect(await scan(lead, [OUTSIDE.lastName, OUTSIDE.email, OUTSIDE.iban, INSIDE_IBAN])).toEqual([]);
+    // The PDF of an in-scope invoice stays readable (it shows only the club's IBAN); the XML with the payer's IBAN does not.
+    expect((await ctx.app.inject({ url: `/api/v1/invoices/${insideIds[0]}/pdf`, headers: { cookie: lead } })).statusCode).toBe(200);
+    expect((await ctx.app.inject({ url: `/api/v1/invoices/${insideIds[0]}/xrechnung.xml`, headers: { cookie: lead } })).statusCode).toBe(403);
   });
 
   it('a trainer and the tax adviser never see an IBAN', async () => {
@@ -82,7 +97,7 @@ describe('permission attacks', () => {
 
   it('a division lead cannot change or delete anything of another division', async () => {
     const lead = await userWithRole(ctx.app, adminCookie, 'Abteilungsleitung', [tennis], 'lead2@example.org');
-    const outsideIds = ids.filter((_, i) => i < ids.length - 1); // the last id is the lead's own division member
+    const outsideIds = ids.slice(0, ids.length - insideIds.length - 1); // the rest belongs to the lead's own division
     const accepted: string[] = [];
     for (const method of ['patch', 'put', 'delete', 'post'] as const) {
       for (const url of urls(method, outsideIds).filter((u) => /[0-9a-f]{8}-/.test(u))) {
