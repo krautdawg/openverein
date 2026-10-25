@@ -118,10 +118,11 @@ export function Events({ me }: { me: Me }) {
         </div>
       ) : (
         <div className="month" role="group" aria-label={`${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`}>
-          {WEEKDAYS.map((w) => <div key={w} className="month-head" role="columnheader">{w}</div>)}
+          {/* Weekday heads are visual only; each day says its weekday to screen readers. */}
+          {WEEKDAYS.map((w) => <div key={w} className="month-head" aria-hidden>{w}</div>)}
           {grid.map((d) => (
             <div key={d} className="month-day" data-other={d.slice(0, 7) !== month} data-today={d === today} onDoubleClick={() => canWrite && setCreating(d)}>
-              <span className="month-date num">{Number(d.slice(8))}</span>
+              <span className="month-date num"><span className="sr-only">{WEEKDAYS[(new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7]}, </span>{Number(d.slice(8))}</span>
               {(birthdays.data ?? []).filter((b) => b.date === d).map((b) => <span key={b.memberId} className="month-birthday" title={`${b.name} wird ${b.age}`}><Cake size={12} aria-hidden /> {b.name.split(', ').reverse().join(' ')}</span>)}
               {(byDate.get(d) ?? []).slice(0, 4).map((o) => (
                 <button key={o.eventId} className="month-event" style={courtVar(o.color)} onClick={() => open(o)}>

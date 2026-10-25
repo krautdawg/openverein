@@ -27,6 +27,8 @@ p { margin: 0; }
 .muted { color: var(--ink-2); }
 .meta { color: var(--ink-3); font-size: var(--text-xs); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* The skip link shows itself when it gets focus (WCAG 2.4.7). */
+.skip-link:focus { position: fixed; z-index: 100; top: var(--s-2); left: var(--s-2); width: auto; height: auto; margin: 0; clip: auto; overflow: visible; white-space: normal; padding: var(--s-2) var(--s-3); background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius); }
 kbd {
   font-family: var(--font-text);
   font-size: 0.75rem;
@@ -85,7 +87,7 @@ kbd {
   cursor: pointer;
 }
 .rail-search:hover { color: var(--rail-ink); border-color: rgb(233 239 246 / 0.4); }
-.rail-search kbd { margin-left: auto; }
+.rail-search kbd { margin-left: auto; opacity: 1; }
 .rail nav { display: flex; flex-direction: column; gap: 2px; }
 .rail-link {
   display: flex; align-items: center; gap: var(--s-3);
@@ -495,7 +497,7 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .compose-preview article { margin-top: var(--s-3); max-width: 62ch; }
 .compose-preview h3 { margin: 0 0 var(--s-3); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-2); }
-.pill-button { cursor: pointer; border: 1px solid var(--line-strong); font-family: ui-monospace, monospace; font-size: var(--text-xs); }
+.pill-button { cursor: pointer; min-height: 24px; /* WCAG 2.5.8 target size */ border: 1px solid var(--line-strong); font-family: ui-monospace, monospace; font-size: var(--text-xs); }
 .pill-button:hover { border-color: var(--ink); }
 @media (max-width: 900px) {
   .compose { grid-template-columns: 1fr; }
