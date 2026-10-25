@@ -894,6 +894,24 @@ export interface Database {
   household_rule: HouseholdRuleTable;
   receipt: ReceiptTable;
   receipt_line: ReceiptLineTable;
+  job: JobTable;
+}
+
+export type JobKind = 'full_export';
+export interface JobTable {
+  id: Generated<string>;
+  organization_id: string;
+  kind: JobKind;
+  status: Generated<'queued' | 'running' | 'done' | 'failed'>;
+  progress: Generated<number>;
+  detail: string | null;
+  error: string | null;
+  result_file_id: string | null;
+  attempts: Generated<number>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  claimed_at: Date | null;
+  finished_at: Date | null;
 }
 
 export interface HouseholdTable {

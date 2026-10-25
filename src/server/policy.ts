@@ -93,6 +93,9 @@ export function restrictedFields(actor: Actor, module: Module = 'members'): Set<
   return new Set(RESTRICTABLE_FIELDS.filter((f) => readers.every((g) => g.restricted.includes(f))));
 }
 
+/** A signed-in user holding the built-in admin role for the whole club. */
+export const isClubAdmin = (actor: Actor) => actor.kind === 'user' && actor.grants.some((g) => g.builtinKey === 'admin' && g.scope === null);
+
 export async function loadGrants(db: Db, userId: string): Promise<Grant[]> {
   const rows = await db
     .selectFrom('role_grant')

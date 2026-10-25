@@ -7,6 +7,7 @@ import { nav } from '../lib/nav.ts';
 import type { Command } from '../lib/commands.ts';
 import type { Me } from '../../shared/auth.ts';
 import { CommandPalette } from './CommandPalette.tsx';
+import { JobTray } from './JobTray.tsx';
 import { StepUpPrompt } from './StepUp.tsx';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -93,6 +94,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
           <Outlet />
         </main>
       </div>
+      <JobTray />
       <StepUpPrompt />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} go={navigate} />
     </div>

@@ -1,6 +1,6 @@
 # Full export format (schema version 1)
 
-Admins create the export under Einstellungen → Gesamtexport (`POST /api/v1/exports/full`, fresh second factor required). It is stored encrypted for 7 days (and deleted when a person is anonymised); a download needs a fresh second factor too (`POST /api/v1/exports/full/:id/link` returns a link valid 60 seconds). Every creation and download is audit-logged. The whole export is read in one consistent snapshot.
+Admins create the export under Einstellungen → Gesamtexport (`POST /api/v1/exports/full`, fresh second factor required). It runs as a background job: the call answers 202 with the job, `GET /api/v1/jobs/:id` reports progress and, when done, `resultFileId`. It is stored encrypted for 7 days (and deleted when a person is anonymised); a download needs a fresh second factor too (`POST /api/v1/exports/full/:id/link` returns a link valid 60 seconds). Every creation and download is audit-logged. The whole export is read in one consistent snapshot.
 
 ## Layout
 
