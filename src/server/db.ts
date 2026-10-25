@@ -146,6 +146,7 @@ export interface MemberTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   import_run_id: Generated<string | null>;
+  household_id: string | null;
 }
 
 export interface ClubGroupTable {
@@ -310,6 +311,7 @@ export interface InvoiceLineTable {
   total_cents: number;
   tax_rate: ColumnType<string, string | number | undefined, string | number>;
   assessment_id: string | null;
+  discount: Generated<boolean>;
 }
 
 export interface AssessmentTable {
@@ -874,6 +876,28 @@ export interface Database {
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
   idempotency_key: IdempotencyKeyTable;
+  household: HouseholdTable;
+  household_rule: HouseholdRuleTable;
+}
+
+export interface HouseholdTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  payer_person_id: string;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface HouseholdRuleTable {
+  id: Generated<string>;
+  household_id: string;
+  valid_from: string;
+  kind: 'none' | 'percent' | 'cap' | 'children_free';
+  from_nth: number | null;
+  percent_bp: number | null;
+  cap_cents: number | null;
+  created_at: Generated<Date>;
 }
 
 export type CustomFieldType = 'text' | 'multiline' | 'number' | 'date' | 'checkbox' | 'select' | 'multiselect';

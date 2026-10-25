@@ -106,10 +106,20 @@ export function FeeRunDetail({ me }: { me: Me }) {
     if (!r) return { invoices: 0, total: 0 };
     let invoices = 0;
     let total = 0;
+    // Household members share one invoice; the discount shown is the preview's (it is recomputed when posting).
+    const inHousehold = new Map(r.households.flatMap((h) => h.memberIds.map((id) => [id, h.householdId] as const)));
+    const householdSums = new Map<string, number>();
     for (const m of r.members) {
       const sum = m.lines.filter((l) => !excluded.has(l.key)).reduce((s, l) => s + l.amountCents, 0);
-      if (sum > 0) invoices++;
+      const hh = inHousehold.get(m.memberId);
+      if (hh) householdSums.set(hh, (householdSums.get(hh) ?? 0) + sum);
+      else if (sum > 0) invoices++;
       total += sum;
+    }
+    for (const h of r.households) {
+      const sum = householdSums.get(h.householdId) ?? 0;
+      if (sum - h.discountCents > 0) invoices++;
+      total -= Math.min(h.discountCents, sum);
     }
     return { invoices, total };
   }, [r, excluded]);
@@ -191,6 +201,21 @@ export function FeeRunDetail({ me }: { me: Me }) {
               <h2 id="w"><AlertTriangle size={18} aria-hidden style={{ verticalAlign: '-2px', color: 'var(--warn)' }} /> Hinweise ({withWarnings.length})</h2>
               <ul className="warnings">
                 {withWarnings.map((m) => <li key={m.memberId}><Link to={`/mitglieder/${m.memberId}`}>{m.name}</Link>: {m.warnings.join(' ')}</li>)}
+              </ul>
+            </section>
+          )}
+
+          {r.households.length > 0 && (
+            <section className="section" style={{ marginTop: 'var(--s-5)' }} aria-labelledby="hh">
+              <h2 id="hh">Haushalte ({r.households.length})</h2>
+              <p className="muted" style={{ marginBottom: 'var(--s-3)' }}>Eine Rechnung je Haushalt an die zahlende Person, mit dem Familienrabatt als eigener Position.</p>
+              <ul className="timeline">
+                {r.households.map((h) => (
+                  <li key={h.householdId} style={{ gridTemplateColumns: '1fr auto' }}>
+                    <span><span className="name">{h.name}</span> <span className="meta">· zahlt: {h.payerName} · {h.memberIds.length} Mitglieder · {h.label}</span></span>
+                    <span className="num">{h.discountCents ? `− ${euro(h.discountCents)}` : '–'}</span>
+                  </li>
+                ))}
               </ul>
             </section>
           )}

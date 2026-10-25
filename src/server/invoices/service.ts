@@ -147,7 +147,7 @@ const euroText = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'curr
 export async function createDraft(
   tx: Db,
   v: { organizationId: string; kind: InvoiceKind; personId: string; memberId: string | null; dueDate?: string | null; coverText?: string | null; feeRunId?: string | null; cancelsInvoiceId?: string | null; createdBy: string | null },
-  lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null }[],
+  lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null; discount?: boolean }[],
 ) {
   const inv = await tx
     .insertInto('invoice')
@@ -168,7 +168,7 @@ export async function createDraft(
   return inv.id;
 }
 
-export async function insertLines(tx: Db, organizationId: string, invoiceId: string, lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null }[]) {
+export async function insertLines(tx: Db, organizationId: string, invoiceId: string, lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null; discount?: boolean }[]) {
   let position = 1;
   for (const l of lines) {
     await tx
@@ -183,6 +183,7 @@ export async function insertLines(tx: Db, organizationId: string, invoiceId: str
         total_cents: Math.round(l.quantity * l.unitCents),
         tax_rate: l.taxRate,
         assessment_id: l.assessmentId ?? null,
+        discount: l.discount ?? false,
       })
       .execute();
   }
@@ -207,7 +208,7 @@ export async function cancelInvoice(tx: Db, organizationId: string, invoiceId: s
   const cancelId = await createDraft(
     tx,
     { organizationId, kind: 'cancellation', personId: inv.recipient_person_id, memberId: inv.member_id, cancelsInvoiceId: inv.id, feeRunId: inv.fee_run_id, createdBy },
-    lines.map((l) => ({ text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, taxRate: Number(l.tax_rate) })),
+    lines.map((l) => ({ text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, taxRate: Number(l.tax_rate), discount: l.discount })),
   );
   const issued = await issueInvoice(tx, organizationId, cancelId, issueDate);
   await tx.updateTable('invoice').set({ status: 'cancelled', updated_at: new Date() }).where('id', '=', inv.id).execute();

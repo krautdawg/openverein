@@ -19,6 +19,7 @@ import { Communication } from './pages/Communication.tsx';
 import { Documents } from './pages/Documents.tsx';
 import { Accounts, EuerReport, Journal, LedgerExports, LedgerSettings } from './pages/Ledger.tsx';
 import { DonationReceipts, Donations, DonationSettingsPage } from './pages/Donations.tsx';
+import { Households } from './pages/Households.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
@@ -80,6 +81,7 @@ function AdminApp() {
       <Route element={<Shell me={me.data} demo={!!cfg.data?.demo || me.data.organization.isDemo} />}>
         <Route index element={<Overview me={me.data} />} />
         <Route path="/mitglieder" element={<Members me={me.data} />} />
+        <Route path="/mitglieder/haushalte" element={<Households me={me.data} />} />
         <Route path="/mitglieder/:id" element={<Members me={me.data} />} />
         <Route path="/gruppen" element={<Groups me={me.data} />} />
         <Route path="/gruppen/:id" element={<Groups me={me.data} />} />
