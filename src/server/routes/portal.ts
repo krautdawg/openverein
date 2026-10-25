@@ -369,6 +369,27 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       .send(await getBlob(f.sha256));
   });
 
+  // A donation receipt is the donor's own tax document: only for memberships under their own address, never via the household payer.
+  const ownPersons = (u: PortalUser) => u.members.filter((m) => !m.viaHousehold).map((m) => m.personId);
+
+  app.get('/portal/donation-receipts', { schema: { tags, summary: 'Meine Zuwendungsbestätigungen', security: [], response: { 200: z.array(z.object({ id: z.uuid(), number: z.string(), issuedOn: z.string(), totalCents: z.number(), status: z.enum(['issued', 'cancelled']) })) } } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const persons = ownPersons(u);
+    if (!persons.length) return [];
+    const rows = await db.selectFrom('donation_receipt').select(['id', 'number', 'issued_on', 'total_cents', 'status']).where('organization_id', '=', u.organizationId).where('person_id', 'in', persons).orderBy('issued_on', 'desc').execute();
+    return rows.map((r) => ({ id: r.id, number: r.number, issuedOn: r.issued_on, totalCents: Number(r.total_cents), status: r.status }));
+  });
+
+  app.get('/portal/donation-receipts/:id/pdf', { schema: { tags, summary: 'Zuwendungsbestätigung als PDF', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const persons = ownPersons(u);
+    const r = persons.length ? await db.selectFrom('donation_receipt').select(['number', 'pdf', 'status']).where('id', '=', req.params.id).where('organization_id', '=', u.organizationId).where('person_id', 'in', persons).executeTakeFirst() : undefined;
+    if (!r) throw notFound('Zuwendungsbestätigung');
+    // A cancelled receipt is no longer valid for the tax office; it stays listed but is not handed out.
+    if (r.status !== 'issued') throw new Problem(410, 'cancelled', 'Diese Bestätigung wurde storniert.');
+    return reply.header('content-type', 'application/pdf').header('content-disposition', `inline; filename="${r.number}.pdf"`).header('cache-control', 'private, no-store').send(r.pdf);
+  });
+
   // ---------- Changes and resignation ----------
 
   app.post(
