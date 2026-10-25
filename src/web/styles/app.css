@@ -713,3 +713,5 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 .poll-bars .budget-line { grid-column: 1 / -1; }
 .portal-poll { display: grid; gap: var(--s-2); padding: var(--s-3) 0; border-top: 1px solid var(--line); }
 .portal-poll:first-of-type { border-top: 0; }
+.loan { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.loan [data-over] { color: var(--danger); }

@@ -7,6 +7,7 @@ import { RETENTION_LABEL, type FileDto, type Folder } from '../../shared/documen
 import { Field } from '../components/Field.tsx';
 import { InlineEdit } from '../components/InlineEdit.tsx';
 import { PageHead } from '../components/PageHead.tsx';
+import { DocumentsNav } from './Inventory.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError, uploadAll, uploadFile } from '../lib/api.ts';
 import { bytes } from '../lib/format.ts';
@@ -65,6 +66,7 @@ export function Documents({ me }: { me: Me }) {
         )}
       />
 
+      <DocumentsNav />
       <nav className="crumbs" aria-label="Ordnerpfad">
         {trail.length ? <button className="linklike" onClick={() => open()}>Alle Dokumente</button> : <span aria-current="page">Alle Dokumente</span>}
         {trail.map((f, i) => (

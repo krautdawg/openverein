@@ -920,6 +920,34 @@ export interface Database {
   budget_line: BudgetLineTable;
   poll: PollTable;
   poll_vote: PollVoteTable;
+  inventory_item: InventoryItemTable;
+  inventory_loan: InventoryLoanTable;
+}
+
+export interface InventoryItemTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  category: string | null;
+  location: string | null;
+  serial: string | null;
+  quantity: Generated<number>;
+  value_cents: number | null;
+  note: string | null;
+  archived_at: Date | null;
+  created_at: Generated<Date>;
+}
+export interface InventoryLoanTable {
+  id: Generated<string>;
+  organization_id: string;
+  item_id: string;
+  member_id: string;
+  quantity: Generated<number>;
+  lent_on: string;
+  due_on: string | null;
+  returned_on: string | null;
+  note: string | null;
+  lent_by: string | null;
 }
 
 export interface PollTable {
