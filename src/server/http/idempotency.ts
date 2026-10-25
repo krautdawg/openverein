@@ -49,7 +49,7 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
     if (!inserted) {
       const prior = await db.selectFrom('idempotency_key').selectAll().where('organization_id', '=', req.actor.organizationId).where('actor', '=', actor).where('key', '=', key).executeTakeFirstOrThrow();
       if (prior.route !== route || prior.request_hash !== hash) throw new Problem(422, 'idempotency-key-reused', 'Dieser Idempotency-Key gehört zu einer anderen Anfrage.');
-      if (prior.status_code === null) throw new Problem(409, 'idempotency-in-progress', 'Diese Anfrage wird gerade schon bearbeitet.');
+      if (prior.status_code === null) throw new Problem(409, 'idempotency-in-progress', 'Diese Anfrage wird gerade bearbeitet oder ihr Ergebnis ist unklar.', 'Prüfe, ob die Buchung angekommen ist, bevor Du es noch einmal versuchst; eine neue Anfrage braucht dann einen neuen Schlüssel.');
       reply.header('idempotent-replayed', 'true');
       return reply.status(prior.status_code).type(prior.content_type ?? 'application/json').send(prior.response);
     }
@@ -61,21 +61,17 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
     if (!id || !req.actor) return payload;
     req.idempotency = undefined;
     const q = db.updateTable('idempotency_key').where('organization_id', '=', req.actor.organizationId).where('actor', '=', id.actor).where('key', '=', id.key);
-    if (reply.statusCode >= 200 && reply.statusCode < 300 && (typeof payload === 'string' || payload === null || payload === undefined)) {
-      await q.set({ status_code: reply.statusCode, response: (payload as string | null) ?? '', content_type: String(reply.getHeader('content-type') ?? 'application/json') }).execute();
-    } else {
+    if (reply.statusCode >= 200 && reply.statusCode < 300) {
+      if (typeof payload !== 'string' && payload !== null && payload !== undefined) req.log.warn({ route: req.routeOptions.url }, 'idempotent route sent a non-text body; replay disabled');
+      else await q.set({ status_code: reply.statusCode, response: (payload as string | null) ?? '', content_type: String(reply.getHeader('content-type') ?? 'application/json') }).execute().catch((err) => req.log.error({ err }, 'idempotency result not stored; key stays pending'));
+    } else if (reply.statusCode < 500) {
+      // A refusal changed nothing: the key is free for the corrected retry.
       await db.deleteFrom('idempotency_key').where('organization_id', '=', req.actor.organizationId).where('actor', '=', id.actor).where('key', '=', id.key).execute();
     }
+    // 5xx: the write may have committed before the failure; the key stays pending (outcome unknown) until it expires.
     return payload;
   });
 
-  // A crash between preHandler and onSend would leave a pending row; it expires like the rest.
-  app.addHook('onError', async (req) => {
-    const id = req.idempotency;
-    if (!id || !req.actor) return;
-    req.idempotency = undefined;
-    await db.deleteFrom('idempotency_key').where('organization_id', '=', req.actor.organizationId).where('actor', '=', id.actor).where('key', '=', id.key).execute();
-  });
 }
 
 export async function pruneIdempotencyKeys(db: Db) {

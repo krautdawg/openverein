@@ -28,9 +28,18 @@ describe('idempotency keys', () => {
     expect((await createInvoice('retry-0001', 7000)).statusCode).toBe(422);
   });
 
-  it('frees the key after a failed attempt', async () => {
-    const bad = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices', headers: { cookie, 'idempotency-key': 'retry-0002' }, payload: { memberId, lines: [] } });
-    expect(bad.statusCode).toBe(400);
+  it('frees the key after a refusal inside the handler, keeps a pending key busy, and expires keys', async () => {
+    const bad = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices', headers: { cookie, 'idempotency-key': 'retry-0002' }, payload: { memberId: '00000000-0000-7000-8000-000000000000', lines: [{ text: 'x', unitCents: 100 }] } });
+    expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+    expect(bad.statusCode).toBeLessThan(500);
     expect((await createInvoice('retry-0002')).statusCode).toBe(201);
+
+    const first = await createInvoice('retry-0003');
+    await ctx.db.updateTable('idempotency_key').set({ status_code: null }).where('key', '=', 'retry-0003').execute();
+    expect((await createInvoice('retry-0003')).statusCode).toBe(409);
+    await ctx.db.updateTable('idempotency_key').set({ created_at: new Date(Date.now() - 25 * 3_600_000) }).where('key', '=', 'retry-0003').execute();
+    const fresh = await createInvoice('retry-0003');
+    expect(fresh.statusCode).toBe(201);
+    expect(fresh.json().id).not.toBe(first.json().id);
   });
 });
