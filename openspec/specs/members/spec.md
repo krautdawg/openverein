@@ -191,3 +191,10 @@ The system SHALL let a user select all members matching the current filter, conf
 - **WHEN** an admin adds 101 filtered members to a group
 - **THEN** the API answers 202 with a job, and the finished job reports 101 succeeded and none skipped
 
+### Requirement: Annual census for the sports federation
+The system SHALL report the members on 1 January of a chosen year by age bracket and gender, for the whole club and per division, using join and exit dates rather than today's status.
+
+#### Scenario: Member who left last year
+- **WHEN** a member left on 30 June of the previous year
+- **THEN** they are not counted in the census for 1 January of this year
+
