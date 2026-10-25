@@ -25,7 +25,7 @@ npm run seed:demo    # loads "SV Lindenhof 1921 e.V." with 150 fictitious member
 npm run dev
 ```
 
-Sign in with `demo@openverein.example` / `verein-demo-2026`. `npm run seed:demo -- --reset` wipes a demo instance and loads it again; it refuses to touch an instance that holds a real club. With `DEMO_MODE=true` the server loads the demo by itself, resets it every `DEMO_RESET_HOURS` (default 24), sends no real mail, shows a demo banner and watermarks every PDF, and locks accounts, roles, API keys and uploads so a public demo stays usable for everyone:
+Sign in with `demo@openverein.example` / `verein-demo-2026`. `npm run seed:demo -- --reset` wipes a demo instance and loads it again; it refuses to touch an instance that holds a real club. With `DEMO_MODE=true` the server loads the demo by itself, resets it every `DEMO_RESET_HOURS` (default 24), sends no real mail, shows a demo banner and watermarks every PDF, and locks accounts, roles, API keys, uploads and imports so a public demo stays usable for everyone. Club settings, texts and members stay editable for visitors until the next reset. The member portal shows the sign-in code on screen instead of mailing it. A server with `DEMO_MODE=true` refuses to start on an instance that holds a real club:
 
 ```sh
 DEMO_MODE=true docker compose --profile app up --build

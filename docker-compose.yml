@@ -25,6 +25,7 @@ services:
       PUBLIC_URL: http://localhost:3300
       COOKIE_SECURE: "false"
       DEMO_MODE: ${DEMO_MODE:-false}
+      DEMO_RESET_HOURS: ${DEMO_RESET_HOURS:-24}
     ports: ["3300:3300"]
     volumes: [files:/data]
     depends_on:

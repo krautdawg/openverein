@@ -1,7 +1,8 @@
 import { sql } from 'kysely';
 import { buildApp } from '../app.ts';
 import type { Db } from '../db.ts';
-import { DEMO_LOGIN } from './login.ts';
+import { MIGRATIONS_TABLE } from '../migrate.ts';
+import { DEMO_LOGIN, DEMO_SEED_KEY } from './login.ts';
 
 export { DEMO_LOGIN };
 
@@ -34,7 +35,7 @@ const STREETS = ['Lindenallee', 'Am Sportplatz', 'Ringstraße', 'Gartenweg', 'Ha
 
 /** Empties every table (demo instances only). Audit rows are append-only, so triggers are bypassed for this one statement. */
 export async function wipe(db: Db) {
-  const tables = await sql<{ t: string }>`select tablename as t from pg_tables where schemaname = 'public' and tablename <> 'schema_migrations'`.execute(db);
+  const tables = await sql<{ t: string }>`select tablename as t from pg_tables where schemaname = 'public' and tablename <> ${MIGRATIONS_TABLE}`.execute(db);
   await db.transaction().execute(async (tx) => {
     await sql`set local session_replication_role = replica`.execute(tx);
     await sql.raw(`truncate ${tables.rows.map((r) => `"${r.t}"`).join(', ')} cascade`).execute(tx);
@@ -54,7 +55,8 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
   const app = await buildApp(db, { serveWeb: false, authRateLimit: 1_000_000 });
   await app.ready();
   try {
-    const setup = await app.inject({ method: 'POST', url: '/api/v1/setup', payload: { clubName: CLUB, name: 'Erika Mustermann', ...DEMO_LOGIN } });
+    // The key marks the club as demo inside the setup transaction; in demo mode nobody else may run setup.
+    const setup = await app.inject({ method: 'POST', url: '/api/v1/setup', headers: { 'x-demo-seed': DEMO_SEED_KEY }, payload: { clubName: CLUB, name: 'Erika Mustermann', ...DEMO_LOGIN } });
     if (setup.statusCode !== 201 && setup.statusCode !== 200) throw new Error(`Setup fehlgeschlagen: ${setup.body}`);
     const cookie = String(setup.headers['set-cookie']).split(';')[0]!;
     const call = async (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) => {
@@ -62,8 +64,7 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
       if (r.statusCode >= 400) throw new Error(`${method} ${url}: ${r.statusCode} ${r.body}`);
       return r.body ? r.json() : null;
     };
-    await db.updateTable('organization').set({ is_demo: true }).execute();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date());
     const year = today.slice(0, 4);
     await call('PATCH', '/organization', { street: 'Am Sportplatz 1', postalCode: '12345', city: 'Lindenhof', email: 'vorstand@sv-lindenhof.example', iban: testIban('37040044', 532013000), bic: 'COBADEFFXXX', bankName: 'Testbank', creditorId: 'DE98ZZZ09999999999', mailFromName: CLUB });
 
@@ -112,18 +113,21 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
       if (r() < 0.1) {
         const noticeDate = date(Math.max(Number(joinDate.slice(0, 4)), Number(year) - 2), Number(year));
         const exitDate = `${Number(noticeDate.slice(0, 4))}-12-31`;
-        if (noticeDate > joinDate) await call('POST', `/members/${m.id}/resign`, { noticeDate, exitDate, exitReason: pick(['Umzug', 'keine Zeit mehr', 'Studium']) }).catch(() => undefined);
+        if (noticeDate > joinDate) await call('POST', `/members/${m.id}/resign`, { noticeDate, exitDate, exitReason: pick(['Umzug', 'keine Zeit mehr', 'Studium']) });
       }
       members.push({ id: m.id, age, debit });
     }
 
     // This year's fees: one posted run, and about half of the transfers already paid.
-    const run = await call('POST', '/fee-runs', { until: `${year}-12-31`, issueDate: `${year}-02-01`, dueDate: `${year}-03-01` });
+    // Issued on 1 February, or today early in the year; payments never lie in the future.
+    const issueDate = `${year}-02-01` < today ? `${year}-02-01` : today;
+    const run = await call('POST', '/fee-runs', { until: `${year}-12-31`, issueDate, dueDate: `${year}-03-01` > issueDate ? `${year}-03-01` : today });
     await call('POST', `/fee-runs/${run.id}/post`, {});
     const invoices = (await call('GET', '/invoices?status=open&limit=200')).items as { id: string; openCents: number; memberId: string }[];
     for (const inv of invoices) {
       const m = members.find((x) => x.id === inv.memberId);
-      if (m && !m.debit && r() < 0.55) await call('POST', `/invoices/${inv.id}/payments`, { amountCents: inv.openCents, bookedOn: `${year}-02-${String(10 + Math.floor(r() * 18)).padStart(2, '0')}`, method: 'transfer' });
+      const bookedOn = `${year}-02-${String(10 + Math.floor(r() * 18)).padStart(2, '0')}`;
+      if (m && !m.debit && r() < 0.55) await call('POST', `/invoices/${inv.id}/payments`, { amountCents: inv.openCents, bookedOn: bookedOn < today ? bookedOn : today, method: 'transfer' });
     }
 
     // Calendar: trainings, matches, board meetings.

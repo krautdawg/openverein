@@ -4,7 +4,10 @@ android {
     namespace = "org.openverein.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "org.openverein.app"
+        // Each club publishes its own app: id and name come from the build environment (see docs/mobile.md).
+        applicationId System.getenv("OPENVEREIN_APP_ID") ?: "org.openverein.app"
+        resValue "string", "app_name", System.getenv("OPENVEREIN_APP_NAME") ?: "OpenVerein"
+        resValue "string", "title_activity_main", System.getenv("OPENVEREIN_APP_NAME") ?: "OpenVerein"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode (System.getenv("BUILD_NUMBER") ?: "1") as int

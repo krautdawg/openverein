@@ -4,13 +4,15 @@ The apps wrap the same web build with [Capacitor](https://capacitorjs.com). They
 
 ## Configuration
 
-`capacitor.config.ts` reads three variables at build time:
+Build-time variables:
 
-| Variable | Meaning | Example |
-|---|---|---|
-| `OPENVEREIN_URL` | The club's OpenVerein address the app opens | `https://verein.example.org` |
-| `OPENVEREIN_APP_ID` | Store bundle id (must be unique per published app) | `org.example.verein` |
-| `OPENVEREIN_APP_NAME` | Name under the app icon | `SV Lindenhof` |
+| Variable | Meaning | Example | Read by |
+|---|---|---|---|
+| `OPENVEREIN_URL` | The club's OpenVerein address the app opens | `https://verein.example.org` | `capacitor.config.ts` (copied into both apps by `cap sync`) |
+| `OPENVEREIN_APP_ID` | Store id (unique per published app) | `org.example.verein` | Android: `android/app/build.gradle` |
+| `OPENVEREIN_APP_NAME` | Name under the app icon | `SV Lindenhof` | Android: `android/app/build.gradle` |
+
+On iOS, bundle id and display name live in the Xcode project: set `PRODUCT_BUNDLE_IDENTIFIER` and the display name in Xcode (target App → General) and the same bundle id under `ios_signing.bundle_identifier` in `codemagic.yaml`.
 
 Without `OPENVEREIN_URL` the app shows the bundled web build, which only works for local testing.
 

@@ -2,6 +2,8 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { acceptInviteBody, loginBody, me, setupBody } from '../../shared/auth.ts';
+import { config } from '../config.ts';
+import { DEMO_SEED_KEY } from '../demo/login.ts';
 import { audit } from '../audit.ts';
 import { hashPassword, passwordProblem, verifyPassword } from '../auth/password.ts';
 import { destroySession, insertSession, requireActor, setSessionCookie, sha256 } from '../auth/session.ts';
@@ -46,6 +48,9 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     { ...limited, schema: { ...publicRoute, tags: ['auth'], summary: 'Verein und erstes Admin-Konto anlegen (nur einmal möglich)', body: setupBody, response: { 201: me } } },
     async (req, reply) => {
       const alreadySetUp = () => new Problem(409, 'already-set-up', 'Der Verein ist bereits eingerichtet.');
+      // On a public demo, a visitor must never get to create the club between a reset and the reseed.
+      const demoSeed = req.headers['x-demo-seed'] === DEMO_SEED_KEY;
+      if (config.demoMode && !demoSeed) throw new Problem(403, 'demo', 'In der Demo ist das gesperrt.');
       // Cheap check before the expensive hash; the authoritative check runs under the lock below.
       if (await db.selectFrom('organization').select('id').executeTakeFirst()) throw alreadySetUp();
       const pwProblem = passwordProblem(req.body.password);
@@ -54,7 +59,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
       const { user, token } = await db.transaction().execute(async (tx) => {
         await sql`select pg_advisory_xact_lock(4711)`.execute(tx);
         if (await tx.selectFrom('organization').select('id').executeTakeFirst()) throw alreadySetUp();
-        const org = await tx.insertInto('organization').values({ name: req.body.clubName }).returningAll().executeTakeFirstOrThrow();
+        const org = await tx.insertInto('organization').values({ name: req.body.clubName, is_demo: demoSeed }).returningAll().executeTakeFirstOrThrow();
         const user = await tx
           .insertInto('app_user')
           .values({ organization_id: org.id, email: req.body.email, name: req.body.name, password_hash: passwordHash })
