@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
-import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
+import { client, enrollTotp, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 /**
  * Permission attack suite: every GET route of the API is called with the ids of records a user must not see.
@@ -122,5 +122,37 @@ describe('permission attacks', () => {
     const leaks = await scan(adminCookie, [OUTSIDE.lastName, OUTSIDE.iban]);
     console.log(`scanned ${urls().length} URLs; admin sees ${leaks.length} hits`);
     expect(leaks.some((l) => l.includes(OUTSIDE.lastName))).toBe(true);
+  });
+
+  it('an admin of another club on the same installation sees nothing of this club on any GET route (managed hosting)', async () => {
+    const { createClub } = await import('../src/server/routes/auth.ts');
+    const { hashPassword } = await import('../src/server/auth/password.ts');
+    await ctx.db.transaction().execute((tx) => hashPassword('ein-sehr-langes-passwort').then((passwordHash) => createClub(tx, { name: 'Anderer Verein', isDemo: false, hostname: null, admin: { email: 'fremd@example.org', name: 'Fremd Admin', passwordHash } })));
+    const login = await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: 'fremd@example.org', password: 'ein-sehr-langes-passwort' } });
+    expect(login.statusCode, login.body).toBe(200);
+    const other = String(login.headers['set-cookie']).split(';')[0]!;
+    // With a fresh second factor, so finance routes run up to their club filter instead of stopping at step-up.
+    await enrollTotp(ctx.app, other);
+    // Even an admin (all rights, no field restrictions) must not see any record of the first club.
+    const leaks = await scan(other, [OUTSIDE.lastName, OUTSIDE.email, OUTSIDE.iban, 'Innen', 'innen@example.org', INSIDE_IBAN, 'TSV Musterstadt']);
+    expect(leaks).toEqual([]);
+    // Nor change or delete anything of it, on any route that takes an id.
+    const accepted: string[] = [];
+    for (const method of ['patch', 'put', 'delete', 'post'] as const) {
+      for (const url of urls(method, ids).filter((u) => /[0-9a-f]{8}-/.test(u))) {
+        const res = await ctx.app.inject({ method: method.toUpperCase() as 'POST', url, headers: { cookie: other, 'idempotency-key': crypto.randomUUID() }, payload: {} });
+        if (res.statusCode < 300) accepted.push(`${method.toUpperCase()} ${url} → ${res.statusCode}`);
+      }
+    }
+    expect(accepted).toEqual([]);
+    // Routes that take the first club's ids in the body.
+    const body = (url: string, payload: object) => ctx.app.inject({ method: 'POST', url: `/api/v1${url}`, headers: { cookie: other, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() }, payload });
+    expect((await body('/invoices/letters.pdf', { invoiceIds: insideIds })).statusCode).toBe(404);
+    expect((await body('/invoices/dunning-letters.pdf', { invoiceIds: insideIds })).statusCode).toBe(404);
+    const mailed = await body('/invoices/send-mail', { invoiceIds: insideIds });
+    expect(mailed.statusCode >= 400 || mailed.json().sent === 0).toBe(true);
+    expect((await body('/offers', { memberId: outsideMemberId, lines: [{ text: 'x', unitCents: 1 }] })).statusCode).toBe(404);
+    expect((await body('/tasks', { title: 'x', memberId: outsideMemberId })).statusCode).toBe(404);
+    expect((await body('/collection-runs', { bankAccountId: outsideMemberId, collectionDate: '2026-12-01', invoiceIds: insideIds })).statusCode).toBeGreaterThanOrEqual(400);
   });
 });
