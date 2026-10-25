@@ -17,7 +17,7 @@ import { Dunning, Invoices } from './pages/Invoices.tsx';
 import { Events } from './pages/Events.tsx';
 import { Communication } from './pages/Communication.tsx';
 import { Documents } from './pages/Documents.tsx';
-import { Accounts, EuerReport, Journal, LedgerSettings } from './pages/Ledger.tsx';
+import { Accounts, EuerReport, Journal, LedgerExports, LedgerSettings } from './pages/Ledger.tsx';
 import { MailSettings } from './pages/settings/MailSettings.tsx';
 import { ApplicationSettings } from './pages/settings/ApplicationSettings.tsx';
 import { ImportSettings } from './pages/settings/ImportSettings.tsx';
@@ -86,6 +86,7 @@ function AdminApp() {
         <Route path="/buchhaltung/euer" element={<EuerReport me={me.data} />} />
         <Route path="/buchhaltung/konten" element={<Accounts me={me.data} />} />
         <Route path="/buchhaltung/einstellungen" element={<LedgerSettings me={me.data} />} />
+        <Route path="/buchhaltung/export" element={<LedgerExports me={me.data} />} />
         <Route path="/buchhaltung/:id" element={<Journal me={me.data} />} />
         <Route path="/antraege" element={<Applications me={me.data} />} />
         <Route path="/antraege/:id" element={<Applications me={me.data} />} />

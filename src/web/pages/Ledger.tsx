@@ -34,6 +34,7 @@ function LedgerLayout({ me, children, action }: { me: Me; children: React.ReactN
         <NavLink to="/buchhaltung" end>Journal</NavLink>
         <NavLink to="/buchhaltung/euer">EÜR</NavLink>
         <NavLink to="/buchhaltung/konten">Konten</NavLink>
+        <NavLink to="/buchhaltung/export">Export</NavLink>
         <NavLink to="/buchhaltung/einstellungen">Einstellungen</NavLink>
       </nav>
       {children}
@@ -453,6 +454,102 @@ export function LedgerSettings({ me }: { me: Me }) {
             <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">{backwards ? 'Zeitraum wieder öffnen' : 'Sperren'}</button></div>
           </form>
         )}
+      </section>
+    </LedgerLayout>
+  );
+}
+
+interface DatevSettings { consultant: number | null; client: number | null; accountLength: number; fiscalYearStartMonth: number }
+interface DatevExport { id: string; mode: 'delta' | 'full'; from: string; to: string; entryCount: number; sha256: string; createdAt: string }
+
+export function LedgerExports({ me }: { me: Me }) {
+  useTitle('Buchhaltung · Export');
+  const qc = useQueryClient();
+  const canWrite = me.permissions.ledger === 'write';
+  const settings = useQuery({ queryKey: ['datev-settings'], queryFn: () => api<DatevSettings>('/ledger/datev-settings') });
+  const exports = useQuery({ queryKey: ['datev-exports'], queryFn: () => api<DatevExport[]>('/ledger/exports') });
+  const y = Number(year());
+  const today = todayLocal();
+  // Default: from the start of the current fiscal year (a DATEV batch stays inside one).
+  const fyMonth = settings.data?.fiscalYearStartMonth ?? 1;
+  const fyStart = `${Number(today.slice(5, 7)) < fyMonth ? y - 1 : y}-${String(fyMonth).padStart(2, '0')}-01`;
+  const [fromInput, setFrom] = useState('');
+  const from = fromInput || fyStart;
+  const [to, setTo] = useState(today);
+  const [mode, setMode] = useState<'delta' | 'full'>('delta');
+  const [error, setError] = useState<ApiError>();
+  const [done, setDone] = useState<DatevExport>();
+
+  async function saveSettings(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const num = (k: string) => (f.get(k) ? Number(f.get(k)) : null);
+    setError(undefined);
+    try {
+      qc.setQueryData(['datev-settings'], await api<DatevSettings>('/ledger/datev-settings', { method: 'PUT', body: { consultant: num('consultant'), client: num('client'), accountLength: num('accountLength') ?? 4, fiscalYearStartMonth: num('fy') ?? 1 } }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err : undefined);
+    }
+  }
+  async function run() {
+    setError(undefined);
+    setDone(undefined);
+    try {
+      setDone(await api<DatevExport>('/ledger/exports/datev', { method: 'POST', body: { from, to, mode } }));
+      await qc.invalidateQueries({ queryKey: ['datev-exports'] });
+    } catch (err) {
+      setError(err instanceof ApiError ? err : undefined);
+    }
+  }
+  const s = settings.data;
+  return (
+    <LedgerLayout me={me}>
+      {error && <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-5)' }}>{error.problem.errors?.map((x) => x.message).join(' ') ?? [error.problem.title, error.problem.detail].filter(Boolean).join(' ')}{error.problem.type.endsWith('/datev-mapping') && <> <Link to="/buchhaltung/konten">Zum Kontenplan</Link></>}</div>}
+      <section aria-labelledby="datev">
+        <h2 id="datev" style={{ marginBottom: 'var(--s-2)' }}>DATEV für die Steuerberatung</h2>
+        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '72ch' }}>Buchungsstapel im DATEV-Format (EXTF 700). Sphäre geht als KOST1 (1 ideell, 2 Vermögensverwaltung, 3 Zweckbetrieb, 4 wirtschaftlich) mit, die Kostenstelle als KOST2. Mach mit Deiner Steuerberatung vor dem ersten echten Export eine Test-Übernahme.</p>
+        {s && canWrite && (
+          <form className="inline-form" noValidate onSubmit={saveSettings} style={{ maxWidth: 720, marginBottom: 'var(--s-4)' }}>
+            <div className="form-row">
+              <Field label="Beraternummer" name="consultant" inputMode="numeric" defaultValue={s.consultant ?? ''} />
+              <Field label="Mandantennummer" name="client" inputMode="numeric" defaultValue={s.client ?? ''} />
+            </div>
+            <div className="form-row">
+              <Field label="Länge der Sachkonten" name="accountLength" inputMode="numeric" defaultValue={s.accountLength} />
+              <Field label="Wirtschaftsjahr beginnt im Monat" name="fy" inputMode="numeric" defaultValue={s.fiscalYearStartMonth} />
+            </div>
+            <div className="actions-row" style={{ marginTop: 0 }}><button className="btn">Speichern</button></div>
+          </form>
+        )}
+        {canWrite && (
+          <div className="toolbar">
+            <input type="date" className="input" style={{ width: 'auto' }} aria-label="Von" value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} />
+            <input type="date" className="input" style={{ width: 'auto' }} aria-label="Bis" value={to} onChange={(e) => e.target.value && setTo(e.target.value)} />
+            <div className="segmented" role="group" aria-label="Umfang">
+              <button aria-pressed={mode === 'delta'} onClick={() => setMode('delta')}>Nur Neues</button>
+              <button aria-pressed={mode === 'full'} onClick={() => setMode('full')}>Alles im Zeitraum</button>
+            </div>
+            <button className="btn btn-primary" onClick={() => void run()}>Exportieren</button>
+          </div>
+        )}
+        {done && (
+          <div className="alert alert-ok" role="status" style={{ marginTop: 'var(--s-4)' }}>
+            {done.entryCount} Buchungen exportiert. <a href={`/api/v1/ledger/exports/${done.id}/file`}>ZIP herunterladen</a>. Zeitraum jetzt abschließen? <Link to="/buchhaltung/einstellungen">Sperrdatum auf {formatDate(done.to)} setzen</Link>
+          </div>
+        )}
+        <ul className="timeline" style={{ maxWidth: 720 }}>
+          {exports.data?.map((x) => (
+            <li key={x.id} style={{ gridTemplateColumns: '1fr auto' }}>
+              <span>{formatDate(x.from)} bis {formatDate(x.to)} <span className="meta">· {x.entryCount} Buchungen · {x.mode === 'delta' ? 'nur Neues' : 'vollständig'} · {new Date(x.createdAt).toLocaleString('de-DE')}</span></span>
+              <a href={`/api/v1/ledger/exports/${x.id}/file`}>Herunterladen</a>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section className="section" aria-labelledby="z3">
+        <h2 id="z3" style={{ marginBottom: 'var(--s-2)' }}>Betriebsprüfung</h2>
+        <p className="muted" style={{ marginBottom: 'var(--s-4)', maxWidth: '72ch' }}>Datenträgerüberlassung nach GoBD (Z3) für ein Geschäftsjahr: index.xml im Beschreibungsstandard und Tabellen für Buchungen, Buchungszeilen, Konten, Rechnungen und Debitoren. Jeder Abruf wird protokolliert.</p>
+        <div className="actions-row" style={{ marginTop: 0 }}>{[y - 1, y].map((x) => <a key={x} className="btn" href={`/api/v1/ledger/exports/z3?year=${x}`}>Paket {x}</a>)}</div>
       </section>
     </LedgerLayout>
   );

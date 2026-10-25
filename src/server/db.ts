@@ -743,6 +743,28 @@ export interface LedgerSettingTable {
   other_income_account_id: string | null;
   dunning_account_id: string | null;
   lock_date: string | null;
+  datev_consultant: number | null;
+  datev_client: number | null;
+  datev_account_length: Generated<number>;
+  fiscal_year_start_month: Generated<number>;
+}
+
+export interface DatevExportTable {
+  id: Generated<string>;
+  organization_id: string;
+  mode: 'delta' | 'full';
+  period_from: string;
+  period_to: string;
+  entry_count: number;
+  file: Buffer;
+  sha256: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface DatevExportEntryTable {
+  export_id: string;
+  entry_id: string;
 }
 
 export interface JournalEntryTable {
@@ -832,6 +854,8 @@ export interface Database {
   ledger_setting: LedgerSettingTable;
   journal_entry: JournalEntryTable;
   journal_line: JournalLineTable;
+  datev_export: DatevExportTable;
+  datev_export_entry: DatevExportEntryTable;
 }
 
 export type AppUser = Selectable<AppUserTable>;
