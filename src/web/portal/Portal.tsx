@@ -4,6 +4,7 @@ import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from 'react-
 import { FileText, Home, LogOut, Receipt, Wallet } from 'lucide-react';
 import { EXPENSE_STATUS_LABEL } from '../../shared/expenses.ts';
 import { MoneyField } from '../components/MoneyField.tsx';
+import { PollBars } from '../pages/Polls.tsx';
 import { formatDate } from '../../shared/dates.ts';
 import { AuthLayout } from '../components/AuthLayout.tsx';
 import { Field } from '../components/Field.tsx';
@@ -195,6 +196,7 @@ function PortalHome({ me }: { me: PortalMe }) {
           <strong className="num">{euro(open.reduce((s, i) => s + i.openCents, 0))}</strong>
         </NavLink>
       )}
+      <PortalPolls me={me} />
       {me.members.map((m) => <MembershipCard key={m.memberId} m={m} several={me.members.length > 1} />)}
       {me.club.email && <p className="meta portal-contact">Fragen? Schreib an <a href={`mailto:${me.club.email}`}>{me.club.email}</a>.</p>}
     </>
@@ -464,5 +466,53 @@ function PortalExpenses({ me }: { me: PortalMe }) {
         </section>
       )}
     </>
+  );
+}
+
+interface PortalPoll { id: string; question: string; description: string | null; options: string[]; multiple: boolean; closesOn: string; open: boolean; members: { memberId: string; choices: number[] | null }[]; results: { answered: number; eligible: number; counts: number[] } | null }
+
+/** Open polls to answer (one answer per membership), and recent results. */
+function PortalPolls({ me }: { me: PortalMe }) {
+  const polls = useQuery({ queryKey: ['portal-polls'], queryFn: () => api<PortalPoll[]>('/portal/polls') });
+  if (!polls.data?.length) return null;
+  return (
+    <section className="portal-card" aria-labelledby="polls-h">
+      <h2 id="polls-h">Umfragen</h2>
+      {polls.data.map((p) => (
+        <div key={p.id} className="portal-poll">
+          <strong>{p.question}</strong>
+          {p.description && <p className="muted">{p.description}</p>}
+          {p.open ? p.members.map((m) => <PollAnswer key={m.memberId} poll={p} memberId={m.memberId} current={m.choices} label={me.members.length > 1 ? me.members.find((x) => x.memberId === m.memberId)?.name : undefined} />)
+            : p.results && <PollBars options={p.options} counts={p.results.counts} answered={p.results.answered} />}
+          <p className="meta">{p.open ? `Antworten bis ${formatDate(p.closesOn)}; Ergebnisse danach.` : `Beendet am ${formatDate(p.closesOn)}.`}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function PollAnswer({ poll, memberId, current, label }: { poll: PortalPoll; memberId: string; current: number[] | null; label?: string }) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string>();
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const choices = new FormData(e.currentTarget).getAll('c').map(Number);
+    setError(undefined);
+    try {
+      await api(`/portal/polls/${poll.id}/vote`, { method: 'POST', body: { memberId, choices } });
+      await qc.invalidateQueries({ queryKey: ['portal-polls'] });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.problem.title : 'Das hat nicht geklappt.');
+    }
+  }
+  return (
+    <form onSubmit={(e) => void submit(e)} aria-label={`Antwort${label ? ` für ${label}` : ''}: ${poll.question}`}>
+      <fieldset className="checks">
+        {label && <legend>{label}</legend>}
+        {poll.options.map((o, i) => <label key={i} className="check"><input type={poll.multiple ? 'checkbox' : 'radio'} name="c" value={i} defaultChecked={current?.includes(i)} /> {o}</label>)}
+      </fieldset>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="actions-row" style={{ marginTop: 'var(--s-2)' }}><button className="btn">{current ? 'Antwort ändern' : 'Antworten'}</button>{current && <span className="meta">Du hast geantwortet.</span>}</div>
+    </form>
   );
 }

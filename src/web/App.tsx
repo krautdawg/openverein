@@ -23,6 +23,7 @@ import { Households } from './pages/Households.tsx';
 import { CashBookPage, Receipts } from './pages/Receipts.tsx';
 import { Allowances } from './pages/Allowances.tsx';
 import { Budget } from './pages/Budget.tsx';
+import { Polls } from './pages/Polls.tsx';
 import { Duplicates } from './pages/Duplicates.tsx';
 import { Census } from './pages/Census.tsx';
 import { HonoursPage } from './pages/Honours.tsx';
@@ -121,6 +122,7 @@ function AdminApp() {
         <Route path="/antraege" element={<Applications me={me.data} />} />
         <Route path="/antraege/:id" element={<Applications me={me.data} />} />
         <Route path="/kommunikation" element={<Communication me={me.data} />} />
+        <Route path="/kommunikation/umfragen" element={<Polls me={me.data} />} />
         <Route path="/dokumente" element={<Documents me={me.data} />} />
         <Route path="/dokumente/:id" element={<Documents me={me.data} />} />
         <Route path="/kommunikation/:id" element={<Communication me={me.data} />} />

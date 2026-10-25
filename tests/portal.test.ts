@@ -202,6 +202,23 @@ describe('member portal', () => {
     const other = (await admin.post('/members', { lastName: 'Fremd', joinDate: '2020-01-01' })).body;
     expect((await get(`/portal/members/${other.id}/certificate.pdf`, cookie)).statusCode).toBe(404);
     expect((await get(`/members/${m.id}/certificate.pdf`, adminCookie)).statusCode).toBe(200);
+
+    // Polls: one answer per membership, changeable while open, results only after the end, group polls only for the group.
+    const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+    const poll = (await admin.post('/polls', { question: 'Sommerfest am Samstag oder Sonntag?', options: ['Samstag', 'Sonntag'], closesOn: day(7) })).body;
+    expect(poll).toMatchObject({ open: true, answered: 0 });
+    const board = (await admin.post('/groups', { name: 'Vorstand', shortCode: 'VS', kind: 'board' })).body.id;
+    await admin.post('/polls', { question: 'Nur Vorstand', options: ['Ja', 'Nein'], closesOn: day(7), groupId: board });
+    const listed = (await get('/portal/polls', cookie)).json();
+    expect(listed.map((x: { question: string }) => x.question)).toEqual(['Sommerfest am Samstag oder Sonntag?']);
+    expect(listed[0].results).toBeNull();
+    expect((await post(`/portal/polls/${poll.id}/vote`, { memberId: m.id, choices: [0, 1] }, cookie)).statusCode).toBe(400);
+    expect((await post(`/portal/polls/${poll.id}/vote`, { memberId: m.id, choices: [0] }, cookie)).statusCode).toBe(204);
+    expect((await post(`/portal/polls/${poll.id}/vote`, { memberId: m.id, choices: [1] }, cookie)).statusCode).toBe(204);
+    const closed = (await admin.post(`/polls/${poll.id}/close`, {})).body;
+    expect(closed).toMatchObject({ open: false, answered: 1, counts: [0, 1] });
+    expect((await get('/portal/polls', cookie)).json()[0].results.counts).toEqual([0, 1]);
+    expect((await post(`/portal/polls/${poll.id}/vote`, { memberId: m.id, choices: [0] }, cookie)).statusCode).toBe(409);
   });
 
   it('lets the household payer manage its members, but adults with their own address resign themselves', async () => {

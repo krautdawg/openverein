@@ -93,7 +93,7 @@ function CreateAssembly({ onClose }: { onClose: () => void }) {
         </div>
         <Field label="Ort" name="place" placeholder="z. B. Vereinsheim, Am Sportplatz 1" error={error?.fieldError('place')} />
         <Field key={`n-${kind}`} label="Einladungsfrist laut Satzung (Tage)" name="noticeDays" type="number" min={0} max={120} defaultValue={kind === 'board' ? 7 : 14} />
-        <fieldset className="agenda">
+        <fieldset className="agenda-edit">
           <legend>Tagesordnung</legend>
           <ol>
             {items.map((it, i) => (

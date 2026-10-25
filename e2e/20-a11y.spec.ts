@@ -6,7 +6,7 @@ const ROUTES = [
   '/', '/mitglieder', '/mitglieder/haushalte', '/mitglieder/dubletten', '/mitglieder/bestandserhebung', '/mitglieder/ehrungen', '/mitglieder/arbeitsstunden', '/gruppen', '/termine', '/versammlungen',
   '/beitraege', '/beitraege/laeufe', '/rechnungen', '/rechnungen/mahnwesen', '/rechnungen/artikel', '/bank', '/bank/abgleich', '/bank/lastschriften',
   '/buchhaltung', '/buchhaltung/euer', '/buchhaltung/haushaltsplan', '/buchhaltung/konten', '/buchhaltung/einstellungen', '/buchhaltung/export', '/buchhaltung/belege', '/buchhaltung/kassenbuch', '/buchhaltung/pauschalen',
-  '/spenden', '/spenden/bestaetigungen', '/spenden/einstellungen', '/antraege', '/kommunikation', '/dokumente',
+  '/spenden', '/spenden/bestaetigungen', '/spenden/einstellungen', '/antraege', '/kommunikation', '/kommunikation/umfragen', '/dokumente',
   '/einstellungen', '/einstellungen/email', '/einstellungen/aufnahme', '/einstellungen/import', '/einstellungen/datenschutz', '/einstellungen/export',
   '/einstellungen/felder', '/einstellungen/sicherheit', '/einstellungen/zugaenge', '/einstellungen/rollen', '/einstellungen/api', '/einstellungen/webhooks', '/einstellungen/protokoll',
 ];

@@ -1,0 +1,3 @@
+- [x] tables and routes
+- [x] admin page and portal card
+- [x] tests, e2e, a11y, export

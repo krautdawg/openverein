@@ -5,6 +5,7 @@ import type { Me } from '../../shared/auth.ts';
 import { PLACEHOLDERS } from '../../shared/mail.ts';
 import { useCustomFields } from '../components/CustomFields.tsx';
 import { PageHead } from '../components/PageHead.tsx';
+import { CommunicationNav } from './Polls.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { useGroups } from '../lib/hooks.ts';
@@ -97,6 +98,7 @@ export function Communication({ me }: { me: Me }) {
   return (
     <div className="page">
       <PageHead title="Kommunikation" intro="E-Mails an Mitglieder, über den Mailserver des Vereins. Wer keine Adresse hat oder nicht mehr Mitglied ist, wird angezeigt und ausgelassen." />
+      <CommunicationNav />
       {org.data?.mailPausedReason && (
         <div className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-5)', maxWidth: '80ch' }}>
           Der Versand ist angehalten, weil der Mailserver die Anmeldung oder den Absender abgelehnt hat: {org.data.mailPausedReason}. Neue E-Mails warten, bis jemand mit Einstellungsrechten den Versand unter <Link to="/einstellungen/email">Einstellungen → E-Mail</Link> fortsetzt.

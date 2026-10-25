@@ -23,6 +23,8 @@ import { storedPdf, type IssueSnapshot } from '../invoices/service.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { orgToday } from '../members/query.ts';
 import { membershipCertificate } from '../members/certificate.ts';
+import { eligibleMembers, pollResults } from './polls.ts';
+import { addDays as addDaysIso } from '../../shared/dates.ts';
 
 export const PORTAL_COOKIE = 'ov_portal';
 const PORTAL_IDLE_MS = 30 * 24 * 60 * 60 * 1000; // members stay signed in on their phone for 30 days of use
@@ -251,6 +253,40 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!['open', 'partially_paid'].includes(inv.status) || !snap?.org.iban || open <= 0 || snap.paymentMethod === 'direct_debit') throw notFound('Zahlcode');
     const code = generate(epcPayload({ name: snap.org.name, iban: snap.org.iban, bic: snap.org.bic, amountCents: open, remittance: inv.number ?? '' }), { minCorrectionLevel: correction.M });
     return reply.header('content-type', 'image/svg+xml').header('cache-control', 'private, no-store').send(toSvgSource(code, { on: '#14202e', off: '#ffffff', padX: 4, padY: 4 }));
+  });
+
+  // ---------- Polls ----------
+  /** Open polls (and the last closed ones with results) for the signed-in memberships that may answer. */
+  app.get('/portal/polls', { schema: { tags, summary: 'Umfragen für meine Mitgliedschaften', security: [] } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const today = await orgToday(db, u.organizationId);
+    const polls = await db.selectFrom('poll').selectAll().where('organization_id', '=', u.organizationId).where('closes_on', '>=', addDaysIso(today, -30)).orderBy('closes_on').execute();
+    const ids = u.members.map((m) => m.memberId);
+    const out = [];
+    for (const p of polls) {
+      const allowed = ids.length ? (await eligibleMembers(db, u.organizationId, p.group_id, today).select('member.id').where('member.id', 'in', ids).execute()).map((r) => r.id) : [];
+      if (!allowed.length) continue;
+      const mine = await db.selectFrom('poll_vote').select(['member_id', 'choices']).where('poll_id', '=', p.id).where('member_id', 'in', allowed).execute();
+      const open = p.closes_on >= today;
+      // Results only after the poll closed, so early answers do not steer later ones.
+      const results = open ? null : (await pollResults(db, u.organizationId, p.id))[0]!;
+      out.push({ id: p.id, question: p.question, description: p.description, options: p.options, multiple: p.multiple, closesOn: p.closes_on, open, members: allowed.map((memberId) => ({ memberId, choices: mine.find((v) => v.member_id === memberId)?.choices ?? null })), results: results && { answered: results.answered, eligible: results.eligible, counts: results.counts } });
+    }
+    return out;
+  });
+
+  app.post('/portal/polls/:id/vote', { config: { rateLimit: { max: 60, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Antworten (bis zum Ende änderbar)', security: [], params: z.object({ id: z.uuid() }), body: z.object({ memberId: z.uuid(), choices: z.array(z.number().int().min(0).max(19)).min(1).max(20) }) } }, async (req, reply) => {
+    const u = await portalUser(req, reply);
+    const m = ownMember(u, req.body.memberId);
+    const today = await orgToday(db, u.organizationId);
+    const p = await db.selectFrom('poll').selectAll().where('id', '=', req.params.id).where('organization_id', '=', u.organizationId).executeTakeFirst();
+    if (!p) throw notFound('Umfrage');
+    if (p.closes_on < today) throw new Problem(409, 'closed', 'Die Umfrage ist beendet.');
+    if (!(await eligibleMembers(db, u.organizationId, p.group_id, today).select('member.id').where('member.id', '=', m.memberId).executeTakeFirst())) throw new Problem(403, 'forbidden', 'Diese Umfrage richtet sich an eine andere Gruppe.');
+    const choices = [...new Set(req.body.choices)].sort((a, b) => a - b);
+    if (choices.some((c) => c >= p.options.length) || (!p.multiple && choices.length > 1)) throw new Problem(400, 'validation', p.multiple ? 'Ungültige Antwort.' : 'Bitte nur eine Antwort wählen.');
+    await db.insertInto('poll_vote').values({ poll_id: p.id, member_id: m.memberId, choices }).onConflict((oc) => oc.columns(['poll_id', 'member_id']).doUpdateSet({ choices, voted_at: new Date() })).execute();
+    return reply.status(204).send();
   });
 
   // ---------- Expense claims (Auslagen) ----------
