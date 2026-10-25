@@ -1,0 +1,4 @@
+- [x] GET scan for scoped and field-restricted roles
+- [x] Write scan for scoped lead
+- [x] IBAN fragment search
+- [x] npm audit in CI
