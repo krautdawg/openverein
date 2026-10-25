@@ -8,11 +8,13 @@ afterAll(() => ctx.close());
 const MAILPIT = process.env.MAILPIT_URL ?? 'http://localhost:18025';
 
 let admin: ReturnType<typeof client>;
+let adminCookie: string;
 beforeEach(async () => {
   await reset(ctx.db);
   setMailer(null);
   await fetch(`${MAILPIT}/api/v1/messages`, { method: 'DELETE' });
-  admin = client(ctx.app, { cookie: (await setupClub(ctx.app)).cookie });
+  adminCookie = (await setupClub(ctx.app)).cookie;
+  admin = client(ctx.app, { cookie: adminCookie });
 });
 
 const member = async (lastName: string, email: string | null, extra: Record<string, unknown> = {}) => (await admin.post('/members', { firstName: 'Eva', lastName, email, joinDate: '2024-01-01', ...extra })).body.id as string;
@@ -103,6 +105,14 @@ describe('messages', () => {
     const mails = await inbox('rechnung@example.org');
     expect(mails[0]!.Subject).toMatch(/^Deine Rechnung R-\d{4}-00001$/);
     expect(mails[0]!.Attachments).toBe(1);
+
+    // The letters as one PDF: merged stored PDFs, each letter padded to an even page count for duplex.
+    const letters = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/letters.pdf', headers: { cookie: adminCookie, 'content-type': 'application/json' }, payload: { invoiceIds: [res.body.toPrint[0].invoiceId, ids[0]] } });
+    expect(letters.statusCode, letters.body.slice(0, 300)).toBe(200);
+    const { PDFDocument } = await import('pdf-lib');
+    const merged = await PDFDocument.load(letters.rawPayload);
+    expect(merged.getPageCount() % 2).toBe(0);
+    expect(merged.getPageCount()).toBeGreaterThanOrEqual(4);
   });
 
   it('mails invitations to new users', async () => {

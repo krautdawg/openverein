@@ -106,6 +106,9 @@ describe('permission attacks', () => {
       }
     }
     expect(accepted).toEqual([]);
+    // Bulk routes that take ids in the body.
+    const letters = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/letters.pdf', headers: { cookie: lead, 'content-type': 'application/json' }, payload: { invoiceIds: outsideIds } });
+    expect(letters.statusCode).toBe(404);
   });
 
   it('search does not match IBAN fragments', async () => {
