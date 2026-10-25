@@ -179,3 +179,14 @@ The system SHALL refuse to start when DATA_KEY differs from the key the database
 - **WHEN** a backup is restored on a server whose deploy/.env has a newly generated DATA_KEY
 - **THEN** the app does not start and says that DATA_KEY does not match this database
 
+### Requirement: Managed hosting
+With managed hosting switched on, the system SHALL create clubs only through the operator API, reach each club under its own host name, and keep every club's data, sign-ins and portal codes inside that club.
+
+#### Scenario: Portal by host name
+- **WHEN** a member of club B asks for a portal code under club A's host name
+- **THEN** no code is issued in club A
+
+#### Scenario: Access on another club's address
+- **WHEN** the admin of club A signs in under club B's host name
+- **THEN** the sign-in fails
+
