@@ -194,6 +194,14 @@ describe('member portal', () => {
     expect(receipts.find((r) => r.id === ok.body.receiptId)).toMatchObject({ supplier: 'Auslage Auslage, Ali', status: 'open', totalCents: 4590 });
     expect((await admin.post(`/expense-claims/${list[0].id}/reject`, { reason: 'zu spät' })).status).toBe(409);
     expect((await get('/portal/expenses', cookie)).json()[0].status).toBe('approved');
+
+    // The membership certificate: own one in the portal, nobody else's; any member's for admins.
+    const own = await get(`/portal/members/${m.id}/certificate.pdf`, cookie);
+    expect(own.statusCode).toBe(200);
+    expect(own.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    const other = (await admin.post('/members', { lastName: 'Fremd', joinDate: '2020-01-01' })).body;
+    expect((await get(`/portal/members/${other.id}/certificate.pdf`, cookie)).statusCode).toBe(404);
+    expect((await get(`/members/${m.id}/certificate.pdf`, adminCookie)).statusCode).toBe(200);
   });
 
   it('lets the household payer manage its members, but adults with their own address resign themselves', async () => {
@@ -211,4 +219,5 @@ describe('member portal', () => {
     const paul = await signIn('paul@example.org');
     expect((await get('/portal/me', paul)).json().members.map((m: { name: string }) => m.name)).toEqual(['Paul Haus']);
   });
+
 });

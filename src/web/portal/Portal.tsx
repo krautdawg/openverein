@@ -237,6 +237,7 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
       {m.pending.filter((p) => p.field !== 'resignation').length > 0 && <p className="meta">Änderungen warten auf den Verein: {m.pending.filter((p) => p.field !== 'resignation').map((p) => FIELD_LABEL[p.field] ?? p.field).join(', ')}.</p>}
       <div className="actions-row">
         <button className="btn" onClick={() => navigate(`/portal/daten/${m.memberId}`)}>Daten ändern</button>
+        <a className="btn btn-ghost" href={`/api/v1/portal/members/${m.memberId}/certificate.pdf`} download>Mitgliedsbescheinigung</a>
         {m.status !== 'resigned' && !pendingResignation && !confirm && !(m.managed && m.email) && <button className="btn btn-ghost" onClick={() => setConfirm(true)}>Kündigen …</button>}
       </div>
       {pendingResignation && <p className="meta">Deine Kündigung zum {formatDate(pendingResignation.value)} ist eingegangen; der Vorstand bestätigt sie.</p>}

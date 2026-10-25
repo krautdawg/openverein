@@ -232,6 +232,7 @@ function MembershipSection({ m, canWrite, patch, onChanged }: { m: MemberDetail;
         {m.exitDate && (<><dt>Austritt</dt><dd>{formatDate(m.exitDate)}{m.exitReason && <span className="muted"> · {m.exitReason}</span>}</dd></>)}
       </dl>
       {error && <div className="alert alert-error" role="alert" style={{ marginTop: 'var(--s-3)' }}>{error}</div>}
+      {['active', 'future', 'resigned', 'former'].includes(m.status) && <p style={{ marginTop: 'var(--s-3)' }}><a className="btn btn-ghost" href={`/api/v1/members/${m.id}/certificate.pdf`} download>Mitgliedsbescheinigung (PDF)</a></p>}
       {canWrite && (
         <div className="actions-row">
           {(m.status === 'active' || m.status === 'future') && form !== 'resign' && <button className="btn" onClick={() => setForm('resign')}>Kündigung erfassen</button>}
