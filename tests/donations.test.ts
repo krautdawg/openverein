@@ -76,4 +76,22 @@ describe('donations', () => {
     const d = await admin.post('/donations', { donor, date: '2026-03-05', amountCents: 1000 });
     expect((await admin.post('/donation-receipts', { personId: d.body.personId, donationIds: [d.body.id] })).body.type).toContain('exemption-expired');
   });
+
+  it('records in-kind donations without booking, confirms each on its own template, and keeps them out of collective receipts', async () => {
+    await admin.put('/donations/settings', settings);
+    const inKind = { description: 'Zehn Fußbälle Größe 5, neu, Kaufpreis laut Rechnung 250 €', source: 'private', valuationDocs: true };
+    expect((await admin.post('/donations', { donor, date: '2026-03-01', amountCents: 25000, inKind, moneyAccountId: acc('1000'), incomeAccountId: acc('4600') })).status).toBe(400);
+    const goods = await admin.post('/donations', { donor, date: '2026-03-01', amountCents: 25000, inKind });
+    expect(goods.status, JSON.stringify(goods.body)).toBe(201);
+    expect(goods.body).toMatchObject({ inKind, journalNumber: null });
+    const money = await admin.post('/donations', { personId: goods.body.personId, date: '2026-04-01', amountCents: 5000 });
+    expect((await admin.post('/donation-receipts', { personId: goods.body.personId, donationIds: [goods.body.id, money.body.id] })).status).toBe(400);
+    const run = await admin.post('/donation-receipts/annual', { year: 2026 });
+    expect(run.body.issued).toBe(2);
+    const templates = await ctx.db.selectFrom('donation_receipt').select(['template', 'kind', 'total_cents']).orderBy('total_cents').execute();
+    expect(templates).toEqual([
+      { template: 'BMF-Muster Geldzuwendung (Stand 2023)', kind: 'single', total_cents: 5000 },
+      { template: 'BMF-Muster Sachzuwendung (Stand 2023)', kind: 'single', total_cents: 25000 },
+    ]);
+  });
 });

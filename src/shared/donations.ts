@@ -32,11 +32,14 @@ export const donationInput = z
     amountCents: z.number().int().positive().max(100_000_000),
     waiver: z.boolean().default(false),
     note: z.string().trim().max(500).nullable().optional(),
+    /** Sachzuwendung: amountCents is the value; described as on the BMF template, never booked as money. */
+    inKind: z.object({ description: z.string().trim().min(1, 'Bitte die Sache beschreiben.').max(1000), source: z.enum(['business', 'private', 'unknown']), valuationDocs: z.boolean() }).nullish(),
     // Posts the donation to the ledger; leave out when it is already booked (e.g. through the bank).
     moneyAccountId: z.uuid().nullable().optional(),
     incomeAccountId: z.uuid().nullable().optional(),
   })
-  .refine((d) => !!d.personId !== !!d.donor, { message: 'Entweder eine vorhandene Person oder neue Angaben.', path: ['personId'] });
+  .refine((d) => !!d.personId !== !!d.donor, { message: 'Entweder eine vorhandene Person oder neue Angaben.', path: ['personId'] })
+  .refine((d) => !d.inKind || (!d.waiver && !d.moneyAccountId), { message: 'Eine Sachspende ist weder Aufwandsverzicht noch Geld auf einem Konto.', path: ['inKind'] });
 
 export const donation = z.object({
   id: z.uuid(),
@@ -46,6 +49,7 @@ export const donation = z.object({
   amountCents: z.number(),
   waiver: z.boolean(),
   note: z.string().nullable(),
+  inKind: z.object({ description: z.string(), source: z.enum(['business', 'private', 'unknown']), valuationDocs: z.boolean() }).nullable(),
   journalNumber: z.number().nullable(),
   receipt: z.object({ id: z.uuid(), number: z.string() }).nullable(),
 });
