@@ -1,0 +1,6 @@
+- [x] Migration `job` with one-active index
+- [x] Worker: claim, re-check actor, progress, stale retry
+- [x] `GET /jobs`, `GET /jobs/:id`
+- [x] Full export as job (202)
+- [x] Web job tray; full-export page follows the job
+- [x] Tests: job lifecycle, revoked grant, one at a time; e2e full export through the tray

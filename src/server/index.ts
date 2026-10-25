@@ -6,6 +6,7 @@ import { sweepFiles } from './files/store.ts';
 import { pruneSignIns } from './routes/portal.ts';
 import { pruneApplications } from './routes/applications.ts';
 import { startMailWorker } from './mail/worker.ts';
+import { startJobWorker } from './jobs/worker.ts';
 import { refreshMemberStatuses } from './members/status.ts';
 import { migrate } from './migrate.ts';
 import { replayErasures } from './gdpr/service.ts';
@@ -45,4 +46,5 @@ const refresh = () =>
 await refresh();
 setInterval(refresh, 60 * 60 * 1000).unref();
 startMailWorker(db, config.publicUrl, (err) => app.log.error(err));
+startJobWorker(db, (err) => app.log.error(err));
 

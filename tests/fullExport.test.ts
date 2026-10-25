@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
+import { processJobs } from '../src/server/jobs/worker.ts';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 config.filesDir = await mkdtemp(join(tmpdir(), 'ov-export-'));
@@ -43,8 +44,18 @@ describe('full export', () => {
     const treasurer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Kassenwart', null) });
     expect((await treasurer.post('/exports/full', {})).status).toBe(403);
 
-    const run = await admin.post('/exports/full', {});
-    expect(run.status, JSON.stringify(run.body)).toBe(201);
+    const started = await admin.post('/exports/full', {});
+    expect(started.status, JSON.stringify(started.body)).toBe(202);
+    expect(started.body.status).toBe('queued');
+    // One at a time: a second start while the first is queued is refused.
+    expect((await admin.post('/exports/full', {})).status).toBe(409);
+    expect(await processJobs(ctx.db)).toBe(1);
+    const job = (await admin.get(`/jobs/${started.body.id}`)).body;
+    expect(job).toMatchObject({ status: 'done', progress: 100, label: 'Gesamtexport', resultPath: '/einstellungen/export' });
+    expect((await admin.get('/jobs')).body).toHaveLength(1);
+    // Jobs are private to the user who started them.
+    expect((await treasurer.get(`/jobs/${started.body.id}`)).status).toBe(404);
+    const run = { body: { id: job.resultFileId as string } };
     // Without a fresh link no download; the stored blob is encrypted.
     expect((await ctx.app.inject({ url: `/api/v1/exports/full/${run.body.id}?exp=${Date.now() + 1000}&sig=${'0'.repeat(64)}`, headers: { cookie } })).statusCode).toBe(403);
     const stored = await ctx.db.selectFrom('file').select('sha256').where('id', '=', run.body.id).executeTakeFirstOrThrow();
@@ -75,5 +86,23 @@ describe('full export', () => {
     await admin.post(`/members/${gone.id}/resign`, { noticeDate: '2020-01-01', exitDate: '2020-12-31' });
     expect((await admin.post(`/persons/${gone.personId}/anonymise`, {})).status).toBe(200);
     expect(await ctx.db.selectFrom('file').select('id').where('purpose', '=', 'export').execute()).toHaveLength(0);
+  });
+
+  it('fails a queued export when the starting admin lost the role, and retries a crashed job once', async () => {
+    const other = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Admin', null, 'zweit@example.org') });
+    const started = await other.post('/exports/full', {});
+    expect(started.status, JSON.stringify(started.body)).toBe(202);
+    const user = await ctx.db.selectFrom('app_user').select('id').where('email', '=', 'zweit@example.org').executeTakeFirstOrThrow();
+    await ctx.db.deleteFrom('role_grant').where('user_id', '=', user.id).execute();
+    await processJobs(ctx.db);
+    const job = await ctx.db.selectFrom('job').selectAll().where('id', '=', started.body.id).executeTakeFirstOrThrow();
+    expect(job.status).toBe('failed');
+    expect(job.error).toContain('nur Admins');
+    expect(await ctx.db.selectFrom('file').select('id').where('purpose', '=', 'export').execute()).toHaveLength(0);
+
+    // A job left running by a crashed process is picked up again after its claim went stale; after two attempts it fails.
+    const crashed = await ctx.db.insertInto('job').values({ organization_id: job.organization_id, kind: 'full_export', created_by: job.created_by, status: 'running', attempts: 2, claimed_at: new Date(Date.now() - 3_600_000) }).returning('id').executeTakeFirstOrThrow();
+    await processJobs(ctx.db);
+    expect((await ctx.db.selectFrom('job').select(['status', 'error']).where('id', '=', crashed.id).executeTakeFirstOrThrow())).toMatchObject({ status: 'failed', error: 'Die Aufgabe wurde unterbrochen. Starte sie neu.' });
   });
 });

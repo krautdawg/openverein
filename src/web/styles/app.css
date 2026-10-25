@@ -58,6 +58,8 @@ kbd {
 .rail::before { left: 50%; bottom: 120px; width: 128px; height: 128px; margin-left: -64px; border: 1.5px solid rgb(233 239 246 / 0.1); border-radius: 50%; }
 .rail::after { left: 0; right: 0; bottom: 184px; height: 1.5px; background: rgb(233 239 246 / 0.1); }
 .rail > * { position: relative; }
+/* Short windows: the nav needs the room, the floor markings go. */
+@media (max-height: 879px) { .rail::before, .rail::after { display: none; } }
 .rail-club {
   font-family: var(--font-display);
   font-weight: 600;
@@ -604,3 +606,23 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 mark.match { background: var(--warn-soft); color: inherit; padding: 0 2px; border-radius: 2px; }
 @media (max-width: 760px) { .dup-pair { grid-template-columns: 1fr; } .dup-pair > dl + dl { border-top: 1px solid var(--line); padding-top: var(--s-3); } }
 input[type='range'] { accent-color: var(--accent); }
+
+/* ---------- Job tray: background jobs, bottom right ---------- */
+.job-tray {
+  position: fixed; right: var(--s-5); bottom: var(--s-5); z-index: 30;
+  width: min(340px, calc(100vw - 2 * var(--s-4)));
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-pop);
+}
+.job-tray ul { list-style: none; margin: 0; padding: 0; }
+.job-tray li { padding: var(--s-3) var(--s-4); display: grid; gap: var(--s-1); font-size: var(--text-sm); }
+.job-tray li + li { border-top: 1px solid var(--line); }
+.job-head { display: flex; align-items: center; gap: var(--s-2); min-height: 28px; }
+.job-head strong { flex: 1; font-weight: 600; }
+.job-head .icon-btn { width: 28px; height: 28px; margin-right: calc(-1 * var(--s-2)); }
+.job-tray li[data-status='done'] .meta { color: var(--ok); }
+.job-tray li[data-status='failed'] .meta, .job-error { color: var(--danger); }
+/* Progress as a court line: hairline track, accent stroke. */
+.job-line { height: 2px; background: var(--line); }
+.job-line span { display: block; height: 100%; background: var(--accent); transition: width 300ms var(--ease); }
+@media (max-width: 860px) { .job-tray { right: var(--s-4); bottom: var(--s-4); } }
+@media (prefers-reduced-motion: reduce) { .job-line span { transition: none; } }

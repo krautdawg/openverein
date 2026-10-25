@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api.ts';
+import { isActive, useJobs } from '../../components/JobTray.tsx';
 import { bytes } from '../../lib/format.ts';
 import { useTitle } from '../../lib/useTitle.ts';
 
@@ -11,6 +12,8 @@ export function FullExport() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['full-exports'], queryFn: () => api<Export[]>('/exports/full'), retry: false });
   const [busy, setBusy] = useState(false);
+  const jobs = useJobs();
+  const running = jobs.data?.find((j) => j.kind === 'full_export' && isActive(j));
   const [error, setError] = useState<string>();
 
   // The download needs a fresh second factor: a short-lived link is fetched through the API (which asks for the code).
@@ -28,7 +31,8 @@ export function FullExport() {
     setError(undefined);
     try {
       await api('/exports/full', { method: 'POST' });
-      await qc.invalidateQueries({ queryKey: ['full-exports'] });
+      // The job tray takes over from here and refreshes the list when the export is ready.
+      await qc.invalidateQueries({ queryKey: ['jobs'] });
     } catch (err) {
       setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
     } finally {
@@ -47,8 +51,9 @@ export function FullExport() {
       {!list.error && (
         <>
           <div className="actions-row" style={{ marginTop: 0, marginBottom: 'var(--s-4)' }}>
-            <button className="btn btn-primary" aria-busy={busy} disabled={busy} onClick={() => void run()}>{busy ? 'Export läuft …' : 'Gesamtexport erstellen'}</button>
+            <button className="btn btn-primary" aria-busy={busy || !!running} disabled={busy || !!running} onClick={() => void run()}>{running ? `Export läuft … ${running.progress} %` : 'Gesamtexport erstellen'}</button>
           </div>
+          {running && <p className="muted" style={{ marginBottom: 'var(--s-4)' }}>Der Export läuft im Hintergrund. Du kannst die Seite verlassen; unten rechts siehst Du, wann er fertig ist.</p>}
           <ul className="timeline" aria-label="Exporte">
             {list.data?.length === 0 && <li style={{ gridTemplateColumns: '1fr' }}><span className="muted">Noch kein Export in den letzten 7 Tagen.</span></li>}
             {list.data?.map((x) => (

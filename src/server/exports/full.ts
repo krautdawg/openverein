@@ -66,12 +66,13 @@ function clean(table: string, row: Record<string, unknown>, failed: Record<strin
  * Everything of one club as a ZIP: per table `data/<table>.jsonl` and `data/<table>.csv`, the stored files under
  * `files/<sha256>`, and `manifest.json` with schema version, counts and the SHA-256 of every other file.
  */
-export async function buildFullExport(db: Db, organizationId: string) {
+/** onProgress gets the share done (0–1); it runs outside the snapshot transaction. */
+export async function buildFullExport(db: Db, organizationId: string, onProgress?: (share: number) => Promise<void>) {
   // One consistent snapshot: no invoice lines without their invoice because something was booked meanwhile.
-  return db.transaction().setIsolationLevel('repeatable read').setAccessMode('read only').execute((tx) => build(tx, organizationId));
+  return db.transaction().setIsolationLevel('repeatable read').setAccessMode('read only').execute((tx) => build(tx, organizationId, onProgress));
 }
 
-async function build(db: Db, organizationId: string) {
+async function build(db: Db, organizationId: string, onProgress?: (share: number) => Promise<void>) {
   const columnsOf = new Map<string, string[]>();
   for (const c of (await sql<{ t: string; c: string }>`select table_name as t, column_name as c from information_schema.columns where table_schema = 'public' order by ordinal_position`.execute(db)).rows) columnsOf.set(c.t, [...(columnsOf.get(c.t) ?? []), c.c]);
   const failed: Record<string, number> = {};
@@ -80,8 +81,9 @@ async function build(db: Db, organizationId: string) {
     from information_schema.tables t where t.table_schema = 'public' and t.table_type = 'BASE TABLE' order by 1`.execute(db)).rows;
   const entries: { name: string; data: Buffer }[] = [];
   const counts: Record<string, number> = {};
-  for (const { t, has_org } of tables) {
+  for (const [i, { t, has_org }] of tables.entries()) {
     if (SKIP_TABLES.has(t)) continue;
+    if (i % 8 === 0) await onProgress?.((i / tables.length) * 0.8);
     let rows: Record<string, unknown>[];
     if (t === 'organization') rows = (await sql<Record<string, unknown>>`select * from organization where id = ${organizationId}`.execute(db)).rows;
     else if (has_org) rows = (await sql<Record<string, unknown>>`select * from ${sql.table(t)} where organization_id = ${organizationId} order by 1`.execute(db)).rows;
@@ -102,6 +104,7 @@ async function build(db: Db, organizationId: string) {
   const blobs = await db.selectFrom('file').select('sha256').distinct().where('organization_id', '=', organizationId).where('purpose', '<>', 'export').execute();
   const missing: string[] = [];
   const corrupt: string[] = [];
+  await onProgress?.(0.8);
   for (const { sha256 } of blobs) {
     try {
       entries.push({ name: `files/${sha256}`, data: await getBlob(sha256) });
