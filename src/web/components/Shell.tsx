@@ -8,6 +8,7 @@ import type { Command } from '../lib/commands.ts';
 import type { Me } from '../../shared/auth.ts';
 import { CommandPalette } from './CommandPalette.tsx';
 import { JobTray } from './JobTray.tsx';
+import { useAttendanceSync } from '../lib/offlineAttendance.ts';
 import { StepUpPrompt } from './StepUp.tsx';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -20,6 +21,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => setNavOpen(false), [location.pathname]);
+  useAttendanceSync();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -37,6 +37,7 @@ Die Übersicht zeigt Kennzahlen, Änderungswünsche aus dem Portal, Deine Aufgab
 - **Termine** mit Wiederholung, Höchstzahl, Warteliste und Teilnahmegebühr. Für Kinder bis zu einem Alter ist auch eine ermäßigte Gebühr möglich. Mit Gebühr bekommt jede Zusage automatisch eine Rechnung.
 - **ICS importieren**: Termine aus einer Kalenderdatei übernehmen, zum Beispiel den Hallenplan. Ein zweiter Import derselben Datei legt nichts doppelt an.
 - **Anwesenheit** trägst Du ab Beginn eines Termins ein. „Anwesenheit {Jahr}“ im Kalender lädt die Liste für Zuschussanträge herunter.
+- **Ohne Netz in der Halle**: Öffne den Termin, solange Du noch Verbindung hast. Was Du danach ohne Verbindung einträgst, wartet auf dem Gerät und wird gesendet, sobald wieder Netz da ist. Lass den Browser bis dahin offen.
 
 ## 5. Kommunikation
 
