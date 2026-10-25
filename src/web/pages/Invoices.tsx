@@ -300,6 +300,7 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
   const [term, setTerm] = useState('');
   const found = useQuery({ queryKey: ['member-pick', term], queryFn: () => api<{ items: MemberListItem[] }>(`/members?q=${encodeURIComponent(term)}&limit=6`), enabled: term.length >= 2 && !member });
   const [lines, setLines] = useState([{ text: '', quantity: '1', price: '', taxRate: '0' }]);
+  const [net, setNet] = useState(false);
   const articles = useArticles();
   const [error, setError] = useState<ApiError>();
 
@@ -314,7 +315,8 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
         kind: f.get('kind'),
         dueDate: f.get('dueDate') || null,
         coverText: f.get('coverText') || null,
-        lines: lines.map((l) => ({ text: l.text, quantity: Number(l.quantity.replace(',', '.')), unitCents: parseEuro(l.price) ?? NaN, taxRate: Number(l.taxRate) })),
+        closingText: f.get('closingText') || null,
+        lines: lines.map((l) => ({ text: l.text, quantity: Number(l.quantity.replace(',', '.')), unitCents: parseEuro(l.price) ?? NaN, taxRate: Number(l.taxRate), net })),
       };
       const inv = await api<InvoiceDetail>('/invoices', { method: 'POST', body });
       if (issue) await api(`/invoices/${inv.id}/issue`, { method: 'POST' });
@@ -342,9 +344,9 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
           <div className="field"><label htmlFor="kind">Art</label><select id="kind" name="kind" className="select" style={{ width: '100%' }}><option value="other">Rechnung</option><option value="credit_note">Gutschrift</option></select></div>
           <Field label="Fällig am" name="dueDate" type="date" hint="Leer: Zahlungsziel aus den Einstellungen." />
         </div>
-        <div className="field"><label htmlFor="cover">Text über den Positionen (optional)</label><textarea id="cover" name="coverText" className="textarea" /></div>
+        <div className="field"><label htmlFor="cover">Text über den Positionen (optional)</label><textarea id="cover" name="coverText" className="textarea" /><p className="hint">Leer: der Standardtext aus den Einstellungen, falls es einen gibt.</p></div>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="label" style={{ marginBottom: 'var(--s-2)' }}>Positionen (Bruttopreise)</legend>
+          <legend className="label" style={{ marginBottom: 'var(--s-2)' }}>Positionen</legend>
           {lines.map((l, i) => (
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 96px 80px', gap: 'var(--s-2)', marginBottom: 'var(--s-2)' }}>
               <input className="input" aria-label={`Position ${i + 1}: Text`} placeholder="Beschreibung" value={l.text} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
@@ -354,6 +356,10 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
             </div>
           ))}
           <span className="actions-inline">
+            <select className="select" aria-label="Preise" value={net ? 'net' : 'gross'} onChange={(e) => setNet(e.target.value === 'net')}>
+              <option value="gross">Preise inkl. USt</option>
+              <option value="net">Preise zzgl. USt</option>
+            </select>
             <button type="button" className="btn btn-ghost" onClick={() => setLines([...lines, { text: '', quantity: '1', price: '', taxRate: '0' }])}>Position hinzufügen</button>
             {!!articles.data?.length && (
               <select className="select" aria-label="Artikel einfügen" value="" onChange={(e) => {
@@ -367,6 +373,7 @@ function CreateInvoice({ onClose, onCreated }: { onClose: () => void; onCreated:
             )}
           </span>
         </fieldset>
+        <div className="field"><label htmlFor="closing">Text unter den Positionen (optional)</label><textarea id="closing" name="closingText" className="textarea" /></div>
         <div className="actions-row">
           <button className="btn btn-primary" value="issue" disabled={!member}>Ausstellen</button>
           <button className="btn" value="draft" disabled={!member}>Als Entwurf speichern</button>

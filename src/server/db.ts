@@ -63,6 +63,8 @@ export interface OrganizationTable {
   work_hours_age_to: number | null;
   remittance_template: Generated<string>;
   portal_features: Generated<unknown>;
+  invoice_cover_template: string | null;
+  invoice_closing_template: string | null;
 }
 
 export interface AppUserTable {
@@ -319,6 +321,7 @@ export interface InvoiceTable {
   created_at: Timestamp;
   issued_at: Date | null;
   updated_at: Timestamp;
+  closing_text: string | null;
 }
 
 export interface InvoiceLineTable {

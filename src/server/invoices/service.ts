@@ -4,6 +4,7 @@ import { addDays, formatDate } from '../../shared/dates.ts';
 import type { PaymentMethod } from '../db.ts';
 import type { Db, InvoiceKind } from '../db.ts';
 import { Problem } from '../http/problem.ts';
+import { fillInvoiceText, grossFromNet } from '../../shared/invoices.ts';
 import { nextNumber } from '../members/numbers.ts';
 import { assertNotLive } from '../sepa/live.ts';
 import { epcPayload, formatIban, renderInvoicePdf } from './pdf.ts';
@@ -84,6 +85,21 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     await tx.insertInto('invoice_einvoice').values({ invoice_id: inv.id, organization_id: organizationId, format: 'xrechnung-cii', xml: encryptBytes(xml), sha256: createHash('sha256').update(xml).digest('hex') }).execute();
   }
   const status = isCancellation ? 'issued' : total === 0 ? 'paid' : 'open';
+  const dueOn = isCancellation ? null : (due ?? addDays(issueDate, org.payment_terms_days));
+  // Cover and closing texts: the invoice's own, else the club's defaults (not on cancellations); placeholders are filled now and frozen.
+  const values = {
+    vorname: person.first_name ?? person.company_name ?? '',
+    name: snapshot.recipient.name,
+    mitgliedsnummer: member?.membership_number ?? '',
+    rechnungsnummer: number,
+    betrag: (Math.abs(total) / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }),
+    faellig: dueOn ? formatDate(dueOn) : '',
+    verein: org.name,
+  };
+  const textOf = (own: string | null, template: string | null) => {
+    const t = own ?? (isCancellation ? null : template);
+    return t ? fillInvoiceText(t, values) : null;
+  };
   await tx
     .updateTable('invoice')
     .set({
@@ -91,8 +107,10 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
       status,
       recipient: JSON.stringify(snapshot),
       issue_date: issueDate,
-      due_date: isCancellation ? null : (dueDate ?? inv.due_date ?? addDays(issueDate, org.payment_terms_days)),
+      due_date: dueOn,
       total_cents: total,
+      cover_text: textOf(inv.cover_text, org.invoice_cover_template),
+      closing_text: textOf(inv.closing_text, org.invoice_closing_template),
       issued_at: new Date(),
       updated_at: new Date(),
     })
@@ -151,6 +169,7 @@ export async function storedPdf(db: Db, organizationId: string, invoiceId: strin
     membershipNumber: snap.membershipNumber,
     recipientLines: snap.recipient.lines,
     coverText: inv.cover_text,
+    closingText: inv.closing_text,
     lines: lines.map((l) => ({ text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, totalCents: l.total_cents, taxRate: Number(l.tax_rate) })),
     totalCents: inv.total_cents,
     negative: inv.kind === 'cancellation' || inv.kind === 'credit_note',
@@ -171,8 +190,8 @@ const euroText = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'curr
 /** Creates a draft invoice with lines. Quantities may be fractional (e.g. 1.5 hours); totals round to cents. */
 export async function createDraft(
   tx: Db,
-  v: { organizationId: string; kind: InvoiceKind; personId: string; memberId: string | null; dueDate?: string | null; coverText?: string | null; feeRunId?: string | null; cancelsInvoiceId?: string | null; createdBy: string | null },
-  lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null; discount?: boolean }[],
+  v: { organizationId: string; kind: InvoiceKind; personId: string; memberId: string | null; dueDate?: string | null; coverText?: string | null; closingText?: string | null; feeRunId?: string | null; cancelsInvoiceId?: string | null; createdBy: string | null },
+  lines: { text: string; quantity: number; unitCents: number; taxRate: number; net?: boolean; assessmentId?: string | null; discount?: boolean }[],
 ) {
   const inv = await tx
     .insertInto('invoice')
@@ -183,6 +202,7 @@ export async function createDraft(
       member_id: v.memberId,
       due_date: v.dueDate ?? null,
       cover_text: v.coverText ?? null,
+      closing_text: v.closingText ?? null,
       fee_run_id: v.feeRunId ?? null,
       cancels_invoice_id: v.cancelsInvoiceId ?? null,
       created_by: v.createdBy,
@@ -199,9 +219,10 @@ export function lineTotal(quantity: number, unitCents: number) {
   return Math.sign(product) * Math.floor((Math.abs(product) + 50) / 100);
 }
 
-export async function insertLines(tx: Db, organizationId: string, invoiceId: string, lines: { text: string; quantity: number; unitCents: number; taxRate: number; assessmentId?: string | null; discount?: boolean }[]) {
+export async function insertLines(tx: Db, organizationId: string, invoiceId: string, lines: { text: string; quantity: number; unitCents: number; taxRate: number; net?: boolean; assessmentId?: string | null; discount?: boolean }[]) {
   let position = 1;
   for (const l of lines) {
+    const unitCents = l.net ? grossFromNet(l.unitCents, l.taxRate) : l.unitCents;
     await tx
       .insertInto('invoice_line')
       .values({
@@ -210,8 +231,8 @@ export async function insertLines(tx: Db, organizationId: string, invoiceId: str
         position: position++,
         text: l.text,
         quantity: l.quantity,
-        unit_cents: l.unitCents,
-        total_cents: lineTotal(l.quantity, l.unitCents),
+        unit_cents: unitCents,
+        total_cents: lineTotal(l.quantity, unitCents),
         tax_rate: l.taxRate,
         assessment_id: l.assessmentId ?? null,
         discount: l.discount ?? false,

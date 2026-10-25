@@ -16,6 +16,7 @@ export interface PdfInvoice {
   membershipNumber: string | null;
   recipientLines: string[];
   coverText: string | null;
+  closingText?: string | null;
   lines: { text: string; quantity: number; unitCents: number; totalCents: number; taxRate: number }[];
   totalCents: number;
   /** negative documents (cancellation, credit note) print amounts with a minus sign */
@@ -142,6 +143,7 @@ export function renderInvoicePdf(d: PdfInvoice): Promise<Buffer> {
     doc.fillColor('#000').fill();
     doc.font('text').fontSize(7).fillColor(muted).text('Mit der Banking-App scannen (GiroCode)', ox - 10, y + qrSize, { width: qrSize + 20, align: 'center' });
   }
+  if (d.closingText) doc.font('text').fontSize(10).fillColor(ink).text(d.closingText, left, Math.max(doc.y, d.epc ? y + qrSize + 14 : doc.y) + 14, { width });
 
   // Footer on every page.
   const footer = [

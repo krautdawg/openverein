@@ -83,7 +83,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function detail(actor: Actor, id: string) {
     const today = await orgToday(db, actor.organizationId);
-    const row = await base(actor, today).select([...listColumns, 'invoice.updated_at', 'invoice.cover_text', 'invoice.cancels_invoice_id', 'invoice.pdf_sha256', 'invoice.written_off_reason', 'invoice.dunning_hold_until', 'invoice.dunning_hold_reason']).where('invoice.id', '=', id).executeTakeFirst();
+    const row = await base(actor, today).select([...listColumns, 'invoice.updated_at', 'invoice.cover_text', 'invoice.closing_text', 'invoice.cancels_invoice_id', 'invoice.pdf_sha256', 'invoice.written_off_reason', 'invoice.dunning_hold_until', 'invoice.dunning_hold_reason']).where('invoice.id', '=', id).executeTakeFirst();
     if (!row) throw notFound('Rechnung');
     const [item] = await toItems([row], today);
     const lines = await db
@@ -103,6 +103,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
       version: versionOf(row.updated_at as Date),
       hasEinvoice: !!(await db.selectFrom('invoice_einvoice').select('invoice_id').where('invoice_id', '=', id).executeTakeFirst()),
       coverText: row.cover_text,
+      closingText: row.closing_text,
       recipient: snap?.recipient ?? null,
       lines: lines.map((l) => ({ id: l.id, position: l.position, text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, totalCents: l.total_cents, taxRate: Number(l.tax_rate), periodStart: l.period_start, periodEnd: l.period_end })),
       allocations: allocations.map((a) => ({ id: a.id, amountCents: a.amount_cents, bookedOn: a.booked_on, method: a.method, note: a.note, status: a.status })),
@@ -224,7 +225,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'invoices', 'write');
     const { row } = await loadMemberRow(db, actor, req.body.memberId, 'write', 'invoices');
     const id = await db.transaction().execute(async (tx) => {
-      const id = await createDraft(tx, { organizationId: actor.organizationId, kind: req.body.kind, personId: row.person_id, memberId: row.id, dueDate: req.body.dueDate, coverText: req.body.coverText, createdBy: actor.userId }, req.body.lines);
+      const id = await createDraft(tx, { organizationId: actor.organizationId, kind: req.body.kind, personId: row.person_id, memberId: row.id, dueDate: req.body.dueDate, coverText: req.body.coverText, closingText: req.body.closingText, createdBy: actor.userId }, req.body.lines);
       await audit(tx, actor.organizationId, actor, { action: 'invoice.drafted', entityType: 'invoice', entityId: id });
       return id;
     });
@@ -239,7 +240,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
       const inv = await loadForWrite(tx, actor, req.params.id);
       if (inv.status !== 'draft') throw new Problem(409, 'immutable', 'Ausgestellte Rechnungen lassen sich nicht ändern. Erstelle eine Stornorechnung.');
       assertIfMatch(req, versionOf(inv.updated_at as Date));
-      await tx.updateTable('invoice').set({ ...(req.body.kind ? { kind: req.body.kind } : {}), ...(req.body.dueDate !== undefined ? { due_date: req.body.dueDate } : {}), ...(req.body.coverText !== undefined ? { cover_text: req.body.coverText } : {}), updated_at: new Date() }).where('id', '=', inv.id).execute();
+      await tx.updateTable('invoice').set({ ...(req.body.kind ? { kind: req.body.kind } : {}), ...(req.body.dueDate !== undefined ? { due_date: req.body.dueDate } : {}), ...(req.body.coverText !== undefined ? { cover_text: req.body.coverText } : {}), ...(req.body.closingText !== undefined ? { closing_text: req.body.closingText } : {}), updated_at: new Date() }).where('id', '=', inv.id).execute();
       if (req.body.lines) {
         await tx.deleteFrom('invoice_line').where('invoice_id', '=', inv.id).execute();
         await insertLines(tx, actor.organizationId, inv.id, req.body.lines);

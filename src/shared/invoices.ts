@@ -23,6 +23,8 @@ export const lineInput = z.object({
   quantity: z.number().positive().max(100_000).refine((q) => Number.isInteger(Math.round(q * 100)) && Math.abs(q * 100 - Math.round(q * 100)) < 1e-6, 'Höchstens zwei Nachkommastellen.').default(1),
   unitCents: cents,
   taxRate: z.union([z.literal(0), z.literal(7), z.literal(19)]).default(0),
+  /** unitCents entered net ("zzgl. USt"): stored gross, rounded to the cent. */
+  net: z.boolean().default(false),
 });
 
 export const invoiceCreate = z.object({
@@ -30,6 +32,7 @@ export const invoiceCreate = z.object({
   kind: z.enum(['other', 'credit_note']).default('other'),
   dueDate: z.iso.date().nullish(),
   coverText: z.string().trim().max(2000).nullish(),
+  closingText: z.string().trim().max(2000).nullish(),
   lines: z.array(lineInput).min(1, 'Mindestens eine Position.').max(200),
 });
 export const invoicePatch = invoiceCreate.omit({ memberId: true }).partial();
@@ -60,6 +63,7 @@ export const invoiceDetail = invoiceListItem.extend({
   /** an XRechnung was created at issue (GET /invoices/:id/xrechnung.xml) */
   hasEinvoice: z.boolean(),
   coverText: z.string().nullable(),
+  closingText: z.string().nullable(),
   recipient: z.object({ name: z.string(), lines: z.array(z.string()) }).nullable(),
   lines: z.array(invoiceLine),
   allocations: z.array(allocationDto),
@@ -90,3 +94,10 @@ export const paymentInput = z.object({
 });
 
 export const dunningProposal = z.object({ invoice: invoiceListItem, nextLevel: z.number(), label: z.string(), feeCents: z.number(), daysOverdue: z.number() });
+
+/** Placeholders of invoice cover and closing texts, filled when the invoice is issued. */
+export const INVOICE_TEXT_PLACEHOLDERS = { vorname: 'Vorname', name: 'Name', mitgliedsnummer: 'Mitgliedsnummer', rechnungsnummer: 'Rechnungsnummer', betrag: 'Rechnungsbetrag', faellig: 'Fälligkeitsdatum', verein: 'Name des Vereins' } as const;
+export const fillInvoiceText = (text: string, values: Partial<Record<keyof typeof INVOICE_TEXT_PLACEHOLDERS, string>>) =>
+  text.replace(/\{\{\s*(\w+)\s*\}\}/g, (all, k: string) => (k in INVOICE_TEXT_PLACEHOLDERS ? (values[k as keyof typeof INVOICE_TEXT_PLACEHOLDERS] ?? '') : all));
+/** Gross unit price from a net one: rounded half away from zero. */
+export const grossFromNet = (netCents: number, ratePct: number) => Math.sign(netCents) * Math.round((Math.abs(netCents) * (100 + ratePct)) / 100);

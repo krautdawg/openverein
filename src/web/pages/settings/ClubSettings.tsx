@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '../../../shared/auth.ts';
 import { PORTAL_FEATURE_KEYS, PORTAL_FEATURES, type Organization } from '../../../shared/organization.ts';
+import { INVOICE_TEXT_PLACEHOLDERS } from '../../../shared/invoices.ts';
 import { InlineEdit } from '../../components/InlineEdit.tsx';
 import { api, ApiError } from '../../lib/api.ts';
 import { useTitle } from '../../lib/useTitle.ts';
@@ -89,6 +90,12 @@ export function ClubSettings({ me }: { me: Me }) {
               <input className="input" type="number" min={0} max={120} style={{ width: 88 }} aria-label="Zahlungsziel in Tagen" disabled={!canWrite} defaultValue={org.paymentTermsDays} onBlur={(e) => Number(e.target.value) !== org.paymentTermsDays && void save({ paymentTermsDays: Number(e.target.value) })} />
               <span>Tage nach Rechnungsdatum</span>
             </div>
+          </dd>
+          <dt>Standardtexte</dt>
+          <dd>
+            <div className="field"><label htmlFor="cover-tpl">Über den Positionen</label><textarea id="cover-tpl" className="textarea" rows={3} style={{ maxWidth: '60ch' }} disabled={!canWrite} defaultValue={org.invoiceCoverTemplate ?? ''} onBlur={(e) => e.target.value.trim() !== (org.invoiceCoverTemplate ?? '') && void save({ invoiceCoverTemplate: e.target.value })} /></div>
+            <div className="field"><label htmlFor="closing-tpl">Unter den Positionen</label><textarea id="closing-tpl" className="textarea" rows={3} style={{ maxWidth: '60ch' }} disabled={!canWrite} defaultValue={org.invoiceClosingTemplate ?? ''} onBlur={(e) => e.target.value.trim() !== (org.invoiceClosingTemplate ?? '') && void save({ invoiceClosingTemplate: e.target.value })} /></div>
+            <p className="meta" style={{ maxWidth: '60ch' }}>Gelten für jede Rechnung ohne eigenen Text, auch im Beitragslauf. Platzhalter: {Object.keys(INVOICE_TEXT_PLACEHOLDERS).map((k) => `{{${k}}}`).join(', ')}.</p>
           </dd>
           <dt>Mahnstufen</dt>
           <dd>
