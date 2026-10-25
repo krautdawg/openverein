@@ -15,7 +15,9 @@ export interface XInvoice {
   lines: { text: string; quantity: number; grossCents: number; ratePct: number; periodStart: string | null; periodEnd: string | null }[];
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// Control characters are not allowed in XML 1.0; they become spaces.
+// eslint-disable-next-line no-control-regex
+const esc = (s: string) => s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const amt = (cents: number) => (cents / 100).toFixed(2);
 const d102 = (iso: string) => iso.replaceAll('-', '');
 const qty = (q: number) => (Number.isInteger(q) ? q.toFixed(0) : q.toFixed(4).replace(/0+$/, ''));
@@ -89,7 +91,7 @@ export function xrechnungCii(x: XInvoice): string {
       const price = (Math.abs(net) / 100 / Math.abs(q)).toFixed(4);
       return `<ram:IncludedSupplyChainTradeLineItem>
       <ram:AssociatedDocumentLineDocument><ram:LineID>${i + 1}</ram:LineID></ram:AssociatedDocumentLineDocument>
-      <ram:SpecifiedTradeProduct><ram:Name>${esc(l.text.slice(0, 200))}</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedTradeProduct><ram:Name>${esc(l.text)}</ram:Name></ram:SpecifiedTradeProduct>
       <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>${price}</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">${qty(q)}</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement>
@@ -120,7 +122,7 @@ export function xrechnungCii(x: XInvoice): string {
   <rsm:ExchangedDocument>
     <ram:ID>${esc(x.number)}</ram:ID>
     <ram:TypeCode>${x.typeCode}</ram:TypeCode>
-    <ram:IssueDateTime><udt:DateTimeString format="102">${d102(x.issueDate)}</udt:DateTimeString></ram:IssueDateTime>${x.note ? `\n    <ram:IncludedNote><ram:Content>${esc(x.note.slice(0, 1000))}</ram:Content></ram:IncludedNote>` : ''}
+    <ram:IssueDateTime><udt:DateTimeString format="102">${d102(x.issueDate)}</udt:DateTimeString></ram:IssueDateTime>${x.note ? `\n    <ram:IncludedNote><ram:Content>${esc(x.note)}</ram:Content></ram:IncludedNote>` : ''}
   </rsm:ExchangedDocument>
   <rsm:SupplyChainTradeTransaction>
     ${lines}
@@ -146,7 +148,7 @@ export function xrechnungCii(x: XInvoice): string {
       <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
       ${means}
       ${taxes}${start && end ? `\n      <ram:BillingSpecifiedPeriod><ram:StartDateTime><udt:DateTimeString format="102">${d102(start)}</udt:DateTimeString></ram:StartDateTime><ram:EndDateTime><udt:DateTimeString format="102">${d102(end)}</udt:DateTimeString></ram:EndDateTime></ram:BillingSpecifiedPeriod>` : ''}
-      <ram:SpecifiedTradePaymentTerms><ram:Description>${x.dueDate ? `Zahlbar bis ${x.dueDate.split('-').reverse().join('.')}` : 'Zahlbar sofort'}</ram:Description>${x.dueDate ? `<ram:DueDateDateTime><udt:DateTimeString format="102">${d102(x.dueDate)}</udt:DateTimeString></ram:DueDateDateTime>` : ''}${x.payment.kind === 'direct_debit' ? `<ram:DirectDebitMandateID>${esc(x.payment.mandateReference)}</ram:DirectDebitMandateID>` : ''}</ram:SpecifiedTradePaymentTerms>
+      <ram:SpecifiedTradePaymentTerms><ram:Description>${x.typeCode === '381' ? 'Gutschrift: Der Betrag wird überwiesen oder verrechnet.' : x.dueDate ? `Zahlbar bis ${x.dueDate.split('-').reverse().join('.')}` : 'Zahlbar sofort'}</ram:Description>${x.dueDate ? `<ram:DueDateDateTime><udt:DateTimeString format="102">${d102(x.dueDate)}</udt:DateTimeString></ram:DueDateDateTime>` : ''}${x.payment.kind === 'direct_debit' ? `<ram:DirectDebitMandateID>${esc(x.payment.mandateReference)}</ram:DirectDebitMandateID>` : ''}</ram:SpecifiedTradePaymentTerms>
       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
         <ram:LineTotalAmount>${amt(lineTotal)}</ram:LineTotalAmount>
         <ram:TaxBasisTotalAmount>${amt(lineTotal)}</ram:TaxBasisTotalAmount>
