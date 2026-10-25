@@ -190,3 +190,10 @@ With managed hosting switched on, the system SHALL create clubs only through the
 - **WHEN** the admin of club A signs in under club B's host name
 - **THEN** the sign-in fails
 
+### Requirement: Own overview layout
+The system SHALL let every access order and hide the overview sections and keep that layout for the access.
+
+#### Scenario: Hide first steps
+- **WHEN** a treasurer hides "Erste Schritte"
+- **THEN** their overview no longer shows it and other accesses are unaffected
+
