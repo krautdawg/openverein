@@ -73,7 +73,7 @@ export async function pruneSignIns(db: Db) {
 export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  /** The signed-in address and every current membership registered under it. */
+  /** The signed-in address, every current membership registered under it, and the members of households it pays for (proxy). */
   async function portalUser(req: FastifyRequest, reply: FastifyReply) {
     const token = req.cookies[PORTAL_COOKIE];
     const s = token ? await db.selectFrom('portal_session').selectAll().where('token_hash', '=', sha256(token)).where('expires_at', '>', new Date()).executeTakeFirst() : undefined;
@@ -86,8 +86,13 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       .selectFrom('member')
       .innerJoin('person', 'person.id', 'member.person_id')
       .select(['member.id as memberId', 'member.person_id as personId', 'member.status', 'member.membership_number', 'member.join_date', 'member.exit_date', 'member.notice_date', 'person.first_name', 'person.last_name', 'person.company_name', 'person.kind', 'person.email', 'person.phone', 'person.street', 'person.postal_code', 'person.city', 'person.country', 'person.custom'])
+      .select(sql<boolean>`lower(coalesce(person.email, '')) <> lower(${s.email})`.as('viaHousehold'))
       .where('member.organization_id', '=', s.organization_id)
-      .where(sql<boolean>`lower(person.email) = lower(${s.email})`)
+      .where((eb) => eb.or([
+        eb(sql`lower(person.email)`, '=', s.email.toLowerCase()),
+        // The payer of a household manages its members (children, partners without their own access).
+        eb('member.household_id', 'in', eb.selectFrom('household').innerJoin('person as payer', 'payer.id', 'household.payer_person_id').select('household.id').where('household.organization_id', '=', s.organization_id).where(sql<boolean>`lower(payer.email) = lower(${s.email})`)),
+      ]))
       .where('member.status', 'in', [...CURRENT])
       .orderBy('person.first_name')
       .execute();
@@ -182,6 +187,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       club: { name: org.name, email: org.email },
       members: u.members.map((m) => ({
         memberId: m.memberId,
+        /** managed as the household's payer, not the member's own address */
+        managed: m.viaHousehold,
         name: m.kind === 'organisation' ? m.company_name : [m.first_name, m.last_name].filter(Boolean).join(' '),
         firstName: m.first_name,
         lastName: m.last_name,
@@ -361,6 +368,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       const u = await portalUser(req, reply);
       const m = ownMember(u, req.body.memberId);
       if (m.status === 'resigned') throw new Problem(409, 'already-resigned', 'Diese Mitgliedschaft ist schon gekündigt.');
+      // Someone with their own address resigns themselves; the payer only for members without one (e.g. children).
+      if (m.viaHousehold && m.email) throw new Problem(403, 'own-access', 'Kündigen kann nur das Mitglied selbst.', `${m.first_name ?? 'Das Mitglied'} hat eine eigene E-Mail-Adresse und kann sich selbst im Portal anmelden.`);
       const org = await db.selectFrom('organization').select(['notice_weeks', 'exit_at']).where('id', '=', u.organizationId).executeTakeFirstOrThrow();
       const today = await orgToday(db, u.organizationId);
       const proposal = proposeExitDate(today, org.notice_weeks, org.exit_at);
