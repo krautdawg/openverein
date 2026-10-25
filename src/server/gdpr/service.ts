@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sql } from 'kysely';
+import { audit } from '../audit.ts';
 import { config } from '../config.ts';
 import { encrypt } from '../crypto.ts';
 import type { Db } from '../db.ts';
@@ -28,6 +30,10 @@ export async function anonymiseBlockers(tx: Db, organizationId: string, personId
     select reference, (coalesce(last_collected_on, revoked_on, signed_on) + interval '14 months')::date::text as until from sepa_mandate
     where person_id = ${personId} and (status in ('active', 'pending_evidence') or coalesce(last_collected_on, revoked_on, signed_on) + interval '14 months' >= ${today}::date)`.execute(tx);
   for (const m of keep.rows) out.push(`SEPA-Mandat ${m.reference} muss bis ${m.until.split('-').reverse().join('.')} aufbewahrt werden.`);
+  // The address is needed for the receipt.
+  const unreceipted = await tx.selectFrom('donation').select(sql<number>`count(*)::int`.as('n')).where('person_id', '=', personId).where('voided_at', 'is', null)
+    .where((eb) => eb.not(eb.exists(eb.selectFrom('donation_receipt_item').select('donation_id').whereRef('donation_receipt_item.donation_id', '=', 'donation.id').where('live', '=', true)))).executeTakeFirstOrThrow();
+  if (unreceipted.n) out.push(`${unreceipted.n} Spende${unreceipted.n === 1 ? ' ist' : 'n sind'} noch nicht bestätigt.`);
   return out;
 }
 
@@ -44,25 +50,39 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
     .where('id', '=', personId)
     .execute();
   const members = (await tx.selectFrom('member').select('id').where('person_id', '=', personId).execute()).map((m) => m.id);
+  const fileIds: string[] = [];
   if (members.length) {
     await tx.updateTable('member').set({ exit_reason: null }).where('id', 'in', members).execute();
     // Deletable member files go; vouchers in retention and files on hold stay.
     const heads = await tx.selectFrom('file').select('id').where('member_id', 'in', members).where('superseded_at', 'is', null).execute();
     for (const h of heads) {
       const chain = await lockChain(tx, h.id);
-      if (chain && !deletionBlocker(chain, today)) await deleteChain(tx, chain);
+      if (chain && !deletionBlocker(chain, today)) {
+        fileIds.push(...chain.map((v) => v.id));
+        await deleteChain(tx, chain);
+      }
     }
-    await tx.updateTable('change_request').set({ old_value: null, new_value: '' }).where('person_id', '=', personId).execute();
     // The application trigger allows exactly this scrub once a decision was made.
-    await tx.updateTable('application').set({ payload: '{}', iban_encrypted: null, iban_last4: null }).where('member_id', 'in', members).where('status', '<>', 'new').execute();
+    await tx.updateTable('application').set({ payload: '{}', iban_encrypted: null, iban_last4: null, reason: null }).where('member_id', 'in', members).where('status', '<>', 'new').execute();
   }
-  await tx.updateTable('sepa_mandate').set({ account_holder: ANONYMOUS, iban_encrypted: encrypt(''), amended_from_iban_encrypted: null, revoke_reason: null, updated_at: new Date() }).where('person_id', '=', personId).execute();
-  await tx.updateTable('delivery').set({ email: '' }).where('person_id', '=', personId).execute();
+  await tx.updateTable('change_request').set({ old_value: null, new_value: '', requested_by_email: '', reason: null }).where('person_id', '=', personId).execute();
+  await tx.updateTable('donation').set({ note: null }).where('person_id', '=', personId).execute();
+  await tx.updateTable('collection_item').set({ amended_from_iban_encrypted: null }).where('person_id', '=', personId).execute();
+  // A random hash, so bank matching no longer suggests this person for that IBAN.
+  for (const m of await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', personId).execute()) {
+    await tx.updateTable('sepa_mandate').set({ account_holder: ANONYMOUS, iban_encrypted: encrypt(''), iban_hash: randomBytes(32).toString('hex'), amended_from_iban_encrypted: null, revoke_reason: null, updated_at: new Date() }).where('id', '=', m.id).execute();
+  }
+  await tx.updateTable('delivery').set({ status: 'skipped', error: null }).where('person_id', '=', personId).where('status', 'in', ['queued', 'sending']).execute();
+  await tx.updateTable('delivery').set({ email: '', error: null }).where('person_id', '=', personId).execute();
   await tx.deleteFrom('consent').where('person_id', '=', personId).execute();
   if (p.email) {
     await tx.deleteFrom('portal_session').where('organization_id', '=', organizationId).where(sql`lower(email)`, '=', p.email.toLowerCase()).execute();
     await tx.deleteFrom('login_code').where('organization_id', '=', organizationId).where('email_hash', '=', emailHash(p.email)).execute();
   }
+  // Audit entries keep what happened and when, not the values (the trigger allows exactly this inside the scrub).
+  await sql`select set_config('ov.scrub', 'on', true)`.execute(tx);
+  await tx.updateTable('audit_event').set({ diff: null }).where('organization_id', '=', organizationId).where('entity_id', 'in', [personId, ...members, ...fileIds]).where('diff', 'is not', null).execute();
+  await sql`select set_config('ov.scrub', 'off', true)`.execute(tx);
   await tx.insertInto('erasure_log').values({ organization_id: organizationId, person_id: personId }).execute();
 }
 
@@ -72,22 +92,45 @@ export async function recordErasureFile(organizationId: string, personId: string
   await appendFile(erasureFile(), JSON.stringify({ o: organizationId, p: personId, at: new Date().toISOString() }) + '\n', { mode: 0o600 });
 }
 
-/** Run at start-up before requests: anonymises persons from the erasure file that a restored backup brought back. */
-export async function replayErasures(db: Db) {
-  let text: string;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Run at start-up before requests. The file is the copy that survives a database restore: first every erasure the
+ * database knows but the file lacks is appended (a failed append after commit), then every erasure in the file whose
+ * person is back is anonymised again. Unreadable lines are skipped and reported.
+ */
+export async function replayErasures(db: Db, log: { warn: (msg: string) => void } = console) {
+  let text = '';
   try {
     text = await readFile(erasureFile(), 'utf8');
   } catch {
-    return 0;
+    // no file yet
+  }
+  const seen = new Set<string>();
+  const entries: { o: string; p: string }[] = [];
+  text.split('\n').forEach((line, i) => {
+    if (!line.trim()) return;
+    try {
+      const { o, p } = JSON.parse(line) as { o: unknown; p: unknown };
+      if (typeof o !== 'string' || typeof p !== 'string' || !UUID.test(o) || !UUID.test(p)) throw new Error('shape');
+      seen.add(p);
+      entries.push({ o, p });
+    } catch {
+      log.warn(`erasure log line ${i + 1} unreadable, skipped`);
+    }
+  });
+  for (const r of await db.selectFrom('erasure_log').select(['organization_id', 'person_id']).execute()) {
+    if (seen.has(r.person_id)) continue;
+    await recordErasureFile(r.organization_id, r.person_id);
+    seen.add(r.person_id);
   }
   let n = 0;
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    const { o, p } = JSON.parse(line) as { o: string; p: string };
+  for (const { o, p } of entries) {
     const again = await db.transaction().execute(async (tx) => {
-      const row = await tx.selectFrom('person').select('anonymised_at').where('id', '=', p).where('organization_id', '=', o).executeTakeFirst();
+      const row = await tx.selectFrom('person').select('anonymised_at').where('id', '=', p).where('organization_id', '=', o).forUpdate().executeTakeFirst();
       if (!row || row.anonymised_at) return false;
       await anonymise(tx, o, p);
+      await audit(tx, o, null, { action: 'person.anonymised_again', entityType: 'person', entityId: p });
       return true;
     });
     if (again) n++;

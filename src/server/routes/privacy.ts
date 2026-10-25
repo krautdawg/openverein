@@ -68,12 +68,11 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
     const p = await personOf(actor.organizationId, req.params.id);
+    if (p.anonymised_at) throw new Problem(409, 'anonymised', 'Diese Person ist anonymisiert.');
     const b = req.body;
     if (b.purpose === 'other' && !b.label) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'label', message: 'Bitte beschreiben, wofür die Einwilligung gilt.' }] });
     const c = await db.transaction().execute(async (tx) => {
       const c = await tx.insertInto('consent').values({ organization_id: actor.organizationId, person_id: p.id, purpose: b.purpose, label: b.purpose === 'other' ? b.label! : null, source: b.source, text_version: b.textVersion ?? null, created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();
-      // A fresh newsletter opt-in lifts an earlier unsubscribe for this address.
-      if (b.purpose === 'newsletter' && p.email) await tx.deleteFrom('suppression').where('organization_id', '=', actor.organizationId).where('email_hash', '=', emailHash(p.email)).where('reason', '=', 'unsubscribe').execute();
       await audit(tx, actor.organizationId, actor, { action: 'consent.granted', entityType: 'person', entityId: p.id, diff: { purpose: [null, b.purpose], source: [null, b.source] } });
       return c;
     });
@@ -103,6 +102,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
     const p = await personOf(actor.organizationId, req.params.id);
+    if (p.anonymised_at) throw new Problem(409, 'anonymised', 'Diese Person ist anonymisiert.');
     await db.transaction().execute(async (tx) => {
       await tx.updateTable('person').set({ legal_hold_reason: req.body.reason, updated_at: new Date() }).where('id', '=', p.id).execute();
       await audit(tx, actor.organizationId, actor, { action: req.body.reason ? 'person.legal_hold' : 'person.legal_hold_released', entityType: 'person', entityId: p.id, diff: { reason: [p.legal_hold_reason, req.body.reason] } });
@@ -116,13 +116,14 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     requireStepUp(actor);
     await db.transaction().execute(async (tx) => {
       // Lock the person first, then check: parallel invoices or mandates for this person wait or are seen.
-      await tx.selectFrom('person').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
+      if (!(await tx.selectFrom('person').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst())) throw notFound('Person');
       const blockers = await anonymiseBlockers(tx, actor.organizationId, req.params.id);
       if (blockers.length) throw new Problem(409, 'anonymise-blocked', 'Anonymisieren ist gerade nicht möglich.', blockers.join(' '), { blockers });
       await anonymise(tx, actor.organizationId, req.params.id);
       await audit(tx, actor.organizationId, actor, { action: 'person.anonymised', entityType: 'person', entityId: req.params.id });
     });
-    await recordErasureFile(actor.organizationId, req.params.id);
+    // The database log is authoritative; a failed append is repaired at the next start.
+    await recordErasureFile(actor.organizationId, req.params.id).catch((err) => req.log.error({ err }, 'erasure file append failed'));
     return { consents: [], legalHoldReason: null, anonymisedAt: new Date().toISOString(), blockers: ['Schon anonymisiert.'] };
   });
 
@@ -142,11 +143,11 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('donation_receipt').select(['number as Nummer', 'issued_on as Ausgestellt', 'total_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('participation').innerJoin('event', 'event.id', 'participation.event_id').select(['event.title as Termin', 'participation.occurrence_date as Datum', 'participation.status as Status']).where('participation.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('delivery').innerJoin('message', 'message.id', 'delivery.message_id').select(['message.subject as Betreff', 'delivery.email as An', 'delivery.status as Status', 'delivery.sent_at as Gesendet']).where('delivery.person_id', '=', p.id).execute()),
-      q(db.selectFrom('change_request').select(['field as Feld', 'new_value as Neu', 'status as Status', 'requested_at as Angefragt']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('change_request').select(['field as Feld', sql<string>`case when field = 'iban' then '(IBAN, verschlüsselt gespeichert)' else new_value end`.as('Neu'), 'status as Status', 'requested_at as Angefragt']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('application').select(['application_date as Datum', 'payload as Angaben', 'consent as Einwilligung', 'status as Status']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('file').select(['name as Datei', 'created_at as Hochgeladen']).where('member_id', 'in', memberIds).where('superseded_at', 'is', null).execute()),
     ]);
-    const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
+    const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
       ['Stammdaten', [{ Vorname: p.first_name, Nachname: p.last_name, Firma: p.company_name, Geburtsdatum: p.birth_date, 'E-Mail': p.email, Telefon: p.phone, Straße: p.street, PLZ: p.postal_code, Ort: p.city, Land: p.country, Notiz: p.note }]],
       ['Mitgliedschaften', members.map((m) => ({ Nummer: m.membership_number, Status: m.status, Antrag: m.application_date, Eintritt: m.join_date, Kündigung: m.notice_date, Austritt: m.exit_date, Zahlweise: m.payment_method }))],
@@ -176,13 +177,14 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const org = await db.selectFrom('organization').select('erase_after_months').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
     const today = await orgToday(db, actor.organizationId);
     const rows = await sql<{ person_id: string; first_name: string | null; last_name: string | null; company_name: string | null; kind: string; exit_date: string }>`
-      select p.id as person_id, p.first_name, p.last_name, p.company_name, p.kind, max(m.exit_date)::text as exit_date
+      select p.id as person_id, p.first_name, p.last_name, p.company_name, p.kind, coalesce(max(m.exit_date), max(m.updated_at)::date)::text as exit_date
       from person p join member m on m.person_id = p.id
       where p.organization_id = ${actor.organizationId} and p.anonymised_at is null
       group by p.id
-      having bool_and(m.status in ('former', 'rejected')) and max(m.exit_date) + make_interval(months => ${org.erase_after_months}) < ${today}::date
-      order by max(m.exit_date)
-      limit 500`.execute(db);
+      -- Rejected applicants have no exit date: their last change counts.
+      having bool_and(m.status in ('former', 'rejected')) and coalesce(max(m.exit_date), max(m.updated_at)::date) + make_interval(months => ${org.erase_after_months}) < ${today}::date
+      order by 6
+      limit 100`.execute(db);
     const items = [];
     for (const r of rows.rows) {
       items.push({ personId: r.person_id, name: r.kind === 'organisation' ? (r.company_name ?? '') : [r.last_name, r.first_name].filter(Boolean).join(', '), exitDate: r.exit_date, blockers: await anonymiseBlockers(db, actor.organizationId, r.person_id) });

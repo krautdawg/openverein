@@ -12,7 +12,7 @@ export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: 
   const { data, error: loadError } = useQuery({ queryKey: key, queryFn: () => api<PrivacyState>(`/persons/${personId}/privacy`), retry: false });
   const [form, setForm] = useState<'consent' | 'hold' | 'anonymise' | null>(null);
   const [purpose, setPurpose] = useState<(typeof CONSENT_PURPOSES)[number]>('newsletter');
-  const [error, setError] = useState<ApiError>();
+  const [error, setError] = useState<string>();
 
   async function run(fn: () => Promise<unknown>) {
     setError(undefined);
@@ -21,11 +21,13 @@ export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: 
       setForm(null);
       await qc.invalidateQueries({ queryKey: key });
     } catch (err) {
-      setError(err instanceof ApiError ? err : undefined);
+      setError(err instanceof ApiError ? problemText(err) : 'Das hat nicht geklappt. Bitte versuch es noch einmal.');
     }
   }
-  // Scoped users have no club-wide grant: the section stays out of their way.
-  if (loadError || !data) return null;
+  // Scoped users have no club-wide grant (403): the section stays out of their way. Other errors are shown.
+  if (loadError instanceof ApiError && loadError.problem.status === 403) return null;
+  if (loadError) return <section className="sheet-section"><h3>Datenschutz</h3><div className="alert alert-error" role="alert">{loadError instanceof ApiError ? problemText(loadError) : 'Konnte nicht geladen werden.'}</div></section>;
+  if (!data) return null;
   const live = data.consents.filter((c) => !c.withdrawnAt);
   const past = data.consents.filter((c) => c.withdrawnAt);
   const fd = (e: FormEvent<HTMLFormElement>) => {
@@ -36,7 +38,8 @@ export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: 
   return (
     <section className="sheet-section" aria-labelledby="m-privacy">
       <h3 id="m-privacy">Datenschutz</h3>
-      {error && <div className="alert alert-error" role="alert">{problemText(error)}</div>}
+      {!data.anonymisedAt && <p className="muted" style={{ marginTop: 0 }}>Einwilligungen werden hier dokumentiert. Ein Widerruf der Newsletter-Einwilligung meldet die E-Mail-Adresse vom Newsletter ab.</p>}
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
       {data.anonymisedAt ? (
         <p className="muted">Anonymisiert am {new Date(data.anonymisedAt).toLocaleDateString('de-DE')}. Rechnungen und Buchungen behalten ihre Angaben bis zum Ende ihrer Aufbewahrung.</p>
       ) : (
@@ -84,7 +87,7 @@ export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: 
                 </>
               ) : (
                 <>
-                  <p>Name, Anschrift, Kontaktdaten, Notizen, Einwilligungen und löschbare Dateien werden endgültig entfernt. Rechnungen, Bestätigungen und Buchungen behalten ihre Angaben bis zum Ende der Aufbewahrungsfrist. Das lässt sich nicht rückgängig machen.</p>
+                  <p role="alert">Name, Anschrift, Kontaktdaten, Notizen, Einwilligungen und löschbare Dateien werden endgültig entfernt. Rechnungen, Bestätigungen und Buchungen behalten ihre Angaben bis zum Ende der Aufbewahrungsfrist. Das lässt sich nicht rückgängig machen.</p>
                   <div className="actions-row" style={{ marginTop: 0 }}>
                     <button type="button" className="btn btn-danger" onClick={() => void run(async () => { await api(`/persons/${personId}/anonymise`, { method: 'POST' }); onAnonymised(); })}>Endgültig anonymisieren</button>
                     <button type="button" className="btn btn-ghost" onClick={() => setForm(null)}>Abbrechen</button>

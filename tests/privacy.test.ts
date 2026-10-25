@@ -1,8 +1,13 @@
+import { appendFile, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { replayErasures } from '../src/server/gdpr/service.ts';
+import { config } from '../src/server/config.ts';
 import { client, reset, setupClub, testApp } from './helpers.ts';
 
+config.filesDir = await mkdtemp(join(tmpdir(), 'ov-privacy-'));
 const ctx = await testApp();
 afterAll(() => ctx.close());
 
@@ -28,8 +33,9 @@ describe('privacy', () => {
     expect((await admin.post(`/persons/${m.personId}/consents`, { purpose: 'newsletter', source: 'paper' })).status).toBe(409); // one live consent per purpose
     expect((await admin.post(`/consents/${c.body.id}/withdraw`, { source: 'portal' })).body.withdrawnSource).toBe('portal');
     expect(await ctx.db.selectFrom('suppression').select('reason').execute()).toEqual([{ reason: 'unsubscribe' }]);
+    // A new opt-in does not silently lift an unsubscribe (the address may be shared).
     await admin.post(`/persons/${m.personId}/consents`, { purpose: 'newsletter', source: 'form' });
-    expect(await ctx.db.selectFrom('suppression').select('reason').execute()).toEqual([]);
+    expect(await ctx.db.selectFrom('suppression').select('reason').execute()).toEqual([{ reason: 'unsubscribe' }]);
   });
 
   it('refuses to anonymise with open items or a hold, then anonymises, keeps the invoice snapshot and survives a restore', async () => {
@@ -49,12 +55,18 @@ describe('privacy', () => {
     expect(done.status, JSON.stringify(done.body)).toBe(200);
     const p = await ctx.db.selectFrom('person').selectAll().where('id', '=', m.personId).executeTakeFirstOrThrow();
     expect([p.first_name, p.last_name, p.email, p.street]).toEqual([null, 'Anonymisiert', null, null]);
+    // Audit entries about the person keep the action, not the values.
+    const diffs = await ctx.db.selectFrom('audit_event').select('diff').where('entity_id', 'in', [m.personId, m.id]).execute();
+    expect(diffs.every((d) => d.diff === null)).toBe(true);
     const snapshot = (await ctx.db.selectFrom('invoice').select('recipient').where('id', '=', inv.id).executeTakeFirstOrThrow()).recipient as { recipient: { lines: string[] } };
     expect(snapshot.recipient.lines.join(' ')).toContain('Zahler');
 
     // Restore of an older backup: the person is back, the erasure log replays.
     await ctx.db.updateTable('person').set({ last_name: 'Zahler', anonymised_at: null }).where('id', '=', m.personId).execute();
-    expect(await replayErasures(ctx.db)).toBeGreaterThanOrEqual(1);
+    await appendFile(join(config.filesDir, 'erasure-log.jsonl'), '{"o": "kaputt\n');
+    const warnings: string[] = [];
+    expect(await replayErasures(ctx.db, { warn: (w) => warnings.push(w) })).toBe(1);
+    expect(warnings).toHaveLength(1);
     expect((await ctx.db.selectFrom('person').select('last_name').where('id', '=', m.personId).executeTakeFirstOrThrow()).last_name).toBe('Anonymisiert');
   });
 

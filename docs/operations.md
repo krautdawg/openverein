@@ -12,3 +12,9 @@ docker compose exec db psql -U openverein openverein -c "
 ```
 
 Note it in the club's records: the reset bypasses the audit log.
+
+## Restoring a backup and erasures
+
+Every anonymisation is written to the database (`erasure_log`) and appended to `FILES_DIR/erasure-log.jsonl`. At start-up the server mirrors missing database entries into the file and then anonymises again every person from the file that a restored database brought back, before it accepts requests.
+
+This only works if the erasure file survives the restore: when you restore an older database dump, keep the current `erasure-log.jsonl` (do not roll the files volume back to the same date), or copy it back before starting the server.

@@ -15,7 +15,7 @@ await migrate(config.databaseUrl);
 const db = createDb(config.databaseUrl);
 const app = await buildApp(db, { logger: true });
 // A restored older backup must not bring erased persons back: replay the erasure log before accepting requests.
-const replayed = await replayErasures(db);
+const replayed = await replayErasures(db, app.log);
 if (replayed) app.log.warn(`${replayed} erased persons anonymised again after a restore`);
 // Public demo: refuse to run demo mode on a real club (it would swallow mail and lock accounts), load the demo
 // before accepting requests, and reset it on a schedule.
