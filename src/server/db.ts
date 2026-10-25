@@ -170,6 +170,9 @@ export interface ClubGroupTable {
   parent_id: string | null;
   visible_to_members: Generated<boolean>;
   in_application_form: Generated<boolean>;
+  next_group_id: string | null;
+  next_group_age: number | null;
+  next_group_on: 'birthday' | 'year_start' | null;
   archived_at: Date | null;
   created_at: Timestamp;
   updated_at: Timestamp;

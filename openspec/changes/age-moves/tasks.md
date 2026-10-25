@@ -1,0 +1,4 @@
+- [x] Rule on club_group
+- [x] Hourly move, preview route
+- [x] Group sheet UI
+- [x] Tests and e2e

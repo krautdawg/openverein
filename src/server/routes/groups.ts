@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql, type Selectable } from 'kysely';
 import { z } from 'zod';
 import { group, groupFields, groupPatch, membershipCreate, membershipPatch } from '../../shared/groups.ts';
-import { memberListItem } from '../../shared/members.ts';
+import { displayName, memberListItem } from '../../shared/members.ts';
 import { audit, diffOf } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { ClubGroupTable } from '../db.ts';
@@ -10,6 +10,7 @@ import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { applyScope, currentGroups, loadMemberRow, memberColumns, orgToday, toListItem } from '../members/query.ts';
 import { requirePermission, restrictedFields, type Actor } from '../policy.ts';
 import { assertGroup } from '../members/bulk.ts';
+import { upcomingAgeMoves } from '../members/ageMoves.ts';
 
 CONSTRAINT_MESSAGES.club_group_code_key = 'Dieses Kürzel ist schon vergeben.';
 CONSTRAINT_MESSAGES.group_membership_member_id_group_id_daterange_excl = 'In diesem Zeitraum ist das Mitglied schon in der Gruppe.';
@@ -26,6 +27,9 @@ const toDto = (g: Selectable<ClubGroupTable>, memberCount: number) => ({
   parentId: g.parent_id,
   visibleToMembers: g.visible_to_members,
   inApplicationForm: g.in_application_form,
+  nextGroupId: g.next_group_id,
+  nextGroupAge: g.next_group_age,
+  nextGroupOn: g.next_group_on,
   archived: g.archived_at !== null,
   memberCount,
 });
@@ -39,6 +43,9 @@ const columns = (b: Partial<z.infer<typeof groupFields>>) => {
   if (b.parentId !== undefined) out.parent_id = b.parentId;
   if (b.visibleToMembers !== undefined) out.visible_to_members = b.visibleToMembers;
   if (b.inApplicationForm !== undefined) out.in_application_form = b.inApplicationForm;
+  if (b.nextGroupId !== undefined) out.next_group_id = b.nextGroupId;
+  if (b.nextGroupAge !== undefined) out.next_group_age = b.nextGroupAge;
+  if (b.nextGroupOn !== undefined) out.next_group_on = b.nextGroupOn;
   return out;
 };
 
@@ -100,6 +107,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'groups', 'write');
     await checkParent(actor, req.body.parentId);
+    if (req.body.nextGroupId) await loadGroup(actor, req.body.nextGroupId);
     const g = await db.transaction().execute(async (tx) => {
       const g = await tx.insertInto('club_group').values({ organization_id: actor.organizationId, ...(columns(req.body) as { name: string; short_code: string }) }).returningAll().executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'group.created', entityType: 'club_group', entityId: g.id, diff: { name: [null, g.name] } });
@@ -114,6 +122,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'groups', 'write');
     const before = await loadGroup(actor, req.params.id);
     await checkParent(actor, req.body.parentId, before.id);
+    if (req.body.nextGroupId) await loadGroup(actor, req.body.nextGroupId);
     const values = columns(req.body);
     const g = await db.transaction().execute(async (tx) => {
       const g = await tx.updateTable('club_group').set({ ...values, updated_at: new Date() }).where('id', '=', before.id).returningAll().executeTakeFirstOrThrow();
@@ -136,6 +145,24 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
       return withCount(actor, g);
     });
   }
+
+  app.get('/groups/:id/age-moves', { schema: { tags, summary: 'Anstehende Wechsel nach Alter (Vorschau, mit überfälligen)', params: idParam, querystring: z.object({ until: z.iso.date().optional() }), response: { 200: z.array(z.object({ memberId: z.uuid(), name: z.string(), moveOn: z.string(), toGroupId: z.uuid() })) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'members', 'read');
+    // The move date gives the birthday away.
+    if (restrictedFields(actor).has('birth_date')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', undefined, { permission: 'members.field.birth_date' });
+    await loadGroup(actor, req.params.id);
+    const today = await orgToday(db, actor.organizationId);
+    const until = req.query.until ?? `${Number(today.slice(0, 4)) + 1}${today.slice(4)}`;
+    const rows = (await upcomingAgeMoves(db, actor.organizationId, until)).filter((r) => r.group_id === req.params.id);
+    if (!rows.length) return [];
+    const visible = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name']).where('member.id', 'in', rows.map((r) => r.member_id)).where(applyScope(actor, today, 'read')).execute();
+    const byId = new Map(visible.map((v) => [v.id, v]));
+    return rows.filter((r) => byId.has(r.member_id)).map((r) => {
+      const v = byId.get(r.member_id)!;
+      return { memberId: r.member_id, name: displayName({ kind: v.kind, firstName: v.first_name, lastName: v.last_name, companyName: v.company_name }), moveOn: r.move_on < today ? today : r.move_on, toGroupId: r.next_group_id };
+    });
+  });
 
   app.get(
     '/groups/:id/members',
