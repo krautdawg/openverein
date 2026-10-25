@@ -57,6 +57,8 @@ export type InvoiceListItem = z.infer<typeof invoiceListItem>;
 export const invoiceDetail = invoiceListItem.extend({
   /** drafts: send back as If-Match when changing */
   version: z.string(),
+  /** an XRechnung was created at issue (GET /invoices/:id/xrechnung.xml) */
+  hasEinvoice: z.boolean(),
   coverText: z.string().nullable(),
   recipient: z.object({ name: z.string(), lines: z.array(z.string()) }).nullable(),
   lines: z.array(invoiceLine),

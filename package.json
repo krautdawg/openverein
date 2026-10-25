@@ -20,7 +20,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "openapi": "node src/server/openapi-dump.ts > openapi.json"
+    "openapi": "node src/server/openapi-dump.ts > openapi.json",
+    "validate:xrechnung": "bash scripts/validate-xrechnung.sh"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",

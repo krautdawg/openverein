@@ -11,3 +11,4 @@ android/app/build
 ios/App/Pods
 design-qa/
 data/
+.kosit/

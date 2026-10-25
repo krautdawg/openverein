@@ -123,6 +123,30 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
           <MembershipSection m={m} canWrite={canWrite} patch={patch} onChanged={refresh} />
           <GroupsSection m={m} canWrite={canWrite} onChanged={reload} />
           <MemberCustom m={m} canWrite={canWrite} onChanged={refresh} ifMatch={() => version.current} />
+          {(m.kind === 'organisation' || m.einvoice.format !== 'none') && (
+            <section className="sheet-section" aria-labelledby="m-einvoice">
+              <h3 id="m-einvoice">E-Rechnung</h3>
+              <dl className="facts">
+                <dt>Format</dt>
+                <dd>{canWrite ? (
+                  <select className="select" aria-label="E-Rechnungsformat" value={m.einvoice.format} onChange={(e) => void patch({ einvoiceFormat: e.target.value }).catch((err) => setSheetError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.'))}>
+                    <option value="none">keine, PDF genügt</option>
+                    <option value="xrechnung">XRechnung</option>
+                  </select>
+                ) : (m.einvoice.format === 'xrechnung' ? 'XRechnung' : 'keine')}</dd>
+                {m.einvoice.format === 'xrechnung' && (
+                  <>
+                    <dt>Leitweg-ID / Referenz</dt>
+                    <dd>{canWrite ? <InlineEdit label="Leitweg-ID oder Käuferreferenz" value={m.einvoice.buyerReference} onSave={(v) => patch({ buyerReference: v })} /> : m.einvoice.buyerReference}</dd>
+                    <dt>E-Rechnungsadresse</dt>
+                    <dd>{canWrite ? <InlineEdit label="E-Rechnungsadresse" value={m.einvoice.address} onSave={(v) => patch({ einvoiceAddress: v })} /> : m.einvoice.address}</dd>
+                    <dt>USt-IdNr.</dt>
+                    <dd>{canWrite ? <InlineEdit label="USt-IdNr. der empfangenden Stelle" value={m.einvoice.vatId} onSave={(v) => patch({ vatId: v })} /> : m.einvoice.vatId}</dd>
+                  </>
+                )}
+              </dl>
+            </section>
+          )}
           {permissions.sepa && permissions.sepa !== 'none' && (
             <MemberMandate memberId={m.id} holder={displayName(m).split(', ').reverse().join(' ')} canWrite={permissions.sepa === 'write'} />
           )}

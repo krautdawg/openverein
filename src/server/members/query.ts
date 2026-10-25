@@ -56,12 +56,16 @@ export const memberColumns = [
   'person.preferred_channel',
   'person.note',
   'person.custom',
+  'person.einvoice_format',
+  'person.buyer_reference',
+  'person.einvoice_address',
+  'person.vat_id',
   'member.updated_at as member_updated_at',
   'person.updated_at as person_updated_at',
 ] as const;
 
 type Row = Pick<Selectable<MemberTable>, 'id' | 'person_id' | 'membership_number' | 'status' | 'application_date' | 'join_date' | 'notice_date' | 'exit_date' | 'exit_reason'> &
-  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note' | 'custom'> & { member_updated_at: Date; person_updated_at: Date };
+  Pick<Selectable<PersonTable>, 'kind' | 'first_name' | 'last_name' | 'company_name' | 'birth_date' | 'email' | 'phone' | 'street' | 'postal_code' | 'city' | 'country' | 'preferred_channel' | 'note' | 'custom' | 'einvoice_format' | 'buyer_reference' | 'einvoice_address' | 'vat_id'> & { member_updated_at: Date; person_updated_at: Date };
 
 /** Current group badges for a set of members. */
 export async function currentGroups(db: Db, memberIds: string[], today: string) {
@@ -167,6 +171,7 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
     restricted: [...hidden],
     custom: visibleValues(row.custom, await fieldsFor(db, actor)),
     version: versionOf(row.member_updated_at, row.person_updated_at),
+    einvoice: { format: row.einvoice_format, buyerReference: row.buyer_reference, address: row.einvoice_address, vatId: row.vat_id },
   };
 }
 

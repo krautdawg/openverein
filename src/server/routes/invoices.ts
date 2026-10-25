@@ -98,6 +98,7 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     return {
       ...item!,
       version: versionOf(row.updated_at as Date),
+      hasEinvoice: !!(await db.selectFrom('invoice_einvoice').select('invoice_id').where('invoice_id', '=', id).executeTakeFirst()),
       coverText: row.cover_text,
       recipient: snap?.recipient ?? null,
       lines: lines.map((l) => ({ id: l.id, position: l.position, text: l.text, quantity: Number(l.quantity), unitCents: l.unit_cents, totalCents: l.total_cents, taxRate: Number(l.tax_rate), periodStart: l.period_start, periodEnd: l.period_end })),
@@ -171,6 +172,15 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const { pdf, number } = await storedPdf(db, actor.organizationId, req.params.id);
     reply.header('content-type', 'application/pdf').header('content-disposition', `inline; filename="${number}.pdf"`).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(pdf);
+  });
+
+  app.get('/invoices/:id/xrechnung.xml', { schema: { tags, summary: 'E-Rechnung (XRechnung, CII) der ausgestellten Rechnung, unverändert wie bei der Ausstellung erzeugt', params: idParam } }, async (req, reply) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'invoices', 'read');
+    await detail(actor, req.params.id); // scope check
+    const e = await db.selectFrom('invoice_einvoice').innerJoin('invoice', 'invoice.id', 'invoice_einvoice.invoice_id').select(['invoice_einvoice.xml', 'invoice.number']).where('invoice_einvoice.invoice_id', '=', req.params.id).where('invoice_einvoice.organization_id', '=', actor.organizationId).executeTakeFirst();
+    if (!e) throw notFound('E-Rechnung');
+    return reply.header('content-type', 'application/xml; charset=utf-8').header('content-disposition', `attachment; filename="${e.number}.xml"`).send(e.xml);
   });
 
   app.post('/invoices', { schema: { tags, summary: 'Rechnungsentwurf anlegen', body: invoiceCreate, response: { 201: invoiceDetail } } }, async (req, reply) => {
