@@ -29,6 +29,7 @@ export const CONSTRAINT_MESSAGES: Record<string, string> = {
   app_user_email_key: 'Es gibt schon ein Konto mit dieser E-Mail-Adresse.',
   club_group_age_move_complete: 'Für den Wechsel nach Alter braucht es Zielgruppe, Alter und Zeitpunkt.',
   club_group_age_move_not_self: 'Eine Gruppe kann nicht in sich selbst wechseln.',
+  assembly_closed: 'Die Versammlung ist abgeschlossen; das Protokoll wird nicht mehr geändert.',
   job_one_active: 'Diese Aufgabe läuft schon. Warte, bis sie fertig ist.',
   donation_on_receipt: 'Diese Spende steht auf einer gültigen Zuwendungsbestätigung. Storniere zuerst die Bestätigung.',
   donation_receipt_item_live: 'Für diese Spende gibt es schon eine gültige Zuwendungsbestätigung.',

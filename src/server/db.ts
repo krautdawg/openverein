@@ -906,6 +906,41 @@ export interface Database {
   expense_claim: ExpenseClaimTable;
   work_hour_entry: WorkHourEntryTable;
   work_hour_settlement: WorkHourSettlementTable;
+  assembly: AssemblyTable;
+  assembly_item: AssemblyItemTable;
+  assembly_attendance: AssemblyAttendanceTable;
+}
+
+export interface AssemblyTable {
+  id: Generated<string>;
+  organization_id: string;
+  title: string;
+  held_on: string;
+  starts_at: string;
+  place: string;
+  notice_days: Generated<number>;
+  chair: string | null;
+  minutes_by: string | null;
+  invited_at: Date | null;
+  message_id: string | null;
+  closed_at: Date | null;
+  created_at: Generated<Date>;
+}
+export interface AssemblyItemTable {
+  id: Generated<string>;
+  assembly_id: string;
+  position: number;
+  title: string;
+  description: string | null;
+  is_vote: Generated<boolean>;
+  votes_yes: number | null;
+  votes_no: number | null;
+  votes_abstain: number | null;
+  outcome: string | null;
+}
+export interface AssemblyAttendanceTable {
+  assembly_id: string;
+  member_id: string;
 }
 
 export interface WorkHourEntryTable {

@@ -17,7 +17,7 @@ import { requirePermission, restrictedFields, scopeOf, type Actor } from '../pol
 const tags = ['communication'];
 const idParam = z.object({ id: z.uuid() });
 
-const filter = z.object({
+export const filter = z.object({
   /** all current members, one group, or hand-picked members */
   mode: z.enum(['all', 'group', 'members']),
   groupId: z.uuid().optional(),
@@ -63,50 +63,66 @@ async function dnsHints(address: string) {
 
 const TEMPLATE_KEYS = Object.keys(SYSTEM_TEMPLATES) as [SystemTemplateKey, ...SystemTemplateKey[]];
 
+/** Recipients with their e-mail, and everyone left out with the reason. Former members never get mail. */
+export async function resolveRecipients(db: Db, actor: Actor, f: z.infer<typeof filter>, category: 'notice' | 'newsletter') {
+  if (restrictedFields(actor).has('email')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Du darfst keine E-Mail-Adressen sehen.', { permission: 'members.field.email' });
+  const today = await orgToday(db, actor.organizationId);
+  let q = db
+    .selectFrom('member')
+    .innerJoin('person', 'person.id', 'member.person_id')
+    .select(['member.id', 'member.person_id', 'member.status', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
+    .where('member.organization_id', '=', actor.organizationId)
+    // Sending reaches only members the actor may write to (current group members, not last year's).
+    .where(applyScope(actor, today, 'write', 'communication'));
+  if (f.mode === 'group') {
+    if (!f.groupId) throw new Problem(400, 'validation', 'Bitte eine Gruppe wählen.');
+    q = q.where(scopePredicate([f.groupId], today, 'write'));
+  }
+  if (f.mode === 'members') q = q.where('member.id', 'in', f.memberIds?.length ? f.memberIds : ['00000000-0000-0000-0000-000000000000']);
+  const rows = await q.orderBy('person.last_name').orderBy('person.first_name').execute();
+  // Unsubscribing stops newsletters; club notices (invitations, invoices) stop only for undeliverable addresses.
+  let sq = db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId);
+  if (category === 'notice') sq = sq.where('reason', 'in', ['bounce', 'manual']);
+  const suppressed = new Set((await sq.execute()).map((s) => s.email_hash));
+  const recipients: z.infer<typeof recipient>[] = [];
+  const out: z.infer<typeof excluded>[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const name = displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name });
+    const reason =
+      !['active', 'future', 'resigned'].includes(r.status) ? 'kein aktuelles Mitglied'
+      : !r.email ? 'keine E-Mail-Adresse'
+      : category === 'newsletter' && r.preferred_channel === 'none' ? 'möchte keine Post'
+      : suppressed.has(emailHash(r.email)) ? 'Adresse gesperrt (abgemeldet oder unzustellbar)'
+      : seen.has(r.email.toLowerCase()) ? 'gleiche Adresse wie ein anderes Mitglied'
+      : null;
+    if (reason) out.push({ memberId: r.id, name, reason });
+    else {
+      seen.add(r.email!.toLowerCase());
+      recipients.push({ memberId: r.id, personId: r.person_id, name, email: r.email! });
+    }
+  }
+  return { recipients, excluded: out };
+}
+
+
+export async function createMessage(tx: Db, actor: Actor, v: { kind: 'free' | 'invoices'; category: 'notice' | 'newsletter'; subject: string; body: string; filter: unknown }, recipients: { personId: string; memberId: string | null; email: string; invoiceId?: string }[]) {
+  const m = await tx
+    .insertInto('message')
+    .values({ organization_id: actor.organizationId, kind: v.kind, category: v.category, subject: v.subject, body: v.body, recipient_filter: JSON.stringify(v.filter), created_by: actor.userId, created_by_label: actor.kind === 'token' ? `API: ${actor.name}` : actor.name })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  for (const r of recipients) {
+    await tx.insertInto('delivery').values({ organization_id: actor.organizationId, message_id: m.id, person_id: r.personId, member_id: r.memberId, email: r.email, invoice_id: r.invoiceId ?? null }).execute();
+  }
+  // Audit the action and the count, not the addresses.
+  await audit(tx, actor.organizationId, actor, { action: 'message.sent', entityType: 'message', entityId: m.id, diff: { subject: [null, v.subject], recipients: [null, recipients.length], category: [null, v.category] } });
+  return m.id;
+}
 export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  /** Recipients with their e-mail, and everyone left out with the reason. Former members never get mail. */
-  async function resolve(actor: Actor, f: z.infer<typeof filter>, category: 'notice' | 'newsletter') {
-    if (restrictedFields(actor).has('email')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Du darfst keine E-Mail-Adressen sehen.', { permission: 'members.field.email' });
-    const today = await orgToday(db, actor.organizationId);
-    let q = db
-      .selectFrom('member')
-      .innerJoin('person', 'person.id', 'member.person_id')
-      .select(['member.id', 'member.person_id', 'member.status', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
-      .where('member.organization_id', '=', actor.organizationId)
-      // Sending reaches only members the actor may write to (current group members, not last year's).
-      .where(applyScope(actor, today, 'write', 'communication'));
-    if (f.mode === 'group') {
-      if (!f.groupId) throw new Problem(400, 'validation', 'Bitte eine Gruppe wählen.');
-      q = q.where(scopePredicate([f.groupId], today, 'write'));
-    }
-    if (f.mode === 'members') q = q.where('member.id', 'in', f.memberIds?.length ? f.memberIds : ['00000000-0000-0000-0000-000000000000']);
-    const rows = await q.orderBy('person.last_name').orderBy('person.first_name').execute();
-    // Unsubscribing stops newsletters; club notices (invitations, invoices) stop only for undeliverable addresses.
-    let sq = db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId);
-    if (category === 'notice') sq = sq.where('reason', 'in', ['bounce', 'manual']);
-    const suppressed = new Set((await sq.execute()).map((s) => s.email_hash));
-    const recipients: z.infer<typeof recipient>[] = [];
-    const out: z.infer<typeof excluded>[] = [];
-    const seen = new Set<string>();
-    for (const r of rows) {
-      const name = displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name });
-      const reason =
-        !['active', 'future', 'resigned'].includes(r.status) ? 'kein aktuelles Mitglied'
-        : !r.email ? 'keine E-Mail-Adresse'
-        : category === 'newsletter' && r.preferred_channel === 'none' ? 'möchte keine Post'
-        : suppressed.has(emailHash(r.email)) ? 'Adresse gesperrt (abgemeldet oder unzustellbar)'
-        : seen.has(r.email.toLowerCase()) ? 'gleiche Adresse wie ein anderes Mitglied'
-        : null;
-      if (reason) out.push({ memberId: r.id, name, reason });
-      else {
-        seen.add(r.email!.toLowerCase());
-        recipients.push({ memberId: r.id, personId: r.person_id, name, email: r.email! });
-      }
-    }
-    return { recipients, excluded: out };
-  }
+  const resolve = (actor: Actor, f: z.infer<typeof filter>, category: 'notice' | 'newsletter') => resolveRecipients(db, actor, f, category);
 
   app.post('/messages/recipients', { schema: { tags, summary: 'Empfänger:innen ermitteln (mit Ausschlüssen und Gründen)', body: z.object({ filter, category: z.enum(['notice', 'newsletter']).default('notice') }), response: { 200: recipientsResult } } }, async (req) => {
     const actor = requireActor(req);
@@ -126,19 +142,7 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     return { subject: fill(req.body.subject, values), body: fill(req.body.body, values) };
   });
 
-  async function createMessage(tx: Db, actor: Actor, v: { kind: 'free' | 'invoices'; category: 'notice' | 'newsletter'; subject: string; body: string; filter: unknown }, recipients: { personId: string; memberId: string | null; email: string; invoiceId?: string }[]) {
-    const m = await tx
-      .insertInto('message')
-      .values({ organization_id: actor.organizationId, kind: v.kind, category: v.category, subject: v.subject, body: v.body, recipient_filter: JSON.stringify(v.filter), created_by: actor.userId, created_by_label: actor.kind === 'token' ? `API: ${actor.name}` : actor.name })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    for (const r of recipients) {
-      await tx.insertInto('delivery').values({ organization_id: actor.organizationId, message_id: m.id, person_id: r.personId, member_id: r.memberId, email: r.email, invoice_id: r.invoiceId ?? null }).execute();
-    }
-    // Audit the action and the count, not the addresses.
-    await audit(tx, actor.organizationId, actor, { action: 'message.sent', entityType: 'message', entityId: m.id, diff: { subject: [null, v.subject], recipients: [null, recipients.length], category: [null, v.category] } });
-    return m.id;
-  }
+
 
   app.post('/messages', { schema: { tags, summary: 'E-Mail an die Empfänger:innen senden (über die Warteschlange)', body: messageInput, response: { 201: messageDto } } }, async (req, reply) => {
     const actor = requireActor(req);
