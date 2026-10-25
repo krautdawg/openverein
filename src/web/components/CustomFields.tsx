@@ -59,7 +59,7 @@ export function CustomInputs({ fields, values = {}, error, only }: { fields: Cus
 }
 
 /** "Weitere Angaben" in the member sheet: values at a glance, a form to change them. */
-export function MemberCustom({ m, canWrite, onChanged }: { m: MemberDetail; canWrite: boolean; onChanged: (m: MemberDetail) => void }) {
+export function MemberCustom({ m, canWrite, onChanged, ifMatch }: { m: MemberDetail; canWrite: boolean; onChanged: (m: MemberDetail) => void; ifMatch?: () => string | undefined }) {
   const { data: fields } = useCustomFields();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -70,7 +70,7 @@ export function MemberCustom({ m, canWrite, onChanged }: { m: MemberDetail; canW
     e.preventDefault();
     setError(undefined);
     try {
-      onChanged(await api<MemberDetail>(`/members/${m.id}`, { method: 'PATCH', body: { custom: readCustom(new FormData(e.currentTarget), active) } }));
+      onChanged(await api<MemberDetail>(`/members/${m.id}`, { method: 'PATCH', body: { custom: readCustom(new FormData(e.currentTarget), active) }, ifMatch: ifMatch?.() ?? m.version }));
       setEditing(false);
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);

@@ -14,6 +14,7 @@ export const setETag = (reply: FastifyReply, version: string) => reply.header('e
 export function assertIfMatch(req: FastifyRequest, current: string) {
   const sent = req.headers['if-match'];
   if (typeof sent !== 'string' || sent.trim() === '*') return;
-  const wanted = sent.split(',').map((v) => v.trim().replace(/^W\//, '').replace(/^"|"$/g, ''));
+  // If-Match uses strong comparison: weak tags never match (RFC 9110).
+  const wanted = sent.split(',').map((v) => v.trim()).filter((v) => !v.startsWith('W/')).map((v) => v.replace(/^"|"$/g, ''));
   if (!wanted.includes(current)) throw new Problem(412, 'stale', 'Jemand hat das inzwischen geändert.', 'Lade neu und mach Deine Änderung noch einmal.', { currentVersion: current });
 }

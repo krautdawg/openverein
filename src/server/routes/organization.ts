@@ -1,4 +1,4 @@
-import { assertIfMatch, versionOf } from '../http/concurrency.ts';
+import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { organization, organizationPatch } from '../../shared/organization.ts';
 import { audit, diffOf } from '../audit.ts';
@@ -68,9 +68,11 @@ const COLUMNS = {
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  app.get('/organization', { schema: { tags: ['organization'], summary: 'Stammdaten des Vereins', response: { 200: organization } } }, async (req) => {
+  app.get('/organization', { schema: { tags: ['organization'], summary: 'Stammdaten des Vereins (ETag für If-Match)', response: { 200: organization } } }, async (req, reply) => {
     const actor = requireActor(req);
-    return toDto(await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow());
+    const o = toDto(await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow());
+    setETag(reply, o.version);
+    return o;
   });
 
   app.patch(

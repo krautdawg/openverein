@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ACTION_LABEL } from '../../shared/access.ts';
 import { formatDate } from '../../shared/dates.ts';
@@ -24,7 +24,13 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
   const { data: m, error } = useQuery({ queryKey: ['member', id], queryFn: () => api<MemberDetail>(`/members/${id}`), enabled: !!id });
   const title = m ? displayName(m) : 'Mitglied';
 
+  // The latest version known to this sheet: edits in quick succession each send the newest one.
+  const version = useRef<string | undefined>(undefined);
+  if (m && version.current === undefined) version.current = m.version;
+  useEffect(() => { if (m) version.current = m.version; }, [m]);
+  const [sheetError, setSheetError] = useState<string>();
   const refresh = (next: MemberDetail) => {
+    version.current = next.version;
     qc.setQueryData(['member', id], next);
     void qc.invalidateQueries({ queryKey: ['members'] });
     void qc.invalidateQueries({ queryKey: ['overview'] });
@@ -32,7 +38,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
   // A change made by someone else in the meantime is not overwritten: the sheet reloads and the user tries again.
   const patch = async (body: Record<string, unknown>) => {
     try {
-      refresh(await api<MemberDetail>(`/members/${id}`, { method: 'PATCH', body, ifMatch: m?.version }));
+      refresh(await api<MemberDetail>(`/members/${id}`, { method: 'PATCH', body, ifMatch: version.current }));
     } catch (err) {
       if (err instanceof ApiError && err.problem.status === 412) void reload();
       throw err;
@@ -43,6 +49,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
   return (
     <Sheet title={title} open={!!id} onClose={onClose}>
       {error && <div className="alert alert-error" role="alert">{(error as Error).message}</div>}
+      {sheetError && <div className="alert alert-error" role="alert">{sheetError}</div>}
       {!m && !error && <div className="skeleton" style={{ width: '60%' }} />}
       {m && (
         <>
@@ -99,7 +106,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
               <dt>Post per</dt>
               <dd>
                 {canWrite ? (
-                  <select className="select" aria-label="Bevorzugter Weg" value={m.preferredChannel} onChange={(e) => void patch({ preferredChannel: e.target.value })}>
+                  <select className="select" aria-label="Bevorzugter Weg" value={m.preferredChannel} onChange={(e) => void patch({ preferredChannel: e.target.value }).catch((err) => setSheetError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.'))}>
                     {Object.entries(CHANNEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 ) : CHANNEL[m.preferredChannel]}
@@ -115,7 +122,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
 
           <MembershipSection m={m} canWrite={canWrite} patch={patch} onChanged={refresh} />
           <GroupsSection m={m} canWrite={canWrite} onChanged={reload} />
-          <MemberCustom m={m} canWrite={canWrite} onChanged={refresh} />
+          <MemberCustom m={m} canWrite={canWrite} onChanged={refresh} ifMatch={() => version.current} />
           {permissions.sepa && permissions.sepa !== 'none' && (
             <MemberMandate memberId={m.id} holder={displayName(m).split(', ').reverse().join(' ')} canWrite={permissions.sepa === 'write'} />
           )}

@@ -1,4 +1,4 @@
-import { assertIfMatch, versionOf } from '../http/concurrency.ts';
+import { assertIfMatch, setETag, versionOf } from '../http/concurrency.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -156,10 +156,12 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     };
   });
 
-  app.get('/invoices/:id', { schema: { tags, summary: 'Rechnung mit Positionen, Zahlungen und Mahnungen', params: idParam, response: { 200: invoiceDetail } } }, async (req) => {
+  app.get('/invoices/:id', { schema: { tags, summary: 'Rechnung mit Positionen, Zahlungen und Mahnungen (ETag für If-Match bei Entwürfen)', params: idParam, response: { 200: invoiceDetail } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'read');
-    return detail(actor, req.params.id);
+    const d = await detail(actor, req.params.id);
+    setETag(reply, d.version);
+    return d;
   });
 
   app.get('/invoices/:id/pdf', { schema: { tags, summary: 'PDF der ausgestellten Rechnung (immer dieselben Bytes)', params: idParam } }, async (req, reply) => {

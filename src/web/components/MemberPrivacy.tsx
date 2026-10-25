@@ -20,6 +20,8 @@ export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: 
       await fn();
       setForm(null);
       await qc.invalidateQueries({ queryKey: key });
+      // A legal hold or anonymisation changes the person record: the sheet reloads its version.
+      await qc.invalidateQueries({ queryKey: ['member'] });
     } catch (err) {
       setError(err instanceof ApiError ? problemText(err) : 'Das hat nicht geklappt. Bitte versuch es noch einmal.');
     }
