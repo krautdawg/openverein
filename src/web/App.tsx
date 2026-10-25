@@ -13,7 +13,7 @@ import { Unsubscribe } from './pages/Unsubscribe.tsx';
 import { Groups } from './pages/Groups.tsx';
 import { FeePlans } from './pages/Fees.tsx';
 import { FeeRunDetail, FeeRuns } from './pages/FeeRuns.tsx';
-import { Dunning, Invoices } from './pages/Invoices.tsx';
+import { Articles, Dunning, Invoices } from './pages/Invoices.tsx';
 import { Events } from './pages/Events.tsx';
 import { Communication } from './pages/Communication.tsx';
 import { Documents } from './pages/Documents.tsx';
@@ -123,6 +123,7 @@ function AdminApp() {
         <Route path="/beitraege/:id" element={<FeePlans me={me.data} />} />
         <Route path="/rechnungen" element={<Invoices me={me.data} />} />
         <Route path="/rechnungen/mahnwesen" element={<Dunning me={me.data} />} />
+        <Route path="/rechnungen/artikel" element={<Articles me={me.data} />} />
         <Route path="/rechnungen/mahnwesen/:id" element={<Dunning me={me.data} />} />
         <Route path="/rechnungen/:id" element={<Invoices me={me.data} />} />
         <Route path="/bank" element={<BankAccounts me={me.data} />} />

@@ -1,0 +1,3 @@
+- [x] table and routes
+- [x] page and picker
+- [x] tests, e2e, a11y

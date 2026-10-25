@@ -30,6 +30,7 @@ export const CONSTRAINT_MESSAGES: Record<string, string> = {
   club_group_age_move_complete: 'Für den Wechsel nach Alter braucht es Zielgruppe, Alter und Zeitpunkt.',
   club_group_age_move_not_self: 'Eine Gruppe kann nicht in sich selbst wechseln.',
   assembly_closed: 'Die Versammlung ist abgeschlossen; das Protokoll wird nicht mehr geändert.',
+  article_name_active: 'Einen Artikel mit diesem Namen gibt es schon.',
   job_one_active: 'Diese Aufgabe läuft schon. Warte, bis sie fertig ist.',
   donation_on_receipt: 'Diese Spende steht auf einer gültigen Zuwendungsbestätigung. Storniere zuerst die Bestätigung.',
   donation_receipt_item_live: 'Für diese Spende gibt es schon eine gültige Zuwendungsbestätigung.',
