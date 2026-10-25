@@ -161,7 +161,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     const offset = /^\d{1,9}$/.test(raw) ? Number(raw) : 0;
     const order = { name: ['person.last_name', 'person.first_name', 'person.company_name'], number: ['member.membership_number'], joinDate: ['member.join_date'] }[req.query.sort];
     let query = listFilter(req.query, actor, today)(db).select([...memberColumns, sql<number>`count(*) over()`.as('total')]);
-    for (const col of order) query = query.orderBy(sql.ref(col), sql`asc nulls last`);
+    for (const col of order) query = query.orderBy(sql.ref(col), (ob) => ob.asc().nullsLast());
     const rows = await query.orderBy('member.id').limit(req.query.limit).offset(offset).execute();
     const groups = await currentGroups(db, rows.map((r) => r.id), today);
     const hidden = restrictedFields(actor);

@@ -78,7 +78,8 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: config.rateLimitPerMinute,
+    // The demo seed talks to its own in-process app thousands of times; it is not a client to throttle.
+    max: opts.demoSeed ? 1_000_000_000 : config.rateLimitPerMinute,
     timeWindow: '1 minute',
     errorResponseBuilder: (_req, ctx) => new Problem(429, 'rate-limited', 'Zu viele Anfragen. Bitte warte einen Moment.', `Wieder möglich in ${Math.ceil(ctx.ttl / 1000)} Sekunden.`),
   });
