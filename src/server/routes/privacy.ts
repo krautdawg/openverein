@@ -135,7 +135,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const members = await db.selectFrom('member').selectAll().where('person_id', '=', p.id).execute();
     const memberIds = members.map((m) => m.id).concat(['00000000-0000-0000-0000-000000000000']);
     const q = <T>(rows: Promise<T[]>) => rows;
-    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files] = await Promise.all([
+    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts] = await Promise.all([
       q(db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['club_group.name as Gruppe', 'group_membership.member_id']).where('group_membership.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('consent').selectAll().where('person_id', '=', p.id).execute()),
       q(db.selectFrom('invoice').select(['number as Nummer', 'kind as Art', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'paid_cents as Bezahlt_Cent', 'status as Status']).where('recipient_person_id', '=', p.id).where('status', '<>', 'draft').execute()),
@@ -147,6 +147,8 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('change_request').select(['field as Feld', sql<string>`case when field = 'iban' then '(IBAN, verschlüsselt gespeichert)' else new_value end`.as('Neu'), 'status as Status', 'requested_at as Angefragt']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('application').select(['application_date as Datum', 'payload as Angaben', 'consent as Einwilligung', 'status as Status']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('file').select(['name as Datei', 'created_at as Hochgeladen']).where('member_id', 'in', memberIds).where('superseded_at', 'is', null).execute()),
+      // Private entries too: the right of access covers every note about the person.
+      q(db.selectFrom('contact_log').select(['occurred_on as Datum', 'kind as Art', 'text as Notiz']).where('person_id', '=', p.id).orderBy('occurred_on').execute()),
     ]);
     const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
@@ -165,6 +167,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Änderungswünsche', changes as Row[]],
       ['Anträge', applications as Row[]],
       ['Dateien', files as Row[]],
+      ['Kontaktverlauf', contacts as Row[]],
       ['Protokoll', auditRows as Row[]],
     ];
     const title = `Auskunft über gespeicherte Daten: ${p.company_name ?? [p.first_name, p.last_name].filter(Boolean).join(' ')}`;

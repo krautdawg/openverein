@@ -8,6 +8,7 @@ import { todayLocal, useGroups } from '../lib/hooks.ts';
 import { CourtLines } from './CourtLines.tsx';
 import { InlineEdit } from './InlineEdit.tsx';
 import { MemberFees } from './MemberFees.tsx';
+import { MemberContacts } from './MemberContacts.tsx';
 import { MemberFiles } from './MemberFiles.tsx';
 import { PortalCode } from './PortalCode.tsx';
 import { MemberMails } from './MemberMails.tsx';
@@ -168,6 +169,7 @@ export function MemberSheet({ id, onClose, canWrite, permissions = {} }: { id: s
             <MemberFees memberId={m.id} joinDate={m.joinDate} canWrite={permissions.fees === 'write'} canSeeInvoices={!!permissions.invoices && permissions.invoices !== 'none'} />
           )}
           {permissions.communication && permissions.communication !== 'none' && <MemberMails memberId={m.id} />}
+          {!m.restricted.includes('note') && <MemberContacts memberId={m.id} canWrite={canWrite} />}
           <MemberFiles memberId={m.id} canWrite={canWrite} />
           <MemberPrivacy personId={m.personId} canWrite={canWrite} onAnonymised={() => void reload()} />
 

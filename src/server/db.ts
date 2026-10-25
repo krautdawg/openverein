@@ -847,6 +847,19 @@ export interface SuppressionTable {
   created_at: Timestamp;
 }
 
+export interface ContactLogTable {
+  id: Generated<string>;
+  organization_id: string;
+  person_id: string;
+  kind: 'call' | 'meeting' | 'letter' | 'email' | 'other';
+  occurred_on: string;
+  text: string;
+  file_id: string | null;
+  private: Generated<boolean>;
+  created_by: string;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   organization: OrganizationTable;
   app_user: AppUserTable;
@@ -934,6 +947,7 @@ export interface Database {
   poll_vote: PollVoteTable;
   inventory_item: InventoryItemTable;
   inventory_loan: InventoryLoanTable;
+  contact_log: ContactLogTable;
 }
 
 export interface InventoryItemTable {

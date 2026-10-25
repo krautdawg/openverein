@@ -51,6 +51,8 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
     .set({ kind: 'natural', first_name: null, last_name: ANONYMOUS, company_name: null, birth_date: null, email: null, phone: null, street: null, postal_code: null, city: null, note: null, custom: sql`'{}'::jsonb`, einvoice_format: 'none', buyer_reference: null, gender: null, einvoice_address: null, vat_id: null, preferred_channel: 'none', anonymised_at: new Date(), updated_at: new Date() })
     .where('id', '=', personId)
     .execute();
+  // Notes about the person go entirely (before member files, which an entry may point to).
+  await tx.deleteFrom('contact_log').where('person_id', '=', personId).execute();
   // Expense claims stay as vouchers, but the payout details are no longer needed.
   await tx.updateTable('expense_claim').set({ account_holder: ANONYMOUS, iban_encrypted: encrypt('') }).where('person_id', '=', personId).execute();
   const members = (await tx.selectFrom('member').select('id').where('person_id', '=', personId).execute()).map((m) => m.id);
