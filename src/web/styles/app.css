@@ -367,8 +367,9 @@ dialog::backdrop { background: rgb(20 32 46 / 0.35); }
 .table-foot { display: flex; justify-content: space-between; align-items: center; padding: var(--s-3) 0; color: var(--ink-3); font-size: var(--text-sm); }
 @media (max-width: 760px) {
   .hide-sm { display: none; }
-  /* Status chips shrink to their dot; the label stays for screen readers. */
-  .label-sm { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  /* Status chips keep their words on phones too (colour alone carries no meaning), just smaller. */
+  .label-sm { font-size: var(--text-xs); white-space: normal; }
+  .status:has(.label-sm) { align-items: baseline; }
 }
 
 .empty-state { padding: var(--s-7) var(--s-5); text-align: left; max-width: 52ch; }
@@ -557,7 +558,7 @@ li.agenda-item { display: flex; gap: var(--s-2); align-items: center; cursor: de
 .apply { max-width: 600px; margin: 0 auto; padding: var(--s-6) var(--s-4) var(--s-8); background: var(--ground); min-height: 100dvh; }
 .apply h1 { font-family: var(--font-display); font-size: var(--text-2xl); line-height: 1.05; letter-spacing: -0.02em; margin: 0 0 var(--s-3); }
 .apply-club { font-size: var(--text-sm); color: var(--ink-2); margin: 0 0 var(--s-1); display: flex; align-items: center; gap: var(--s-2); }
-.apply-club::before { content: ''; width: 14px; height: 2px; background: var(--accent); }
+.apply-club::before { content: ''; width: 14px; height: 2px; background: var(--rail); }
 .apply-intro { color: var(--ink-2); margin: 0 0 var(--s-5); max-width: 62ch; }
 .apply-block { border: 0; border-top: 1px solid var(--line); padding: var(--s-4) 0 0; margin: var(--s-4) 0 0; display: grid; gap: var(--s-3); min-width: 0; }
 .apply-block legend { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; padding: 0 var(--s-2) 0 0; }
