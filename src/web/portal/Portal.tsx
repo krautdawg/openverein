@@ -13,6 +13,8 @@ import { bytes } from '../lib/format.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 interface PortalMember {
+  /** managed as the household's payer */
+  managed: boolean;
   custom: { key: string; label: string; value: string }[];
   memberId: string;
   name: string;
@@ -220,6 +222,7 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
         <h2 id={`m-${m.memberId}`}>{several ? m.name : 'Deine Mitgliedschaft'}</h2>
         <span className="meta num">Nr. {m.number}</span>
       </div>
+      {m.managed && <p className="meta">Du verwaltest diese Mitgliedschaft als zahlende Person des Haushalts.</p>}
       <p className="portal-status">
         {m.status === 'active' ? `Mitglied seit ${formatDate(m.joinDate)}` : `${STATUS[m.status]} ${formatDate(m.status === 'future' ? m.joinDate : m.exitDate)}`}
       </p>
@@ -234,7 +237,7 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
       {m.pending.filter((p) => p.field !== 'resignation').length > 0 && <p className="meta">Änderungen warten auf den Verein: {m.pending.filter((p) => p.field !== 'resignation').map((p) => FIELD_LABEL[p.field] ?? p.field).join(', ')}.</p>}
       <div className="actions-row">
         <button className="btn" onClick={() => navigate(`/portal/daten/${m.memberId}`)}>Daten ändern</button>
-        {m.status !== 'resigned' && !pendingResignation && !confirm && <button className="btn btn-ghost" onClick={() => setConfirm(true)}>Kündigen …</button>}
+        {m.status !== 'resigned' && !pendingResignation && !confirm && !(m.managed && m.email) && <button className="btn btn-ghost" onClick={() => setConfirm(true)}>Kündigen …</button>}
       </div>
       {pendingResignation && <p className="meta">Deine Kündigung zum {formatDate(pendingResignation.value)} ist eingegangen; der Vorstand bestätigt sie.</p>}
       {confirm && m.resignationProposal && (

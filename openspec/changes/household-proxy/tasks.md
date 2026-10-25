@@ -1,0 +1,3 @@
+- [x] portal user includes household members
+- [x] managed flag and resignation rule
+- [x] tests and e2e

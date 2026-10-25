@@ -195,4 +195,20 @@ describe('member portal', () => {
     expect((await admin.post(`/expense-claims/${list[0].id}/reject`, { reason: 'zu spät' })).status).toBe(409);
     expect((await get('/portal/expenses', cookie)).json()[0].status).toBe('approved');
   });
+
+  it('lets the household payer manage its members, but adults with their own address resign themselves', async () => {
+    const mum = (await admin.post('/members', { firstName: 'Maria', lastName: 'Haus', email: 'maria@example.org', joinDate: '2020-01-01' })).body;
+    const kid = (await admin.post('/members', { firstName: 'Kim', lastName: 'Haus', birthDate: '2015-01-01', joinDate: '2020-01-01' })).body;
+    const partner = (await admin.post('/members', { firstName: 'Paul', lastName: 'Haus', email: 'paul@example.org', joinDate: '2020-01-01' })).body;
+    const h = await admin.post('/households', { name: 'Familie Haus', payerPersonId: mum.personId, memberIds: [mum.id, kid.id, partner.id] });
+    expect(h.status, JSON.stringify(h.body)).toBe(201);
+    const cookie = await signIn('maria@example.org');
+    const me = (await get('/portal/me', cookie)).json();
+    expect(me.members.map((m: { name: string; managed: boolean }) => [m.name, m.managed]).sort()).toEqual([['Kim Haus', true], ['Maria Haus', false], ['Paul Haus', true]]);
+    expect((await post('/portal/resignation', { memberId: kid.id }, cookie)).statusCode).toBe(200);
+    expect((await post('/portal/resignation', { memberId: partner.id }, cookie)).statusCode).toBe(403);
+    // Paul's own portal shows only Paul.
+    const paul = await signIn('paul@example.org');
+    expect((await get('/portal/me', paul)).json().members.map((m: { name: string }) => m.name)).toEqual(['Paul Haus']);
+  });
 });
