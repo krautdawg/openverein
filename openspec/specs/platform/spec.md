@@ -158,3 +158,10 @@ The system SHALL fail CI when axe-core reports a serious or critical WCAG 2.2 A/
 - **WHEN** a change introduces text below 4.5:1 contrast on an admin route
 - **THEN** the accessibility e2e spec fails and names the route and element
 
+### Requirement: Permission attack suite in CI
+The system SHALL run, in CI, a test that calls every API route as restricted roles with out-of-scope ids and fails if any response contains out-of-scope personal data or a restricted IBAN, or if any write succeeds.
+
+#### Scenario: New route without a scope check
+- **WHEN** a new GET route returns a member by id without the division scope check
+- **THEN** the attack suite fails and names the route
+
