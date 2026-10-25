@@ -13,6 +13,7 @@ import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { courtVar, todayLocal, useGroups } from '../lib/hooks.ts';
+import { discardMark, enqueueMark, usePendingMarks } from '../lib/offlineAttendance.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -242,13 +243,21 @@ function OccurrenceSheet({ id, date, canWrite, onClose }: { id: string | null; d
   const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
   const started = !!o && o.startsAt <= now;
 
-  async function rsvp(memberId: string, status: string) {
+  const pending = usePendingMarks(id, date);
+
+  async function rsvp(memberId: string, status: string, name: string) {
     setError(undefined);
     try {
       qc.setQueryData(['occurrence', id, date], await api<OccurrenceDetail>(`/events/${id}/occurrences/${date}/participants/${memberId}`, { method: 'PUT', body: { status } }));
       void qc.invalidateQueries({ queryKey: ['events'] });
       setTerm('');
     } catch (e) {
+      // No signal in the hall: attendance waits on this device and goes out when the connection is back.
+      if (e instanceof ApiError && e.problem.type === 'network' && (status === 'attended' || status === 'not_attended') && id && date) {
+        enqueueMark({ eventId: id, date, memberId, name, status });
+        setTerm('');
+        return;
+      }
       setError(e instanceof ApiError ? [e.problem.title, e.problem.detail].filter(Boolean).join(' ') : String(e));
     }
   }
@@ -286,15 +295,21 @@ function OccurrenceSheet({ id, date, canWrite, onClose }: { id: string | null; d
           {(o.rsvp || started) && (
             <section className="sheet-section" aria-labelledby="ptc">
               <h3 id="ptc">{started ? 'Anwesenheit' : 'Rückmeldungen'}</h3>
+              {pending.some((m) => !m.error) && <div className="alert alert-warn" role="status" style={{ marginBottom: 'var(--s-3)' }}>Ohne Verbindung gespeichert: {pending.filter((m) => !m.error).length} {pending.filter((m) => !m.error).length === 1 ? 'Eintrag wartet' : 'Einträge warten'} auf diesem Gerät und {pending.filter((m) => !m.error).length === 1 ? 'wird' : 'werden'} gesendet, sobald wieder Verbindung besteht.</div>}
+              {pending.filter((m) => m.error).map((m) => (
+                <div key={m.path} className="alert alert-error" role="alert" style={{ marginBottom: 'var(--s-3)' }}>
+                  {m.name} ({PARTICIPATION_LABEL[m.status]}) wurde nicht übernommen: {m.error} <button className="btn btn-ghost" onClick={() => discardMark(m.path)}>Verwerfen</button>
+                </div>
+              ))}
               <p className="meta" style={{ marginBottom: 'var(--s-3)' }}>{o.counts.yes} Zusagen · {o.counts.maybe} vielleicht · {o.counts.no} Absagen{started && ` · ${o.counts.attended} anwesend`}</p>
               <ul className="timeline">
-                {o.participants.map((p) => (
+                {[...o.participants.map((p) => ({ ...p, status: pending.find((m) => m.memberId === p.memberId)?.status ?? p.status })), ...pending.filter((m) => !o.participants.some((p) => p.memberId === m.memberId)).map((m) => ({ memberId: m.memberId, name: m.name, status: m.status, invoiceId: null }))].map((p) => (
                   <li key={p.memberId} style={{ gridTemplateColumns: '1fr auto' }}>
                     <span>{p.name} <span className="pill" style={{ marginLeft: 4 }}>{PARTICIPATION_LABEL[p.status]}</span>{p.invoiceId && <div className="meta"><a href={`/rechnungen/${p.invoiceId}`} onClick={(e) => { e.preventDefault(); navigate(`/rechnungen/${p.invoiceId}`); }}>Rechnung ansehen</a></div>}</span>
                     {canWrite && (
                       <span className="segmented" role="group" aria-label={`Status für ${p.name}`}>
                         {(started ? (['attended', 'not_attended'] as const) : (['yes', 'maybe', 'no'] as const)).map((s) => (
-                          <button key={s} aria-pressed={p.status === s} onClick={() => void rsvp(p.memberId, s)}>{PARTICIPATION_LABEL[s]}</button>
+                          <button key={s} aria-pressed={p.status === s} onClick={() => void rsvp(p.memberId, s, p.name)}>{PARTICIPATION_LABEL[s]}</button>
                         ))}
                       </span>
                     )}
@@ -310,7 +325,7 @@ function OccurrenceSheet({ id, date, canWrite, onClose }: { id: string | null; d
                       {found.data?.items.filter((m) => !o.participants.some((p) => p.memberId === m.id)).map((m) => (
                         <li key={m.id} style={{ gridTemplateColumns: '1fr auto' }}>
                           <span>{displayName(m)}</span>
-                          <button className="btn" onClick={() => void rsvp(m.id, started ? 'attended' : 'yes')}>{started ? 'Anwesend' : 'Zusage'}</button>
+                          <button className="btn" onClick={() => void rsvp(m.id, started ? 'attended' : 'yes', displayName(m))}>{started ? 'Anwesend' : 'Zusage'}</button>
                         </li>
                       ))}
                     </ul>

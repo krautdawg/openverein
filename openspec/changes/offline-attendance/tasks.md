@@ -1,0 +1,3 @@
+- [x] queue and sync
+- [x] sheet integration
+- [x] e2e with offline context
