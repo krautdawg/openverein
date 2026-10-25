@@ -39,6 +39,11 @@ docker compose --profile app up --build
 
 Then open http://localhost:3300.
 
+## For the club
+
+- [Handbuch für die Kasse](docs/handbuch-kasse.md): a club year from fees to the tax adviser, in German.
+- [Verfahrensdokumentation (Vorlage)](docs/verfahrensdokumentation.md): GoBD procedural documentation template to fill in.
+
 ## Run it on a server
 
 `./ovctl install` sets up Caddy (HTTPS), the app and Postgres with Docker Compose; `./ovctl backup`, `restore`, `update` and `doctor` keep it running. See [docs/operations.md](docs/operations.md).
