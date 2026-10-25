@@ -2,7 +2,6 @@
 
 ## Purpose
 The gdpr capability covers consent records, retention classes, anonymisation that keeps the books intact, legal holds, the machine-readable data subject access export, coverage of raw stores, erasure that survives backup restores, and the DPO and DPIA checks in the first-run checklist (B M36). Items that B rates "should" or "could" are marked as such in the requirement name; everything else is MVP behaviour.
-
 ## Requirements
 ### Requirement: Consent records
 The system SHALL record consents per person and purpose (for example newsletter, photos on the website) with granted and withdrawn timestamps, source (application form, portal, paper) and text version.
@@ -77,3 +76,11 @@ The system SHALL set only strictly necessary cookies (session, CSRF, locale) and
 #### Scenario: Cookie inventory
 - **WHEN** a visitor opens the public application form
 - **THEN** no cookie other than the necessary ones is set
+
+### Requirement: Erasure replay at start-up
+The system SHALL append each erasure (organisation id, person id, time) to a file beside the stored files and, at start-up before accepting requests, anonymise again every listed person that is present and not anonymised.
+
+#### Scenario: Restored backup
+- **WHEN** the database is restored from a backup taken before a person was anonymised and the server starts
+- **THEN** the person is anonymised again before the first request is served
+
