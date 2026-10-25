@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CONSENT_PURPOSE_LABEL, CONSENT_PURPOSES, CONSENT_SOURCE_LABEL, CONSENT_SOURCES, type PrivacyState } from '../../shared/privacy.ts';
+import { useMe } from '../lib/session.tsx';
 import { api, ApiError } from '../lib/api.ts';
 
 const problemText = (e: ApiError) => e.problem.errors?.map((x) => x.message).join(' ') ?? [e.problem.title, e.problem.detail].filter(Boolean).join(' ');
@@ -8,6 +9,7 @@ const problemText = (e: ApiError) => e.problem.errors?.map((x) => x.message).joi
 /** Consents, legal hold, access export and anonymisation for one person. Needs a club-wide members grant. */
 export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: string; canWrite: boolean; onAnonymised: () => void }) {
   const qc = useQueryClient();
+  const isAdmin = !!useMe().data?.roles.includes('Admin');
   const key = ['privacy', personId];
   const { data, error: loadError } = useQuery({ queryKey: key, queryFn: () => api<PrivacyState>(`/persons/${personId}/privacy`), retry: false });
   const [form, setForm] = useState<'consent' | 'hold' | 'anonymise' | null>(null);
@@ -101,7 +103,7 @@ export function MemberPrivacy({ personId, canWrite, onAnonymised }: { personId: 
 
           <div className="actions-row">
             {canWrite && form !== 'consent' && <button className="btn" onClick={() => setForm('consent')}>Einwilligung erfassen</button>}
-            <a className="btn" href={`/api/v1/persons/${personId}/export`}>Auskunft (Art. 15)</a>
+            {isAdmin && <a className="btn" href={`/api/v1/persons/${personId}/export`}>Auskunft (Art. 15)</a>}
             {canWrite && (data.legalHoldReason
               ? <button className="btn btn-ghost" onClick={() => void run(() => api(`/persons/${personId}/legal-hold`, { method: 'PUT', body: { reason: null } }))}>Löschsperre aufheben</button>
               : form !== 'hold' && <button className="btn btn-ghost" onClick={() => setForm('hold')}>Löschsperre …</button>)}

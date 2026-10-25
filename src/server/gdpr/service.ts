@@ -72,7 +72,7 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
     await tx.updateTable('application').set({ payload: '{}', iban_encrypted: null, iban_last4: null, reason: null }).where('member_id', 'in', members).where('status', '<>', 'new').execute();
   }
   await tx.updateTable('change_request').set({ old_value: null, new_value: '', requested_by_email: '', reason: null }).where('person_id', '=', personId).execute();
-  await tx.updateTable('donation').set({ note: null }).where('person_id', '=', personId).execute();
+  await tx.updateTable('donation').set({ note: null }).where('person_id', '=', personId).where('note', 'is not', null).execute();
   await tx.updateTable('collection_item').set({ amended_from_iban_encrypted: null }).where('person_id', '=', personId).execute();
   // A random hash, so bank matching no longer suggests this person for that IBAN.
   for (const m of await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', personId).execute()) {
@@ -91,8 +91,8 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   await sql`select set_config('ov.scrub', 'off', true)`.execute(tx);
   // Full exports contain the person; they are recreated on demand, never kept past an erasure.
   await tx.deleteFrom('file').where('organization_id', '=', organizationId).where('purpose', '=', 'export').execute();
-  // Stored API responses may name the person; they are only kept for retries.
-  await tx.deleteFrom('idempotency_key').where('organization_id', '=', organizationId).execute();
+  // Stored API responses may name the person. The keys stay, so a retry is still recognised as done, not booked twice.
+  await tx.updateTable('idempotency_key').set({ response: null }).where('organization_id', '=', organizationId).where('response', 'is not', null).execute();
   await tx.insertInto('erasure_log').values({ organization_id: organizationId, person_id: personId }).execute();
 }
 
@@ -136,12 +136,16 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
   }
   let n = 0;
   for (const { o, p } of entries) {
+    // One erasure that cannot be repeated must not keep the server from starting; it is logged for the operator.
     const again = await db.transaction().execute(async (tx) => {
       const row = await tx.selectFrom('person').select('anonymised_at').where('id', '=', p).where('organization_id', '=', o).forUpdate().executeTakeFirst();
       if (!row || row.anonymised_at) return false;
       await anonymise(tx, o, p);
       await audit(tx, o, null, { action: 'person.anonymised_again', entityType: 'person', entityId: p });
       return true;
+    }).catch((err: unknown) => {
+      log.warn(`Erasure of person ${p} (organization ${o}) could not be repeated after the restore; repeat it by hand: ${String(err)}`);
+      return false;
     });
     if (again) n++;
   }

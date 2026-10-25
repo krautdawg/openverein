@@ -6,7 +6,7 @@ import { inflateRawSync } from 'node:zlib';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { replayErasures } from '../src/server/gdpr/service.ts';
 import { config } from '../src/server/config.ts';
-import { client, reset, setupClub, testApp } from './helpers.ts';
+import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 config.filesDir = await mkdtemp(join(tmpdir(), 'ov-privacy-'));
 const ctx = await testApp();
@@ -94,5 +94,42 @@ describe('privacy', () => {
 
     const review = (await admin.get('/privacy/review')).body;
     expect(review.items.map((i: { name: string }) => i.name)).toEqual(['Export, Paula']);
+  });
+
+  it('anonymises a donor whose donation is on a valid receipt, keeps the receipt, and lets only admins export', async () => {
+    const accounts = (await admin.get('/ledger/accounts')).body as { id: string; number: string }[];
+    const acc = (n: string) => accounts.find((a) => a.number === n)!.id;
+    const d = await admin.post('/donations', { donor: { lastName: 'Spender', firstName: 'Sina', street: 'Weg 2', postalCode: '12345', city: 'Musterstadt' }, date: '2026-03-05', amountCents: 25000, moneyAccountId: acc('1100'), incomeAccountId: acc('4100'), note: 'per Brief zugesagt' });
+    expect(d.status, JSON.stringify(d.body)).toBe(201);
+    await admin.put('/donations/settings', { kind: 'freistellung', office: 'Musterstadt', taxNumber: '12/345/67890', date: `${new Date().getFullYear() - 1}-05-01`, period: '2021–2023', purposes: 'des Sports (§ 52 Abs. 2 Satz 1 Nr. 21 AO)', signer: 'Erika Mustermann, Kassenwartin' });
+    const receipt = await admin.post('/donation-receipts', { personId: d.body.personId, donationIds: [d.body.id] });
+    expect(receipt.status, JSON.stringify(receipt.body)).toBe(201);
+
+    // Only a club-wide admin gets the complete Art. 15 export.
+    const tax = await userWithRole(ctx.app, cookie, 'Steuerberatung');
+    expect((await ctx.app.inject({ url: `/api/v1/persons/${d.body.personId}/export`, headers: { cookie: tax } })).statusCode).toBe(403);
+
+    const done = await admin.post(`/persons/${d.body.personId}/anonymise`, {});
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    const row = await ctx.db.selectFrom('donation').select(['note', 'amount_cents']).where('id', '=', d.body.id).executeTakeFirstOrThrow();
+    expect([row.note, Number(row.amount_cents)]).toEqual([null, 25000]);
+    expect((await ctx.db.selectFrom('donation_receipt').select('status').where('id', '=', receipt.body.id).executeTakeFirstOrThrow()).status).toBe('issued');
+    // The trigger still freezes everything else on a receipted donation.
+    await expect(ctx.db.updateTable('donation').set({ amount_cents: 1 }).where('id', '=', d.body.id).execute()).rejects.toThrow(/receipt/);
+  });
+
+  it('keeps idempotency keys through an anonymisation, so a retry is not booked twice', async () => {
+    const m = await formerMember('Retry');
+    const key = 'retry-key-0001';
+    const create = () => ctx.app.inject({ method: 'POST', url: '/api/v1/invoices', headers: { cookie, 'idempotency-key': key }, payload: { memberId: m.id, lines: [{ text: 'Beitrag', unitCents: 6000 }] } });
+    expect((await create()).statusCode).toBe(201);
+    const count = async () => (await ctx.db.selectFrom('invoice').select('id').execute()).length;
+    const before = await count();
+    const other = await formerMember('Andere');
+    expect((await admin.post(`/persons/${other.personId}/anonymise`, {})).status).toBe(200);
+    const again = await create();
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json().type).toMatch(/idempotency-already-done$/);
+    expect(await count()).toBe(before);
   });
 });
