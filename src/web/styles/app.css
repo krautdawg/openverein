@@ -663,3 +663,5 @@ input[type='range'] { accent-color: var(--accent); }
 .timeline li.claim { grid-template-columns: 1fr auto; }
 .claim-actions { display: inline-flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
 @media (max-width: 600px) { .timeline li.claim { grid-template-columns: 1fr; } }
+/* A money field inside a sentence keeps its label for screen readers only. */
+.age-rule .field > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

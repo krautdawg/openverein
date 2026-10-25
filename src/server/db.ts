@@ -57,6 +57,10 @@ export interface OrganizationTable {
   einvoice_contact_phone: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
+  work_hours_required: string | null;
+  work_hours_rate_cents: number | null;
+  work_hours_age_from: number | null;
+  work_hours_age_to: number | null;
 }
 
 export interface AppUserTable {
@@ -900,6 +904,26 @@ export interface Database {
   receipt_line: ReceiptLineTable;
   job: JobTable;
   expense_claim: ExpenseClaimTable;
+  work_hour_entry: WorkHourEntryTable;
+  work_hour_settlement: WorkHourSettlementTable;
+}
+
+export interface WorkHourEntryTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  worked_on: string;
+  hours: string;
+  text: string;
+  logged_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface WorkHourSettlementTable {
+  organization_id: string;
+  member_id: string;
+  year: number;
+  invoice_id: string;
 }
 
 export interface ExpenseClaimTable {

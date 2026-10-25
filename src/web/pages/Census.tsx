@@ -15,6 +15,7 @@ export function ReportsNav() {
     <nav className="subnav" aria-label="Auswertungen">
       <NavLink to="/mitglieder/bestandserhebung" end>Bestandserhebung</NavLink>
       <NavLink to="/mitglieder/ehrungen" end>Ehrungen</NavLink>
+      <NavLink to="/mitglieder/arbeitsstunden" end>Arbeitsstunden</NavLink>
     </nav>
   );
 }
