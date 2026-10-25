@@ -649,3 +649,11 @@ input[type='range'] { accent-color: var(--accent); }
 /* Section title with its action on the right; keeps the short court stroke above the title. */
 .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; margin-bottom: var(--s-3); }
 .section-head h2::before { content: ''; display: block; width: 24px; height: 2px; background: var(--line-strong); margin-bottom: var(--s-2); }
+
+/* Small disclosure menu (native details): no script, keyboard and screen readers get it for free. */
+.menu { position: relative; }
+.menu > summary { list-style: none; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu-list { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; padding: var(--s-1); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.menu-list a { display: block; padding: var(--s-2) var(--s-3); border-radius: 2px; text-decoration: none; font-size: var(--text-sm); }
+.menu-list a:hover, .menu-list a:focus-visible { background: var(--surface-sunk); }

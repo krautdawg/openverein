@@ -5,8 +5,8 @@ import { formatDate } from '../../shared/dates.ts';
 
 const require = createRequire(import.meta.url);
 // Source Sans 3 (SIL OFL) covers Latin Extended, so names like "Yılmaz" render correctly.
-const FONT = require.resolve('source-sans/TTF/SourceSans3-Regular.ttf');
-const FONT_BOLD = require.resolve('source-sans/TTF/SourceSans3-Semibold.ttf');
+export const FONT = require.resolve('source-sans/TTF/SourceSans3-Regular.ttf');
+export const FONT_BOLD = require.resolve('source-sans/TTF/SourceSans3-Semibold.ttf');
 
 export interface PdfInvoice {
   title: string;

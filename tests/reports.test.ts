@@ -53,3 +53,22 @@ describe('honours (Ehrungen)', () => {
     expect(limited.anniversaries).toHaveLength(1);
   });
 });
+
+describe('member lists', () => {
+  it('prints the filtered list as PDF and exports vCards without restricted fields', async () => {
+    await admin.post('/members', { firstName: 'Vera', lastName: 'Karte', email: 'vera@example.org', phone: '030 123456', birthDate: '1980-04-02', street: 'Weg 1; Hinterhaus', postalCode: '10115', city: 'Berlin', joinDate: '2020-01-01' });
+    const pdf = await ctx.app.inject({ url: '/api/v1/members/export.pdf', headers: { cookie } });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    const vcf = await ctx.app.inject({ url: '/api/v1/members/export.vcf', headers: { cookie } });
+    expect(vcf.body).toContain('BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Vera Karte');
+    expect(vcf.body).toContain('ADR:;;Weg 1\\; Hinterhaus;Berlin;;10115;DE');
+    expect(vcf.body).toContain('BDAY:19800402');
+    const adviser = await userWithRole(ctx.app, cookie, 'Steuerberatung', null);
+    const limited = await ctx.app.inject({ url: '/api/v1/members/export.vcf', headers: { cookie: adviser } });
+    expect(limited.body).toContain('FN:Vera Karte');
+    expect(limited.body).not.toContain('vera@example.org');
+    expect(limited.body).not.toContain('BDAY');
+    expect(limited.body).not.toContain('TEL');
+  });
+});
