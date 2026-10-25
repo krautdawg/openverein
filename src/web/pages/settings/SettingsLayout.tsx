@@ -7,6 +7,7 @@ export function SettingsLayout({ me }: { me: Me }) {
     { to: '/einstellungen', label: 'Verein', show: true },
     { to: '/einstellungen/email', label: 'E-Mail', show: me.permissions.communication !== 'none' },
     { to: '/einstellungen/aufnahme', label: 'Aufnahme', show: me.permissions.members !== 'none' },
+    { to: '/einstellungen/import', label: 'Import', show: me.permissions.imports !== 'none' && me.permissions.imports !== undefined },
     { to: '/einstellungen/zugaenge', label: 'Zugänge', show: me.permissions.settings !== 'none' },
     { to: '/einstellungen/rollen', label: 'Rollen', show: me.permissions.settings !== 'none' },
     { to: '/einstellungen/api', label: 'API-Schlüssel', show: me.permissions.api !== 'none' },
