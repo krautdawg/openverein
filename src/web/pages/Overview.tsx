@@ -1,7 +1,8 @@
-import { Check } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check } from 'lucide-react';
+import { Fragment, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Me } from '../../shared/auth.ts';
+import { OVERVIEW_SECTIONS, type Me, type OverviewSection } from '../../shared/auth.ts';
 import { ChangeInbox } from '../components/ChangeInbox.tsx';
 import { PageHead } from '../components/PageHead.tsx';
 import { api } from '../lib/api.ts';
@@ -25,6 +26,7 @@ export function Overview({ me }: { me: Me }) {
   useTitle('Übersicht');
   const { data } = useQuery({ queryKey: ['overview'], queryFn: () => api<OverviewData>('/overview') });
   const m = data?.members;
+  const [arranging, setArranging] = useState(false);
   // Checklist items tick themselves off from real data; modules add their items as they ship.
   const steps = [
     { label: 'Anschrift und E-Mail des Vereins eintragen', done: !!data?.setup.clubDetails, to: '/einstellungen' },
@@ -33,10 +35,8 @@ export function Overview({ me }: { me: Me }) {
     { label: 'Weitere Zugänge für den Vorstand einrichten', done: (data?.setup.users ?? 0) > 1, to: '/einstellungen/zugaenge' },
   ].filter((s) => s.to !== '/einstellungen/zugaenge' || me.permissions.settings === 'write');
 
-  return (
-    <div className="page">
-      <PageHead title={`${greeting()}, ${me.name.split(' ')[0]}.`} intro={`Hier siehst Du, was im ${me.organization.name} gerade ansteht.`} />
-      {m && (
+  const sections: Record<OverviewSection, React.ReactNode> = {
+    figures: m && (
         <section aria-label="Mitglieder in Zahlen">
           <dl className="figures">
             {[
@@ -54,9 +54,10 @@ export function Overview({ me }: { me: Me }) {
             ))}
           </dl>
         </section>
-      )}
-      {me.permissions.members !== 'none' && <ChangeInbox canWrite={me.permissions.members === 'write'} />}
-      <MyTasks meId={me.id} />
+    ),
+    changes: me.permissions.members !== 'none' && <ChangeInbox canWrite={me.permissions.members === 'write'} />,
+    tasks: <MyTasks meId={me.id} />,
+    steps: (
       <section className="section" aria-labelledby="first-steps">
         <h2 id="first-steps">Erste Schritte</h2>
         <ul className="checklist">
@@ -69,7 +70,53 @@ export function Overview({ me }: { me: Me }) {
           ))}
         </ul>
       </section>
+    ),
+  };
+  const order = arrange(me.overviewLayout);
+
+  return (
+    <div className="page">
+      <PageHead title={`${greeting()}, ${me.name.split(' ')[0]}.`} intro={`Hier siehst Du, was im ${me.organization.name} gerade ansteht.`} actions={<button className="btn btn-ghost" aria-expanded={arranging} onClick={() => setArranging(!arranging)}>Übersicht anpassen</button>} />
+      {arranging && <ArrangeOverview layout={me.overviewLayout} onDone={() => setArranging(false)} />}
+      {order.filter((k) => !me.overviewLayout.hidden.includes(k)).map((k) => <Fragment key={k}>{sections[k]}</Fragment>)}
     </div>
+  );
+}
+
+/** The saved order, with sections not yet in it (new ones) at their default place at the end. */
+function arrange(layout: { order: string[] }): OverviewSection[] {
+  const all = Object.keys(OVERVIEW_SECTIONS) as OverviewSection[];
+  return [...layout.order.filter((k): k is OverviewSection => all.includes(k as OverviewSection)), ...all.filter((k) => !layout.order.includes(k))];
+}
+
+/** Show, hide and move the overview's sections; saved per access right away. */
+function ArrangeOverview({ layout, onDone }: { layout: { order: string[]; hidden: string[] }; onDone: () => void }) {
+  const qc = useQueryClient();
+  const order = arrange(layout);
+  async function save(next: { order: string[]; hidden: string[] }) {
+    qc.setQueryData(['me'], await api<Me>('/auth/me/overview', { method: 'PUT', body: next }));
+  }
+  const move = (i: number, d: -1 | 1) => {
+    const next = [...order];
+    [next[i], next[i + d]] = [next[i + d]!, next[i]!];
+    void save({ order: next, hidden: layout.hidden });
+  };
+  return (
+    <section className="section" aria-labelledby="arrange" style={{ marginBottom: 'var(--s-7)' }}>
+      <h2 id="arrange">Übersicht anpassen</h2>
+      <ol className="arrange-list">
+        {order.map((k, i) => (
+          <li key={k}>
+            <label className="check"><input type="checkbox" checked={!layout.hidden.includes(k)} onChange={(e) => void save({ order, hidden: e.target.checked ? layout.hidden.filter((h) => h !== k) : [...layout.hidden, k] })} /> {OVERVIEW_SECTIONS[k]}</label>
+            <span className="actions-inline">
+              <button className="btn btn-ghost" aria-label={`${OVERVIEW_SECTIONS[k]} nach oben`} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} aria-hidden /></button>
+              <button className="btn btn-ghost" aria-label={`${OVERVIEW_SECTIONS[k]} nach unten`} disabled={i === order.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} aria-hidden /></button>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div className="actions-row"><button className="btn" onClick={onDone}>Fertig</button></div>
+    </section>
   );
 }
 

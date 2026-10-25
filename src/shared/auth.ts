@@ -28,6 +28,8 @@ export const me = z.object({
   restricted: z.array(z.string()).default([]),
   /** Second factor: required for finance roles; enrolled once set up. */
   mfa: z.object({ required: z.boolean(), enrolled: z.boolean() }),
+  /** order and hidden sections of the overview (empty order = default) */
+  overviewLayout: z.object({ order: z.array(z.string()), hidden: z.array(z.string()) }).default({ order: [], hidden: [] }),
 });
 
 /** Answer of a password login when the account uses TOTP: no session yet, only a short-lived ticket. */
@@ -44,3 +46,10 @@ export const acceptInviteBody = z.object({
   password: z.string().min(12, 'Mindestens 12 Zeichen.').max(128, 'Höchstens 128 Zeichen.'),
 });
 export type Me = z.infer<typeof me>;
+
+/** Sections of the overview a user can order and hide. */
+export const OVERVIEW_SECTIONS = { figures: 'Mitglieder in Zahlen', changes: 'Änderungswünsche', tasks: 'Deine Aufgaben', steps: 'Erste Schritte' } as const;
+export type OverviewSection = keyof typeof OVERVIEW_SECTIONS;
+const sectionKey = z.enum(Object.keys(OVERVIEW_SECTIONS) as [OverviewSection, ...OverviewSection[]]);
+export const overviewLayout = z.object({ order: z.array(sectionKey).max(20), hidden: z.array(sectionKey).max(20) });
+export type OverviewLayout = z.infer<typeof overviewLayout>;

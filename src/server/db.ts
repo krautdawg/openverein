@@ -93,6 +93,7 @@ export interface AppUserTable {
   totp_pending_secret_encrypted: string | null;
   totp_enabled_at: Date | null;
   totp_last_step: number | null;
+  overview_layout: Generated<unknown>;
 }
 
 export interface SessionTable {

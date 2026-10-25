@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { acceptInviteBody, loginBody, loginTicket, me, setupBody, totpCode } from '../../shared/auth.ts';
+import { acceptInviteBody, loginBody, loginTicket, me, setupBody, totpCode, overviewLayout } from '../../shared/auth.ts';
 import { config } from '../config.ts';
 import { DEMO_SEED_KEY } from '../demo/login.ts';
 import { audit } from '../audit.ts';
@@ -32,6 +32,7 @@ async function meOf(db: Db, user: AppUser, grants?: Grant[]) {
     roles: g.map((x) => x.roleName),
     restricted: [...restrictedFields(actor)],
     mfa: { required: !config.demoMode && !org.is_demo && mfaRequired(g), enrolled: config.demoMode || org.is_demo || !!user.totp_enabled_at },
+    overviewLayout: user.overview_layout as { order: string[]; hidden: string[] },
   };
 }
 
@@ -270,6 +271,13 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     if (actor.kind !== 'user') throw new Problem(400, 'not-a-user', 'API-Schlüssel haben kein Benutzerkonto.');
     return meOf(db, await db.selectFrom('app_user').selectAll().where('id', '=', actor.id).executeTakeFirstOrThrow(), actor.grants);
+  });
+
+  app.put('/auth/me/overview', { schema: { tags: ['auth'], summary: 'Eigene Übersicht anordnen: Reihenfolge und ausgeblendete Abschnitte', body: overviewLayout, response: { 200: me } } }, async (req) => {
+    const actor = requireActor(req);
+    if (actor.kind !== 'user') throw new Problem(400, 'not-a-user', 'API-Schlüssel haben kein Benutzerkonto.');
+    const u = await db.updateTable('app_user').set({ overview_layout: JSON.stringify({ order: [...new Set(req.body.order)], hidden: [...new Set(req.body.hidden)] }) }).where('id', '=', actor.id).returningAll().executeTakeFirstOrThrow();
+    return meOf(db, u, actor.grants);
   });
 
   app.post(
