@@ -458,7 +458,7 @@ function PortalExpenses({ me }: { me: PortalMe }) {
           </div>
         )}
         <Field label="Wofür" name="purpose" required maxLength={200} placeholder="z. B. Bälle für das Training" error={error?.fieldError('purpose')} />
-        <Field label="Bezahlt am" name="spentOn" type="date" required error={error?.fieldError('spentOn')} />
+        <Field label="Bezahlt am" name="spentOn" type="date" required max={new Date().toLocaleDateString('sv-SE')} error={error?.fieldError('spentOn')} />
         <MoneyField label="Betrag" name="amountCents" error={error?.fieldError('amountCents')} />
         <Field label="Kontoinhaber:in" name="accountHolder" required defaultValue={first?.name ?? ''} autoComplete="name" error={error?.fieldError('accountHolder')} />
         <Field label="IBAN für die Erstattung" name="iban" required autoComplete="off" inputMode="text" error={error?.fieldError('iban')} />

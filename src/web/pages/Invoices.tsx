@@ -302,7 +302,8 @@ function CreateInvoice({ onClose, onCreated, offer = false }: { onClose: () => v
   const [member, setMember] = useState<MemberListItem | null>(null);
   const [term, setTerm] = useState('');
   const found = useQuery({ queryKey: ['member-pick', term], queryFn: () => api<{ items: MemberListItem[] }>(`/members?q=${encodeURIComponent(term)}&limit=6`), enabled: term.length >= 2 && !member });
-  const [lines, setLines] = useState([{ text: '', quantity: '1', price: '', taxRate: '0' }]);
+  // A catalogue price is gross: such a line stays gross whatever the price mode (`gross`), until its price is edited.
+  const [lines, setLines] = useState<{ text: string; quantity: string; price: string; taxRate: string; gross?: boolean }[]>([{ text: '', quantity: '1', price: '', taxRate: '0' }]);
   const [net, setNet] = useState(false);
   const articles = useArticles();
   const [error, setError] = useState<ApiError>();
@@ -318,7 +319,7 @@ function CreateInvoice({ onClose, onCreated, offer = false }: { onClose: () => v
         ...base,
         coverText: f.get('coverText') || null,
         closingText: f.get('closingText') || null,
-        lines: lines.map((l) => ({ text: l.text, quantity: Number(l.quantity.replace(',', '.')), unitCents: parseEuro(l.price) ?? NaN, taxRate: Number(l.taxRate), net })),
+        lines: lines.map((l) => ({ text: l.text, quantity: Number(l.quantity.replace(',', '.')), unitCents: parseEuro(l.price) ?? NaN, taxRate: Number(l.taxRate), net: net && !l.gross })),
       };
       const path = offer ? '/offers' : '/invoices';
       const inv = await api<{ id: string }>(path, { method: 'POST', body });
@@ -358,7 +359,7 @@ function CreateInvoice({ onClose, onCreated, offer = false }: { onClose: () => v
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 96px 80px', gap: 'var(--s-2)', marginBottom: 'var(--s-2)' }}>
               <input className="input" aria-label={`Position ${i + 1}: Text`} placeholder="Beschreibung" value={l.text} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
               <input className="input num" aria-label={`Position ${i + 1}: Menge`} inputMode="decimal" value={l.quantity} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} />
-              <input className="input num" aria-label={`Position ${i + 1}: Einzelpreis in Euro`} inputMode="decimal" placeholder="0,00 €" value={l.price} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, price: e.target.value } : x)))} />
+              <input className="input num" title={l.gross && net ? 'Katalogpreis inkl. USt' : undefined} aria-label={`Position ${i + 1}: Einzelpreis in Euro${l.gross && net ? ' (inkl. USt)' : ''}`} inputMode="decimal" placeholder="0,00 €" value={l.price} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, price: e.target.value, gross: false } : x)))} />
               <select className="select" aria-label={`Position ${i + 1}: Umsatzsteuer`} value={l.taxRate} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, taxRate: e.target.value } : x)))}><option value="0">0 %</option><option value="7">7 %</option><option value="19">19 %</option></select>
             </div>
           ))}
@@ -372,7 +373,7 @@ function CreateInvoice({ onClose, onCreated, offer = false }: { onClose: () => v
               <select className="select" aria-label="Artikel einfügen" value="" onChange={(e) => {
                 const a = articles.data!.find((x) => x.id === e.target.value);
                 // An empty first line is replaced; otherwise the article is added below.
-                if (a) setLines([...lines.filter((l) => l.text || l.price), { text: a.name, quantity: '1', price: euroInput(a.unitCents), taxRate: String(a.taxRate) }]);
+                if (a) setLines([...lines.filter((l) => l.text || l.price), { text: a.name, quantity: '1', price: euroInput(a.unitCents), taxRate: String(a.taxRate), gross: true }]);
               }}>
                 <option value="">Artikel einfügen …</option>
                 {articles.data.map((a) => <option key={a.id} value={a.id}>{a.name} · {euroInput(a.unitCents)} €</option>)}

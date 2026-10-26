@@ -25,6 +25,8 @@ export const MONEY_ROUTES = new Set(
     '/receipts/self-issued',
     '/receipts/:id/pay',
     '/receipts/:id/void',
+    '/work-hours/settle',
+    '/expense-claims/:id/approve',
     '/allowances/payments',
   ].map((r) => `/api/v1${r}`),
 );

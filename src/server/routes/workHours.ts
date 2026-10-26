@@ -4,10 +4,11 @@ import { z } from 'zod';
 import { displayName } from '../../shared/members.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
-import { notFound, Problem } from '../http/problem.ts';
+import { forbidden, notFound, Problem } from '../http/problem.ts';
 import { createDraft } from '../invoices/service.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
-import { requireClubWide, requirePermission, type Actor } from '../policy.ts';
+import type { Db } from '../db.ts';
+import { requireClubWide, requirePermission, restrictedFields, type Actor } from '../policy.ts';
 
 const tags = ['members'];
 const settings = z.object({
@@ -19,17 +20,25 @@ const settings = z.object({
 const entry = z.object({ id: z.uuid(), memberId: z.uuid(), workedOn: z.string(), hours: z.number(), text: z.string() });
 const yearQuery = z.object({ year: z.coerce.number().int().min(2000).max(2100) });
 
+/** Entries and the settlement of one member and year never interleave. */
+const lockMemberYear = (tx: Db, memberId: string, year: number) => sql`select pg_advisory_xact_lock(hashtext(${`work-hours:${memberId}:${year}`}))`.execute(tx);
+const settledIn = (tx: Db, memberId: string, year: number) => tx.selectFrom('work_hour_settlement').select('invoice_id').where('member_id', '=', memberId).where('year', '=', year).executeTakeFirst();
+
 export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  async function loadSettings(organizationId: string) {
-    const o = await db.selectFrom('organization').select(['work_hours_required', 'work_hours_rate_cents', 'work_hours_age_from', 'work_hours_age_to']).where('id', '=', organizationId).executeTakeFirstOrThrow();
-    return { required: o.work_hours_required === null ? null : Number(o.work_hours_required), rateCents: o.work_hours_rate_cents === null ? null : Number(o.work_hours_rate_cents), ageFrom: o.work_hours_age_from, ageTo: o.work_hours_age_to };
+  /** The rule of a year: the latest one that starts in or before it. */
+  async function loadSettings(organizationId: string, year: number) {
+    const r = await db.selectFrom('work_hour_rule').selectAll().where('organization_id', '=', organizationId).where('from_year', '<=', year).orderBy('from_year', 'desc').executeTakeFirst();
+    return { required: r?.required == null ? null : Number(r.required), rateCents: r?.rate_cents == null ? null : Number(r.rate_cents), ageFrom: r?.age_from ?? null, ageTo: r?.age_to ?? null };
   }
+  const yearOf = async (organizationId: string) => Number((await orgToday(db, organizationId)).slice(0, 4));
 
   /** Members of the year (by join and exit date) in the caller's scope, with hours owed, done and missing. */
   async function overview(actor: Actor, year: number) {
-    const s = await loadSettings(actor.organizationId);
+    const s = await loadSettings(actor.organizationId, year);
+    // With age limits, who owes hours in which year gives birth years away.
+    if ((s.ageFrom !== null || s.ageTo !== null) && restrictedFields(actor).has('birth_date')) throw forbidden('members.field.birth_date');
     const today = await orgToday(db, actor.organizationId);
     const rows = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id')
       .select(['member.id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.birth_date'])
@@ -51,28 +60,30 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     });
   }
 
-  app.get('/work-hours/settings', { schema: { tags, summary: 'Regel für Arbeitsstunden', response: { 200: settings } } }, async (req) => {
+  app.get('/work-hours/settings', { schema: { tags, summary: 'Regel für Arbeitsstunden eines Jahres (ohne Jahr: das laufende)', querystring: z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() }), response: { 200: settings } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'read');
-    return loadSettings(actor.organizationId);
+    return loadSettings(actor.organizationId, req.query.year ?? (await yearOf(actor.organizationId)));
   });
 
-  app.put('/work-hours/settings', { schema: { tags, summary: 'Regel für Arbeitsstunden ändern (Stunden pro Jahr, Ersatzgeld je fehlender Stunde, Altersgrenzen)', body: settings, response: { 200: settings } } }, async (req) => {
+  app.put('/work-hours/settings', { schema: { tags, summary: 'Regel für Arbeitsstunden ab einem Jahr festlegen (gilt bis zur nächsten Regel; abgerechnete Jahre behalten ihre Werte)', body: settings.extend({ fromYear: z.number().int().min(2000).max(2100).optional() }), response: { 200: settings } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'settings', 'write');
     const b = req.body;
     if (b.ageFrom !== null && b.ageTo !== null && b.ageFrom > b.ageTo) throw new Problem(400, 'validation', 'Das Mindestalter liegt über dem Höchstalter.');
+    const fromYear = b.fromYear ?? (await yearOf(actor.organizationId));
+    const values = { required: b.required === null ? null : String(b.required), rate_cents: b.rateCents === null ? null : String(b.rateCents), age_from: b.ageFrom, age_to: b.ageTo };
     await db.transaction().execute(async (tx) => {
-      await tx.updateTable('organization').set({ work_hours_required: b.required === null ? null : String(b.required), work_hours_rate_cents: b.rateCents, work_hours_age_from: b.ageFrom, work_hours_age_to: b.ageTo }).where('id', '=', actor.organizationId).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'work_hours.settings', entityType: 'organization', entityId: actor.organizationId, diff: { rule: [null, b] } });
+      await tx.insertInto('work_hour_rule').values({ organization_id: actor.organizationId, from_year: fromYear, ...values }).onConflict((oc) => oc.columns(['organization_id', 'from_year']).doUpdateSet(values)).execute();
+      await audit(tx, actor.organizationId, actor, { action: 'work_hours.settings', entityType: 'organization', entityId: actor.organizationId, diff: { fromYear: [null, fromYear], rule: [null, { required: b.required, rateCents: b.rateCents, ageFrom: b.ageFrom, ageTo: b.ageTo }] } });
     });
-    return loadSettings(actor.organizationId);
+    return loadSettings(actor.organizationId, fromYear);
   });
 
   app.get('/work-hours', { schema: { tags, summary: 'Arbeitsstunden eines Jahres je Mitglied: Soll, geleistet, offen, Ersatzgeld', querystring: yearQuery, response: { 200: z.object({ settings, members: z.array(z.object({ memberId: z.uuid(), name: z.string(), required: z.number(), done: z.number(), missing: z.number(), feeCents: z.number(), invoiceId: z.uuid().nullable() })) }) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'read');
-    return { settings: await loadSettings(actor.organizationId), members: await overview(actor, req.query.year) };
+    return { settings: await loadSettings(actor.organizationId, req.query.year), members: await overview(actor, req.query.year) };
   });
 
   app.get('/work-hours/entries', { schema: { tags, summary: 'Geleistete Stunden eines Mitglieds im Jahr', querystring: yearQuery.extend({ memberId: z.uuid() }), response: { 200: z.array(entry) } } }, async (req) => {
@@ -88,6 +99,10 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'members', 'write');
     await loadMemberRow(db, actor, req.body.memberId, 'write');
     const e = await db.transaction().execute(async (tx) => {
+      // A settled year is the basis of an invoice: no more hours for it.
+      const year = Number(req.body.workedOn.slice(0, 4));
+      await lockMemberYear(tx, req.body.memberId, year);
+      if (await settledIn(tx, req.body.memberId, year)) throw new Problem(409, 'settled', `${year} ist schon abgerechnet.`, 'Korrigiere über die Ersatzgeld-Rechnung.');
       const e = await tx.insertInto('work_hour_entry').values({ organization_id: actor.organizationId, member_id: req.body.memberId, worked_on: req.body.workedOn, hours: String(req.body.hours), text: req.body.text, logged_by: actor.userId }).returning(['id', 'member_id', 'worked_on', 'hours', 'text']).executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'work_hours.logged', entityType: 'member', entityId: req.body.memberId, diff: { hours: [null, req.body.hours], on: [null, req.body.workedOn] } });
       return e;
@@ -102,9 +117,11 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     const e = await db.selectFrom('work_hour_entry').select(['id', 'member_id', 'worked_on', 'hours']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!e) throw notFound('Eintrag');
     await loadMemberRow(db, actor, e.member_id, 'write');
-    // Once the year is settled, its hours are the basis of an invoice.
-    if (await db.selectFrom('work_hour_settlement').select('invoice_id').where('member_id', '=', e.member_id).where('year', '=', Number(e.worked_on.slice(0, 4))).executeTakeFirst()) throw new Problem(409, 'settled', 'Das Jahr ist schon abgerechnet.', 'Korrigiere über die Ersatzgeld-Rechnung.');
     await db.transaction().execute(async (tx) => {
+      // Once the year is settled, its hours are the basis of an invoice.
+      const year = Number(e.worked_on.slice(0, 4));
+      await lockMemberYear(tx, e.member_id, year);
+      if (await settledIn(tx, e.member_id, year)) throw new Problem(409, 'settled', 'Das Jahr ist schon abgerechnet.', 'Korrigiere über die Ersatzgeld-Rechnung.');
       await tx.deleteFrom('work_hour_entry').where('id', '=', e.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'work_hours.deleted', entityType: 'member', entityId: e.member_id, diff: { hours: [Number(e.hours), null], on: [e.worked_on, null] } });
     });
@@ -115,21 +132,31 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'invoices', 'write');
     const { year } = req.body;
-    const s = await loadSettings(actor.organizationId);
+    // Only a finished year: before its end nobody has had the chance to do the hours.
+    if (`${year}-12-31` >= (await orgToday(db, actor.organizationId))) throw new Problem(409, 'year-open', `${year} ist noch nicht vorbei.`, 'Ersatzgeld lässt sich erst nach dem Jahresende abrechnen.');
+    const s = await loadSettings(actor.organizationId, year);
     if (s.required === null || !s.rateCents) throw new Problem(409, 'no-rule', 'Es gibt keine Regel mit Ersatzgeld.', 'Trag Stunden pro Jahr und Ersatzgeld je Stunde ein.');
     const due = (await overview(actor, year)).filter((m) => m.missing > 0);
     let drafted = 0;
     let alreadySettled = 0;
     for (const m of due) {
       if (m.invoiceId) { alreadySettled++; continue; }
-      await db.transaction().execute(async (tx) => {
+      const made = await db.transaction().execute(async (tx) => {
+        // Recomputed under the lock: hours logged since the overview count, and nobody adds any meanwhile.
+        await lockMemberYear(tx, m.memberId, year);
+        if (await settledIn(tx, m.memberId, year)) return 'settled';
+        const done = Number((await tx.selectFrom('work_hour_entry').select(sql<string>`coalesce(sum(hours), 0)`.as('h')).where('member_id', '=', m.memberId).where('worked_on', '>=', `${year}-01-01`).where('worked_on', '<=', `${year}-12-31`).executeTakeFirstOrThrow()).h);
+        const missing = Math.max(0, Math.round((m.required - done) * 100) / 100);
+        if (missing <= 0) return 'none';
         const member = await tx.selectFrom('member').select(['id', 'person_id']).where('id', '=', m.memberId).executeTakeFirstOrThrow();
-        const id = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId: member.person_id, memberId: member.id, createdBy: actor.userId }, [{ text: `Ersatzgeld Arbeitsstunden ${year} (${m.done.toLocaleString('de-DE')} von ${m.required.toLocaleString('de-DE')} Std. geleistet)`, quantity: m.missing, unitCents: s.rateCents!, taxRate: 0 }]);
+        const id = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId: member.person_id, memberId: member.id, createdBy: actor.userId }, [{ text: `Ersatzgeld Arbeitsstunden ${year} (${done.toLocaleString('de-DE')} von ${m.required.toLocaleString('de-DE')} Std. geleistet)`, quantity: missing, unitCents: s.rateCents!, taxRate: 0 }]);
         // The primary key (member, year) refuses a second settlement, also under concurrent runs.
-        await tx.insertInto('work_hour_settlement').values({ organization_id: actor.organizationId, member_id: member.id, year, invoice_id: id }).execute();
-        await audit(tx, actor.organizationId, actor, { action: 'work_hours.settled', entityType: 'invoice', entityId: id, diff: { year: [null, year], missing: [null, m.missing] } });
+        await tx.insertInto('work_hour_settlement').values({ organization_id: actor.organizationId, member_id: member.id, year, invoice_id: id, required: String(m.required), done: String(done), missing: String(missing), rate_cents: String(s.rateCents) }).execute();
+        await audit(tx, actor.organizationId, actor, { action: 'work_hours.settled', entityType: 'invoice', entityId: id, diff: { year: [null, year], missing: [null, missing] } });
+        return 'drafted';
       });
-      drafted++;
+      if (made === 'drafted') drafted++;
+      if (made === 'settled') alreadySettled++;
     }
     return { drafted, alreadySettled };
   });

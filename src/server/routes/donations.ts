@@ -10,7 +10,7 @@ import { createMessage } from './messages.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
-import { RECEIPT_TEMPLATE, RECEIPT_TEMPLATE_IN_KIND, renderReceiptPdf } from '../donations/receipt-pdf.ts';
+import { descriptionFits, RECEIPT_TEMPLATE, RECEIPT_TEMPLATE_IN_KIND, renderReceiptPdf } from '../donations/receipt-pdf.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { lockJournal, postEntry, reverseEntry } from '../ledger/service.ts';
 import { nextNumber } from '../members/numbers.ts';
@@ -72,6 +72,8 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     const b = req.body;
     const today = await orgToday(db, actor.organizationId);
     if (b.date > today) throw invalid('date', 'Das Datum liegt in der Zukunft.');
+    // The receipt prints the description completely or not at all.
+    if (b.inKind && !descriptionFits(b.inKind.description)) throw invalid('inKind', 'Die Beschreibung ist zu lang für das Feld der Bestätigung (etwa drei Zeilen). Bitte kürzen.');
     if (b.moneyAccountId && b.waiver) throw invalid('moneyAccountId', 'Bei einem Verzicht auf Aufwendungsersatz fließt kein Geld; bitte ohne Geldkonto erfassen.');
     const id = await db.transaction().execute(async (tx) => {
       let personId = b.personId;
@@ -171,6 +173,9 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     if (new Set(items.map((i) => i.donated_on.slice(0, 4))).size > 1) throw invalid('donationIds', 'Eine Sammelbestätigung gilt für ein Kalenderjahr.');
     // Sachzuwendungen have their own template and are never part of a collective receipt.
     const inKind = items.length === 1 && items[0]!.kind === 'in_kind' ? items[0]! : null;
+    // Older records: refuse what the template would print incompletely or the law requires evidence for.
+    if (inKind && inKind.in_kind_source === 'private' && !inKind.in_kind_valuation_docs) throw invalid('donationIds', 'Für Sachen aus dem Privatvermögen braucht es Unterlagen zur Wertermittlung. Mach die Spende ungültig und erfasse sie mit Unterlagen neu.');
+    if (inKind && !descriptionFits(inKind.in_kind_description!)) throw invalid('donationIds', 'Die Beschreibung passt nicht vollständig in das Feld der Bestätigung. Mach die Spende ungültig und erfasse sie kürzer neu.');
     if (!inKind && items.some((i) => i.kind === 'in_kind')) throw invalid('donationIds', 'Sachspenden bekommen jede eine eigene Bestätigung.');
     const number = await nextNumber(tx, actor.organizationId, 'donation_receipt', 'ZB-{YYYY}-{seq:4}', today);
     const total = items.reduce((s, i) => s + Number(i.amount_cents), 0);

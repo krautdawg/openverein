@@ -74,4 +74,24 @@ describe('review G8', () => {
     const cols = (await sql<{ c: string }>`select column_name as c from information_schema.columns where table_schema = 'public' and table_name = 'person'`.execute(ctx.db)).rows.map((r) => r.c);
     expect(cols.filter((c) => !(c in PERSON_EXPORT) && !PERSON_NOT_EXPORTED.includes(c))).toEqual([]);
   });
+
+  // ---------- review G10 ----------
+
+  it('escapes every line break in vCards and folds long lines', async () => {
+    const { vcard } = await import('../src/server/members/lists.ts');
+    const card = vcard({ kind: 'natural', firstName: 'Eve', lastName: 'Evil\rURL:https://attacker.example', companyName: null, street: 'Straße mit einem sehr langen Namen, die über die fünfundsiebzig Oktette hinausgeht', postalCode: '12345', city: 'Ort', country: 'DE', org: 'TSV' });
+    const lines = card.split('\r\n');
+    expect(lines.some((l) => l.startsWith('URL:'))).toBe(false);
+    expect(card.replace(/\r\n /g, '')).toContain('Evil\\nURL:https://attacker.example');
+    expect(lines.every((l) => Buffer.byteLength(l) <= 75)).toBe(true);
+  });
+
+  it('refuses in-kind receipts without valuation documents for private goods, and descriptions that do not fit', async () => {
+    const donor = { lastName: 'Sach', firstName: 'Sara', street: 'Weg 3', postalCode: '12345', city: 'Musterstadt' };
+    const base = { donor, date: '2026-03-01', amountCents: 25000 };
+    expect((await admin.post('/donations', { ...base, inKind: { description: 'Zehn Bälle', source: 'private', valuationDocs: false } })).status).toBe(400);
+    const long = 'Sehr ausführliche Beschreibung der Sachspende mit Alter, Zustand und Kaufpreis. '.repeat(6);
+    expect((await admin.post('/donations', { ...base, inKind: { description: long, source: 'business', valuationDocs: false } })).status).toBe(400);
+    expect((await admin.post('/donations', { ...base, inKind: { description: 'Zehn Bälle, neu', source: 'private', valuationDocs: true } })).status).toBe(201);
+  });
 });

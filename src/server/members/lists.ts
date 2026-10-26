@@ -62,8 +62,31 @@ export function memberListPdf(rows: ListRow[], o: { club: string; title: string;
   });
 }
 
-/** vCard 4.0 (RFC 6350) text escaping. */
-const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+/**
+ * vCard 4.0 (RFC 6350) text escaping. Every line break (CRLF, CR or LF) becomes `\\n` and other control characters
+ * go, so no value can start a property of its own.
+ */
+// eslint-disable-next-line no-control-regex
+const esc = (s: string) => s.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+
+/** Lines longer than 75 octets are folded (CRLF + space), never inside a UTF-8 character. */
+function fold(line: string) {
+  const parts: string[] = [];
+  let cur = '';
+  let bytes = 0;
+  for (const ch of line) {
+    const n = Buffer.byteLength(ch);
+    if (bytes + n > (parts.length ? 74 : 75)) {
+      parts.push(cur);
+      cur = '';
+      bytes = 0;
+    }
+    cur += ch;
+    bytes += n;
+  }
+  parts.push(cur);
+  return parts.join('\r\n ');
+}
 
 export interface Card { kind: string; firstName: string | null; lastName: string | null; companyName: string | null; email?: string | null; phone?: string | null; street: string | null; postalCode: string | null; city: string | null; country: string; birthDate?: string | null; org: string }
 
@@ -82,5 +105,5 @@ export function vcard(c: Card) {
     `CATEGORIES:${esc(c.org)}`,
     'END:VCARD',
   ];
-  return lines.filter(Boolean).join('\r\n');
+  return (lines.filter(Boolean) as string[]).map(fold).join('\r\n');
 }

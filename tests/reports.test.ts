@@ -51,6 +51,11 @@ describe('honours (Ehrungen)', () => {
     const limited = (await adviser.get('/reports/honours?year=2027')).body;
     expect(limited.birthdays).toBeNull();
     expect(limited.anniversaries).toHaveLength(1);
+    // Who leaves before the day is not honoured for it.
+    const gone = (await admin.post('/members', { lastName: 'Weg', birthDate: '1967-08-01', joinDate: '2012-03-01' })).body;
+    await admin.post(`/members/${gone.id}/resign`, { noticeDate: '2026-09-01', exitDate: '2026-12-31' });
+    const after = (await admin.get('/reports/honours?year=2027')).body;
+    expect([...after.anniversaries, ...after.birthdays].map((h: { name: string }) => h.name)).not.toContain('Weg');
   });
 });
 

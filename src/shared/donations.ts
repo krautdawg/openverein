@@ -39,7 +39,9 @@ export const donationInput = z
     incomeAccountId: z.uuid().nullable().optional(),
   })
   .refine((d) => !!d.personId !== !!d.donor, { message: 'Entweder eine vorhandene Person oder neue Angaben.', path: ['personId'] })
-  .refine((d) => !d.inKind || (!d.waiver && !d.moneyAccountId), { message: 'Eine Sachspende ist weder Aufwandsverzicht noch Geld auf einem Konto.', path: ['inKind'] });
+  .refine((d) => !d.inKind || (!d.waiver && !d.moneyAccountId), { message: 'Eine Sachspende ist weder Aufwandsverzicht noch Geld auf einem Konto.', path: ['inKind'] })
+  // BMF: for things from private assets the club keeps the documents the value was taken from.
+  .refine((d) => d.inKind?.source !== 'private' || d.inKind.valuationDocs, { message: 'Für Sachen aus dem Privatvermögen braucht es Unterlagen zur Wertermittlung (zum Beispiel Rechnung oder Gutachten).', path: ['inKind'] });
 
 export const donation = z.object({
   id: z.uuid(),

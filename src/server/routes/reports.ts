@@ -101,24 +101,29 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
     const today = await orgToday(db, actor.organizationId);
     const { year } = req.query;
     const base = db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id')
-      .select(['member.id', 'member.join_date', 'person.birth_date', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
+      .select(['member.id', 'member.join_date', 'member.exit_date', 'person.birth_date', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name'])
       .where('member.organization_id', '=', actor.organizationId)
-      .where('member.status', 'in', ['active', 'future', 'resigned'])
+      .where('member.status', 'in', ['active', 'future', 'resigned', 'former'])
       .where(applyScope(actor, today, 'read'));
     const rows = await base.execute();
     const nameOf = (r: (typeof rows)[number]) => displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name });
+    // Honoured is who is a member on the day itself, not who is one today.
+    const memberOn = (r: (typeof rows)[number], date: string) => !!r.join_date && r.join_date <= date && (!r.exit_date || r.exit_date >= date);
     const anniversaries = rows
       .filter((r) => r.join_date)
       .map((r) => ({ r, years: year - Number(r.join_date!.slice(0, 4)) }))
       .filter(({ years }) => isHonouredAnniversary(years))
-      .map(({ r, years }) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.join_date!, year), years }))
+      .map(({ r, years }) => ({ r, memberId: r.id, name: nameOf(r), date: sameDay(r.join_date!, year), years }))
+      .filter((h) => memberOn(h.r, h.date))
+      .map(({ r: _r, ...h }) => h)
       .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'de'));
     const birthdays = restrictedFields(actor).has('birth_date')
       ? null
       : rows
           .filter((r) => r.birth_date && r.kind === 'natural')
-          .map((r) => ({ memberId: r.id, name: nameOf(r), date: sameDay(r.birth_date!, year), years: year - Number(r.birth_date!.slice(0, 4)) }))
-          .filter((h) => isRoundBirthday(h.years))
+          .map((r) => ({ r, memberId: r.id, name: nameOf(r), date: sameDay(r.birth_date!, year), years: year - Number(r.birth_date!.slice(0, 4)) }))
+          .filter((h) => isRoundBirthday(h.years) && memberOn(h.r, h.date))
+          .map(({ r: _r, ...h }) => h)
           .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'de'));
     // Honours awarded in that year, for the members this user may see.
     const visible = new Map(rows.map((r) => [r.id, nameOf(r)]));

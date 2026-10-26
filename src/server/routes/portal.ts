@@ -332,6 +332,8 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const u = await portalUser(req, reply);
     const m = ownMember(u, req.body.memberId);
     const b = req.body;
+    // Money already spent: a future date is a typo (and would pick the wrong year and tax rate).
+    if (b.spentOn > (await orgToday(db, u.organizationId))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'spentOn', message: 'Das Datum liegt in der Zukunft.' }] });
     const id = await db.transaction().execute(async (tx) => {
       // Only a fresh, unused upload of this club: a claim cannot pick up somebody else's receipt.
       const f = await tx.selectFrom('file').select('id').where('id', '=', b.fileId).where('organization_id', '=', u.organizationId).where('purpose', '=', 'receipt').where('uploaded_by', 'is', null).where('retention_class', '=', 'temporary').where('created_at', '>', new Date(Date.now() - 3_600_000)).forUpdate().executeTakeFirst();
