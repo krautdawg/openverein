@@ -51,13 +51,13 @@ export function WorkHours({ me }: { me: Me }) {
     <div className="page">
       <PageHead title="Arbeitsstunden" intro="Wer wie viele Stunden für den Verein geleistet hat, und das Ersatzgeld für fehlende Stunden." />
       <ReportsNav />
-      {me.permissions.settings === 'write' && rule && <RuleForm rule={rule} />}
+      {me.permissions.settings === 'write' && rule && <RuleForm key={year} rule={rule} year={year} />}
       {rule && rule.required === null && <p className="muted">Noch keine Regel: Trag oben ein, wie viele Stunden pro Jahr anfallen.</p>}
       <div className="toolbar">
         <select className="select" aria-label="Jahr" value={year} onChange={(e) => setParams({ jahr: e.target.value }, { replace: true })}>
           {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
-        {canSettle && open.length > 0 && <button className="btn" onClick={() => void settle()}>Ersatzgeld abrechnen ({open.length})</button>}
+        {canSettle && open.length > 0 && year < thisYear && <button className="btn" onClick={() => void settle()}>Ersatzgeld abrechnen ({open.length})</button>}
       </div>
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       {result && <div className="alert alert-ok" role="status" style={{ marginBottom: 'var(--s-3)' }}>{result}</div>}
@@ -85,7 +85,7 @@ export function WorkHours({ me }: { me: Me }) {
   );
 }
 
-function RuleForm({ rule }: { rule: Rule }) {
+function RuleForm({ rule, year }: { rule: Rule; year: number }) {
   const qc = useQueryClient();
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
@@ -96,7 +96,7 @@ function RuleForm({ rule }: { rule: Rule }) {
     setError(undefined);
     setSaved(false);
     try {
-      await api('/work-hours/settings', { method: 'PUT', body: { required: n('required'), rateCents: n('rateCents'), ageFrom: n('ageFrom'), ageTo: n('ageTo') } });
+      await api('/work-hours/settings', { method: 'PUT', body: { fromYear: year, required: n('required'), rateCents: n('rateCents'), ageFrom: n('ageFrom'), ageTo: n('ageTo') } });
       await qc.invalidateQueries({ queryKey: ['work-hours'] });
       setSaved(true);
     } catch (err) {
@@ -105,7 +105,7 @@ function RuleForm({ rule }: { rule: Rule }) {
   }
   return (
     <form className="age-rule" style={{ marginBottom: 'var(--s-5)' }} onSubmit={(e) => void save(e)} aria-label="Regel für Arbeitsstunden">
-      <span>Pro Jahr</span>
+      <span>Ab {year} pro Jahr</span>
       <input name="required" className="input" style={{ width: 72 }} inputMode="decimal" aria-label="Stunden pro Jahr" defaultValue={rule.required ?? ''} />
       <span>Stunden, Ersatzgeld je fehlender Stunde</span>
       <div style={{ width: 120 }}><MoneyField label="Ersatzgeld" name="rateCents" defaultCents={rule.rateCents ?? undefined} /></div>

@@ -28,6 +28,15 @@ const mm = (v: number) => (v * 72) / 25.4;
 const money = (c: number) => (c / 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 
 /** One page per receipt (collective receipts add an annex). Box layout after the official template. */
+/** Height of the description field on the Sachzuwendung template; the text must fit completely (no ellipsis). */
+const DESCRIPTION_HEIGHT = 42;
+export function descriptionFits(text: string) {
+  const doc = new PDFDocument({ size: 'A4', margins: { top: mm(18), left: mm(22), right: mm(20), bottom: mm(18) } });
+  doc.registerFont('bold', FONT_BOLD);
+  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right - 8;
+  return doc.font('bold').fontSize(10).heightOfString(text, { width }) <= DESCRIPTION_HEIGHT;
+}
+
 export function renderReceiptPdf(d: ReceiptPdf): Promise<Buffer> {
   const collective = d.items.length > 1;
   const total = d.items.reduce((s, i) => s + i.amountCents, 0);
@@ -79,7 +88,7 @@ export function renderReceiptPdf(d: ReceiptPdf): Promise<Buffer> {
     const k = d.inKind;
     doc.rect(left, y, width, 58).lineWidth(0.6).strokeColor('#8a9097').stroke();
     doc.font('text').fontSize(7.5).fillColor(muted).text('Genaue Bezeichnung der Sachzuwendung mit Alter, Zustand, Kaufpreis usw.', left + 4, y + 3, { width: width - 8 });
-    doc.font('bold').fontSize(10).fillColor(ink).text(k.description, left + 4, y + 13, { width: width - 8, height: 42, ellipsis: true });
+    doc.font('bold').fontSize(10).fillColor(ink).text(k.description, left + 4, y + 13, { width: width - 8 });
     y += 66;
     doc.font('text').fontSize(9).fillColor(ink);
     const option = (on: boolean, text: string) => {

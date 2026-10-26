@@ -36,12 +36,17 @@ describe('general assembly', () => {
     expect(msg.body).toContain('2. Entlastung des Vorstands');
     expect((await admin.put(`/assemblies/${created.body.id}`, input)).status).toBe(409);
 
+    // Only who could take part that day: someone who joins later is refused.
+    const later = (await admin.post('/members', { lastName: 'Spaeter', joinDate: addDays(today(), 60) })).body;
+    expect((await admin.put(`/assemblies/${created.body.id}/attendance`, { memberIds: [a.id, later.id] })).status).toBe(400);
     await admin.put(`/assemblies/${created.body.id}/attendance`, { memberIds: [a.id] });
     const vote = created.body.items[1].id;
     await admin.put(`/assemblies/${created.body.id}/items/${vote}`, { votesYes: 1, votesNo: 0, votesAbstain: 0, outcome: 'Der Vorstand ist entlastet.' });
     const closed = await admin.post(`/assemblies/${created.body.id}/close`, { chair: 'Erika Mustermann', minutesBy: 'Max Muster' });
     expect(closed.body).toMatchObject({ attendees: [a.id], chair: 'Erika Mustermann' });
     expect((await admin.put(`/assemblies/${created.body.id}/items/${vote}`, { votesYes: 5, votesNo: 0, votesAbstain: 0, outcome: null })).status).toBe(409);
+    // The closed assembly row itself is frozen too, and a closed one is not invited.
+    await expect(ctx.db.updateTable('assembly').set({ title: 'Anders' }).where('id', '=', created.body.id).execute()).rejects.toThrow(/closed/);
     const pdf = await ctx.app.inject({ url: `/api/v1/assemblies/${created.body.id}/minutes.pdf`, headers: { cookie } });
     expect(pdf.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
 

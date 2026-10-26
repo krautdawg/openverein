@@ -125,6 +125,10 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     // Former members are not invited at all; everyone else without e-mail gets a letter.
     const letters = excluded.filter((e) => e.reason !== 'kein aktuelles Mitglied');
     await db.transaction().execute(async (tx) => {
+      // Two clicks at once send one invitation; a closed assembly is not invited afterwards.
+      const row = await tx.selectFrom('assembly').select(['invited_at', 'closed_at']).where('id', '=', a.id).forUpdate().executeTakeFirstOrThrow();
+      if (row.invited_at) throw new Problem(409, 'invited', 'Die Einladung ist schon verschickt.');
+      if (row.closed_at) throw new Problem(409, 'closed', 'Die Versammlung ist schon abgeschlossen.');
       const messageId = recipients.length ? await createMessage(tx, actor, { kind: 'free', category: 'notice', subject, body, filter: { mode: a.groupId ? 'group' : 'all', groupId: a.groupId, assemblyId: a.id } }, recipients.map((r) => ({ personId: r.personId, memberId: r.memberId, email: r.email }))) : null;
       await tx.updateTable('assembly').set({ invited_at: new Date(), message_id: messageId }).where('id', '=', a.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'assembly.invited', entityType: 'assembly', entityId: a.id, diff: { emails: [null, recipients.length], letters: [null, letters.length] } });
@@ -137,8 +141,12 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     board(actor);
     const a = await load(actor.organizationId, req.params.id);
     const ids = [...new Set(req.body.memberIds)];
-    const known = ids.length ? await db.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('id', 'in', ids).execute() : [];
-    if (known.length !== ids.length) throw new Problem(400, 'validation', 'Unbekannte Mitglieder in der Liste.');
+    // Present can only be who could take part on that day: a member then, and for a board meeting in the board.
+    let q = db.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('id', 'in', ids.length ? ids : ['00000000-0000-0000-0000-000000000000'])
+      .where('join_date', '<=', a.held_on).where((eb) => eb.or([eb('exit_date', 'is', null), eb('exit_date', '>=', a.held_on)]));
+    if (a.group_id) q = q.where(sql<boolean>`exists (select 1 from group_membership gm where gm.member_id = member.id and gm.group_id = ${a.group_id} and gm.valid_from <= ${a.held_on}::date and (gm.valid_to is null or gm.valid_to >= ${a.held_on}::date))`);
+    const known = ids.length ? await q.execute() : [];
+    if (known.length !== ids.length) throw new Problem(400, 'validation', 'In der Liste sind Personen, die am Tag der Versammlung nicht teilnehmen konnten (kein Mitglied oder nicht in der Gruppe).');
     await db.transaction().execute(async (tx) => {
       await tx.deleteFrom('assembly_attendance').where('assembly_id', '=', a.id).execute();
       if (ids.length) await tx.insertInto('assembly_attendance').values(ids.map((m) => ({ assembly_id: a.id, member_id: m }))).execute();

@@ -1020,6 +1020,7 @@ export interface Database {
   expense_claim: ExpenseClaimTable;
   work_hour_entry: WorkHourEntryTable;
   work_hour_settlement: WorkHourSettlementTable;
+  work_hour_rule: WorkHourRuleTable;
   assembly: AssemblyTable;
   assembly_item: AssemblyItemTable;
   assembly_attendance: AssemblyAttendanceTable;
@@ -1207,6 +1208,19 @@ export interface WorkHourSettlementTable {
   member_id: string;
   year: number;
   invoice_id: string;
+  required: string | null;
+  done: string | null;
+  missing: string | null;
+  rate_cents: string | null;
+}
+
+export interface WorkHourRuleTable {
+  organization_id: string;
+  from_year: number;
+  required: string | null;
+  rate_cents: string | null;
+  age_from: number | null;
+  age_to: number | null;
 }
 
 export interface ExpenseClaimTable {

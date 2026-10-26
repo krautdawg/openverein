@@ -197,6 +197,7 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
       const c = await tx.selectFrom('expense_claim').innerJoin('person', 'person.id', 'expense_claim.person_id').select(['expense_claim.id', 'expense_claim.status', 'expense_claim.purpose', 'expense_claim.spent_on', 'expense_claim.amount_cents', 'expense_claim.account_holder', 'expense_claim.file_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name']).where('expense_claim.id', '=', req.params.id).where('expense_claim.organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!c) throw notFound('Auslage');
       if (c.status !== 'submitted') throw new Problem(409, 'decided', 'Über diese Auslage ist schon entschieden.');
+      if (c.spent_on > (await orgToday(tx, actor.organizationId))) throw new Problem(409, 'future-date', 'Die Auslage hat ein Datum in der Zukunft.', 'Lehne sie ab und lass sie mit dem richtigen Datum neu einreichen.');
       const name = displayName({ kind: c.kind, firstName: c.first_name, lastName: c.last_name, companyName: c.company_name });
       const { id } = await recordReceipt(tx, actor, {
         supplier: `Auslage ${name}`, number: null, receiptDate: c.spent_on, dueDate: null, fileId: c.file_id,
