@@ -1,7 +1,28 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 import { sql } from 'kysely';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
+import { encrypt } from '../src/server/crypto.ts';
+import { replayErasures } from '../src/server/gdpr/service.ts';
 import { client, enrollTotp, reset, testApp } from './helpers.ts';
+
+config.filesDir = await mkdtemp(join(tmpdir(), 'ov-tenants-'));
+
+/** All entries of a ZIP from our writer (local headers, deflate), as text. */
+function unzipText(z: Buffer) {
+  let text = '';
+  for (let at = 0; z.readUInt32LE(at) === 0x04034b50;) {
+    const size = z.readUInt32LE(at + 18);
+    const nameLen = z.readUInt16LE(at + 26);
+    const start = at + 30 + nameLen + z.readUInt16LE(at + 28);
+    text += inflateRawSync(z.subarray(start, start + size)).toString('latin1');
+    at = start + size;
+  }
+  return text;
+}
 
 const ctx = await testApp();
 const TOKEN = 'o'.repeat(40);
@@ -115,5 +136,36 @@ describe('managed hosting (several clubs)', () => {
     expect(await count(a.id)).toBe(before);
     expect((await operator('GET', '/tenants')).json()).toHaveLength(2);
     expect((await sql<{ r: string }>`select current_setting('session_replication_role') as r`.execute(ctx.db)).rows[0]!.r).toBe('origin');
+  });
+
+  it('catches a reference from another schema, keeps the OIDC secret out of the export, and records operator actions', async () => {
+    const a = await club('TSV A', 'verein-a.example.org', 'admin-a@example.org');
+    await ctx.db.updateTable('organization').set({ oidc_enabled: true, oidc_issuer: 'https://idp.example.org', oidc_client_id: 'ov', oidc_client_secret_encrypted: encrypt('streng-geheimes-oidc-secret') }).where('id', '=', a.id).execute();
+    const zip = await operator('GET', `/tenants/${a.id}/export.zip`);
+    expect(zip.statusCode).toBe(200);
+    expect(zip.headers['cache-control']).toBe('private, no-store');
+    const text = unzipText(zip.rawPayload);
+    expect(text).toContain('verein-a.example.org');
+    expect(text).not.toContain('streng-geheimes-oidc-secret');
+    expect(text).not.toContain('oidc_client_secret');
+
+    const user = await ctx.db.selectFrom('app_user').select('id').where('organization_id', '=', a.id).executeTakeFirstOrThrow();
+    await sql`create schema ext; create table ext.link (user_id uuid references public.app_user (id)); insert into ext.link values (${sql.lit(user.id)})`.execute(ctx.db);
+    try {
+      const res = await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().title).toContain('ext.link');
+    } finally {
+      await sql`drop schema ext cascade`.execute(ctx.db);
+    }
+    expect((await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' })).statusCode).toBe(200);
+    const events = await ctx.db.selectFrom('operator_event').select(['action', 'organization_id']).orderBy('at').execute();
+    expect(events.map((e) => e.action)).toEqual(['tenant.exported', 'tenant.purged']);
+    await expect(ctx.db.deleteFrom('operator_event').execute()).rejects.toThrow();
+
+    // Restoring an older backup brings the club back; start-up deletes it again.
+    await ctx.db.insertInto('organization').values({ id: a.id, name: 'TSV A', hostname: 'verein-a.example.org' }).execute();
+    await replayErasures(ctx.db, { warn: () => undefined });
+    expect(await ctx.db.selectFrom('organization').select('id').where('id', '=', a.id).executeTakeFirst()).toBeUndefined();
   });
 });
