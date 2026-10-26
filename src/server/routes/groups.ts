@@ -140,6 +140,9 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
       requirePermission(actor, 'groups', 'write');
       await loadGroup(actor, req.params.id);
       const g = await db.transaction().execute(async (tx) => {
+        // An age rule that moves members into this group would stop silently: change that rule first.
+        const feeding = archived ? await tx.selectFrom('club_group').select('name').where('next_group_id', '=', req.params.id).where('archived_at', 'is', null).executeTakeFirst() : undefined;
+        if (feeding) throw new Problem(409, 'age-rule-target', `Die Gruppe „${feeding.name}“ wechselt Mitglieder mit dem Alter hierher.`, 'Ändere oder entferne zuerst deren Altersregel.');
         const g = await tx.updateTable('club_group').set({ archived_at: archived ? new Date() : null, updated_at: new Date() }).where('id', '=', req.params.id).returningAll().executeTakeFirstOrThrow();
         await audit(tx, actor.organizationId, actor, { action: archived ? 'group.archived' : 'group.unarchived', entityType: 'club_group', entityId: g.id });
         return g;

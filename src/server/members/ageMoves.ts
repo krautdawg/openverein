@@ -14,6 +14,8 @@ const dueMoves = (db: Db, organizationId: string | null, until: string | null) =
       ((now() at time zone o.time_zone)::date)::text as today
     from group_membership gm
     join club_group g on g.id = gm.group_id and g.next_group_id is not null and g.archived_at is null
+    -- Never into an archived group (it may have been archived after the rule was set).
+    join club_group tg on tg.id = g.next_group_id and tg.archived_at is null
     join member m on m.id = gm.member_id and m.status in ('active', 'future', 'resigned')
     join person p on p.id = m.person_id and p.birth_date is not null
     join organization o on o.id = gm.organization_id
@@ -36,9 +38,13 @@ export async function applyAgeMoves(db: Db) {
   return db.transaction().execute(async (tx) => {
     let moved = 0;
     for (const d of (await dueMoves(tx, null, null)).rows) {
-      await tx.updateTable('group_membership').set({ valid_to: sql<string>`${d.today}::date - 1` }).where('id', '=', d.membership_id).where('valid_to', 'is', null).execute();
-      const already = await tx.selectFrom('group_membership').select('id').where('member_id', '=', d.member_id).where('group_id', '=', d.next_group_id).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>=', d.today)])).executeTakeFirst();
-      if (!already) await tx.insertInto('group_membership').values({ organization_id: d.organization_id, member_id: d.member_id, group_id: d.next_group_id, valid_from: d.today }).execute();
+      // Only if this run actually ends the membership: someone may have ended it by hand meanwhile.
+      const ended = await tx.updateTable('group_membership').set({ valid_to: sql<string>`${d.today}::date - 1` }).where('id', '=', d.membership_id).where('valid_to', 'is', null).returning('id').executeTakeFirst();
+      if (!ended) continue;
+      const target = await tx.selectFrom('group_membership').select(['id', 'valid_from']).where('member_id', '=', d.member_id).where('group_id', '=', d.next_group_id).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>=', d.today)])).orderBy('valid_from').executeTakeFirst();
+      // A target membership that only starts later would leave a gap: it starts today instead.
+      if (target && target.valid_from > d.today) await tx.updateTable('group_membership').set({ valid_from: d.today }).where('id', '=', target.id).execute();
+      if (!target) await tx.insertInto('group_membership').values({ organization_id: d.organization_id, member_id: d.member_id, group_id: d.next_group_id, valid_from: d.today }).execute();
       await tx.insertInto('audit_event').values({ organization_id: d.organization_id, actor_user_id: null, actor_label: 'System', action: 'member.group_moved_by_age', entity_type: 'member', entity_id: d.member_id, diff: JSON.stringify({ from: [d.group_id, null], to: [null, d.next_group_id], on: [null, d.today] }) }).execute();
       moved++;
     }

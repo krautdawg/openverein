@@ -5,7 +5,7 @@ export const MODULES = ['members', 'groups', 'fees', 'invoices', 'sepa', 'bankin
 export type Module = (typeof MODULES)[number];
 
 /** Fields a role can hide. Restricted fields are left out of API responses, exports and search. */
-export const RESTRICTABLE_FIELDS = ['iban', 'note', 'birth_date', 'email', 'phone'] as const;
+export const RESTRICTABLE_FIELDS = ['iban', 'note', 'birth_date', 'email', 'phone', 'gender'] as const;
 
 export interface Grant {
   roleId: string;

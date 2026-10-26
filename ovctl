@@ -66,18 +66,32 @@ wait_healthy() {
 
 cmd_backup() {
   need_env
-  local stamp dir
+  # A backup dir to keep whatever the retention says (restore keeps the one it is restoring from).
+  local keep="${1:-}" stamp dir missing
   stamp="$(date +%Y%m%d-%H%M%S)"
   dir="$BACKUP_DIR/openverein-$stamp"
   mkdir -p "$dir"
   chmod 700 "$BACKUP_DIR" "$dir"
+  # Database and files from one quiet moment: the app (and its file sweep) pauses for the seconds this takes,
+  # so no file is deleted or added between the two halves.
+  say "Halte den Server kurz an …"
+  dc stop app
+  trap 'dc start app >/dev/null 2>&1 || true' EXIT
   say "Sichere Datenbank …"
   dc exec -T db pg_dump -U openverein -Fc openverein > "$dir/db.dump"
   say "Sichere Dateien …"
-  dc exec -T app tar -C /data -czf - . > "$dir/files.tar.gz"
+  dc run --rm --no-deps -T --entrypoint tar app -C /data -czf - . > "$dir/files.tar.gz"
+  # Every stored file the database knows must be in the archive.
+  missing="$(comm -23 \
+    <(dc exec -T db psql -U openverein -d openverein -Atc 'select distinct sha256 from file' | sort) \
+    <(tar -tzf "$dir/files.tar.gz" | sed -n 's#^\./files/[0-9a-f][0-9a-f]/\([0-9a-f]\{64\}\)$#\1#p' | sort))"
+  dc start app
+  trap - EXIT
+  [ -z "$missing" ] || die "Sicherung unvollständig: $(echo "$missing" | wc -l) Dateien fehlen im Archiv ($dir). Bitte ./ovctl doctor ausführen."
   (cd "$dir" && sha256sum db.dump files.tar.gz > SHA256SUMS)
+  wait_healthy
   # Old backups go: an erased person must not live on in backups for longer than needed.
-  ls -1d "$BACKUP_DIR"/openverein-* 2>/dev/null | sort | head -n -"$BACKUP_KEEP" | xargs -r rm -rf
+  ls -1d "$BACKUP_DIR"/openverein-* 2>/dev/null | sort | { grep -vxF "${keep:-/nonexistent}" || true; } | head -n -"$BACKUP_KEEP" | xargs -r rm -rf
   say "Gesichert: $dir"
 }
 
@@ -92,12 +106,15 @@ cmd_restore() {
     [ "$answer" = "zurückspielen" ] || die "Abgebrochen."
   fi
   say "Sichere zuerst den jetzigen Stand …"
-  cmd_backup
+  # The backup being restored must survive the retention of this safety backup.
+  cmd_backup "$dir"
   # Erasures made after the backup must survive the restore: keep the current erasure log and merge it back.
   local erasures
   erasures="$(mktemp)"
   dc exec -T app sh -c 'cat /data/files/erasure-log.jsonl 2>/dev/null || true' > "$erasures"
   dc stop app
+  # Whatever fails from here on, the app comes back up (with whatever state there is) instead of staying down.
+  trap 'dc start app >/dev/null 2>&1 || true' EXIT
   say "Spiele die Datenbank zurück …"
   dc exec -T db sh -c 'dropdb -U openverein --force openverein && createdb -U openverein openverein'
   dc exec -T db pg_restore -U openverein -d openverein --no-owner < "$dir/db.dump"
@@ -106,6 +123,7 @@ cmd_restore() {
   dc run --rm --no-deps -T --entrypoint sh app -c 'cat - /data/files/erasure-log.jsonl 2>/dev/null | sort -u > /tmp/e && mkdir -p /data/files && cp /tmp/e /data/files/erasure-log.jsonl' < "$erasures"
   rm -f "$erasures"
   dc start app
+  trap - EXIT
   wait_healthy
   say "Zurückgespielt. Personen, die nach der Sicherung gelöscht wurden, wurden beim Start erneut anonymisiert."
 }

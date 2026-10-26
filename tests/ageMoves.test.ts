@@ -42,4 +42,21 @@ describe('age-based group change', () => {
     const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Steuerberatung', null) });
     expect((await trainer.get(`/groups/${youth.id}/age-moves`)).status).toBe(403);
   });
+
+  it('starts a future target membership today, never moves into an archived group, and refuses archiving a rule target', async () => {
+    const adults = (await admin.post('/groups', { name: 'Erwachsene', shortCode: 'ERW', kind: 'segment' })).body.id;
+    const youth = (await admin.post('/groups', { name: 'Jugend', shortCode: 'JUG', kind: 'segment', nextGroupId: adults, nextGroupAge: 18, nextGroupOn: 'birthday' })).body;
+    const later = iso(new Date(Date.now() + 40 * 86_400_000));
+    const due = (await admin.post('/members', { lastName: 'Zukunft', birthDate: yearsAgo(18, -1), joinDate: yearsAgo(5), groupIds: [youth.id] })).body.id;
+    await ctx.db.insertInto('group_membership').values({ organization_id: (await ctx.db.selectFrom('club_group').select('organization_id').executeTakeFirstOrThrow()).organization_id, member_id: due, group_id: adults, valid_from: later }).execute();
+    expect(await applyAgeMoves(ctx.db)).toBe(1);
+    const rows = await ctx.db.selectFrom('group_membership').select(['valid_from']).where('member_id', '=', due).where('group_id', '=', adults).execute();
+    expect(rows.map((r) => String(r.valid_from).slice(0, 10))).toEqual([iso(new Date())]);
+
+    // Archiving a group an age rule feeds is refused; with the target archived anyway, nobody moves into it.
+    expect((await admin.post(`/groups/${adults}/archive`, {})).body.type).toMatch(/age-rule-target$/);
+    await ctx.db.updateTable('club_group').set({ archived_at: new Date() }).where('id', '=', adults).execute();
+    await admin.post('/members', { lastName: 'Archiv', birthDate: yearsAgo(18, -2), joinDate: yearsAgo(5), groupIds: [youth.id] });
+    expect(await applyAgeMoves(ctx.db)).toBe(0);
+  });
 });
