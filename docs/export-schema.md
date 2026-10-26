@@ -1,4 +1,4 @@
-# Full export format (schema version 1)
+# Full export format (schema version 2)
 
 Admins create the export under Einstellungen → Gesamtexport (`POST /api/v1/exports/full`, fresh second factor required). It runs as a background job: the call answers 202 with the job, `GET /api/v1/jobs/:id` reports progress and, when done, `resultFileId`. It is stored encrypted for 7 days (and deleted when a person is anonymised); a download needs a fresh second factor too (`POST /api/v1/exports/full/:id/link` returns a link valid 60 seconds). Every creation and download is audit-logged. The whole export is read in one consistent snapshot.
 
@@ -15,7 +15,7 @@ files/<sha256>       every stored file once, named by its SHA-256 (see data/file
 
 | Key | Meaning |
 |---|---|
-| `schemaVersion` | `"1"`; bumped when this document changes incompatibly |
+| `schemaVersion` | `"2"`; bumped when this document changes incompatibly (2: `invoice_einvoice.xml` is the readable XML instead of encrypted bytes) |
 | `exportedAt` | ISO timestamp |
 | `organizationId` | id of the exported club |
 | `databaseVersion` | name of the last applied migration (`migrations/NNNN_*.sql`) |
@@ -29,7 +29,7 @@ files/<sha256>       every stored file once, named by its SHA-256 (see data/file
 
 - Tables and columns are those of the database at `databaseVersion` (see `migrations/`). Every table with an `organization_id` is exported with the club's rows; `receipt_line`, `donation_receipt_item`, `datev_export_entry`, `household_rule`, `assembly_item`, `assembly_attendance` and `poll_vote` through their parent.
 - Dates and timestamps are ISO strings; binary columns (stored PDFs, DATEV ZIPs) are `{ "base64": "…" }` in JSONL and left out of the CSV.
-- Encrypted columns are exported decrypted under the name without `_encrypted` (for example `sepa_mandate.iban`); IBAN change requests from the portal are decrypted in `change_request.old_value` / `new_value`.
+- Encrypted columns are exported decrypted under the name without `_encrypted` (for example `sepa_mandate.iban`); IBAN change requests from the portal are decrypted in `change_request.old_value` / `new_value`; the issued XRechnung is `invoice_einvoice.xml` as text (its `sha256` is the hash of that text).
 - CSV headers come from the schema, so empty tables still have their header row.
 - Never exported: sessions, portal sessions, login codes, recovery codes, idempotency keys, password hashes, invitation and API token hashes, TOTP secrets, keyed lookup hashes (`*_hash` blind indexes).
 

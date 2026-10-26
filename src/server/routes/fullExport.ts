@@ -19,6 +19,7 @@ function requireAdmin(actor: Actor) {
 
 export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
+  // Exports live 7 days: listing, link and download all refuse older ones (not only the sweep).
   const toDto = (f: { id: string; size_bytes: number; sha256: string; created_at: Date }) => ({ id: f.id, sizeBytes: Number(f.size_bytes), sha256: f.sha256, createdAt: f.created_at.toISOString(), expiresAt: new Date(f.created_at.getTime() + 7 * 86_400_000).toISOString() });
 
   app.get('/exports/full', { schema: { tags, summary: 'Gesamtexporte der letzten 7 Tage', response: { 200: z.array(dto) } } }, async (req) => {
@@ -44,7 +45,7 @@ export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireAdmin(actor);
     requireStepUp(actor);
-    const f = await db.selectFrom('file').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').executeTakeFirst();
+    const f = await db.selectFrom('file').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').where('created_at', '>', new Date(Date.now() - 7 * 86_400_000)).executeTakeFirst();
     if (!f) throw notFound('Export');
     const exp = Date.now() + 60_000;
     return { url: `/api/v1/exports/full/${f.id}?exp=${exp}&sig=${linkSig(f.id, actor.id, exp)}` };
@@ -55,7 +56,7 @@ export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
     requireAdmin(actor);
     const { exp, sig } = req.query;
     if (exp < Date.now() || !timingSafeEqual(Buffer.from(sig), Buffer.from(linkSig(req.params.id, actor.id, exp)))) throw new Problem(403, 'link-expired', 'Der Download-Link ist abgelaufen.', 'Fordere ihn neu an.');
-    const f = await db.selectFrom('file').select(['id', 'sha256', 'name']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').executeTakeFirst();
+    const f = await db.selectFrom('file').select(['id', 'sha256', 'name']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('purpose', '=', 'export').where('created_at', '>', new Date(Date.now() - 7 * 86_400_000)).executeTakeFirst();
     if (!f) throw notFound('Export');
     const bytes = decryptBytes(await getBlob(f.sha256));
     await audit(db, actor.organizationId, actor, { action: 'export.full_downloaded', entityType: 'file', entityId: f.id, diff: { sha256: [null, createHash('sha256').update(bytes).digest('hex')] } });

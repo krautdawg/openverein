@@ -189,7 +189,7 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
     restricted: [...hidden],
     custom: visibleValues(row.custom, await fieldsFor(db, actor)),
     version: versionOf(row.member_updated_at, row.person_updated_at),
-    einvoice: { format: row.einvoice_format, buyerReference: row.buyer_reference, address: row.einvoice_address, vatId: row.vat_id },
+    einvoice: { format: row.einvoice_format, buyerReference: row.buyer_reference, address: hidden.has('einvoice_address') ? null : row.einvoice_address, vatId: row.vat_id },
   };
 }
 

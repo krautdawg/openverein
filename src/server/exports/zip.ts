@@ -1,4 +1,7 @@
 import { crc32, deflateRawSync } from 'node:zlib';
+import { Problem } from '../http/problem.ts';
+
+const LIMIT = 0xffffffff;
 
 /** Minimal ZIP writer (deflate, no ZIP64): enough for export packages well below 4 GB. */
 export function zip(files: { name: string; data: Buffer }[], date = new Date()) {
@@ -10,6 +13,8 @@ export function zip(files: { name: string; data: Buffer }[], date = new Date()) 
   for (const f of files) {
     const name = Buffer.from(f.name, 'utf8');
     const body = deflateRawSync(f.data);
+    // No ZIP64: refuse clearly instead of failing on a 32-bit field (Buffer would throw a RangeError).
+    if (f.data.length > LIMIT || offset + 30 + name.length + body.length > LIMIT) throw new Problem(413, 'export-too-large', 'Der Export ist größer als 4 GB.', 'Exporte dieser Größe gehen noch nicht; melde Dich bei der Betreuung der Installation.');
     const crc = crc32(f.data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);

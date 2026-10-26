@@ -107,7 +107,7 @@ describe('request guards', () => {
 
   it('does not leak database details in conflicts', async () => {
     const { cookie } = await setupClub(ctx.app);
-    const res = await ctx.app.inject({ method: 'PATCH', url: '/api/v1/organization', headers: { cookie }, payload: { name: 'x'.repeat(5) } });
+    const res = await ctx.app.inject({ method: 'PATCH', url: '/api/v1/organization', headers: { cookie, 'if-match': '*' }, payload: { name: 'x'.repeat(5) } });
     expect(res.statusCode).toBe(200);
     expect(JSON.stringify((await ctx.app.inject({ url: '/api/v1/openapi.json' })).json().paths['/api/v1/setup'].post.security)).toBe('[]');
   });
@@ -127,7 +127,7 @@ describe('organization', () => {
   it('requires a session and audits renames', async () => {
     expect((await ctx.app.inject('/api/v1/organization')).statusCode).toBe(401);
     const { cookie } = await setupClub(ctx.app);
-    const res = await ctx.app.inject({ method: 'PATCH', url: '/api/v1/organization', headers: { cookie }, payload: { name: 'SV Blau-Weiß' } });
+    const res = await ctx.app.inject({ method: 'PATCH', url: '/api/v1/organization', headers: { cookie, 'if-match': '*' }, payload: { name: 'SV Blau-Weiß' } });
     expect(res.json().name).toBe('SV Blau-Weiß');
     const events = await ctx.db.selectFrom('audit_event').select('action').execute();
     expect(events.map((e) => e.action)).toContain('organization.update');

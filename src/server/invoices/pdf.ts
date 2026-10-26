@@ -24,7 +24,7 @@ export interface PdfInvoice {
   paymentText: string;
   /** EPC QR payload (GiroCode) or null */
   epc: string | null;
-  org: { name: string; street: string | null; postalCode: string | null; city: string | null; email: string | null; iban: string | null; bic: string | null; bankName: string | null };
+  org: { name: string; street: string | null; postalCode: string | null; city: string | null; email: string | null; iban: string | null; bic: string | null; bankName: string | null; smallBusiness?: boolean };
   demo: boolean;
 }
 
@@ -118,7 +118,7 @@ export function renderInvoicePdf(d: PdfInvoice): Promise<Buffer> {
   for (const l of d.lines) if (l.taxRate > 0) taxes.set(l.taxRate, (taxes.get(l.taxRate) ?? 0) + Math.round((l.totalCents * l.taxRate) / (100 + l.taxRate)));
   doc.font('text').fontSize(8.5).fillColor(muted);
   if (taxes.size === 0) {
-    doc.text('Im Gesamtbetrag ist keine Umsatzsteuer enthalten.', left, y, { width });
+    doc.text(d.org.smallBusiness ? 'Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG.' : 'Im Gesamtbetrag ist keine Umsatzsteuer enthalten.', left, y, { width });
   } else {
     for (const [rate, tax] of taxes) {
       doc.text(`Darin enthalten ${rate} % USt: ${money(tax, d.negative)}`, left, y, { width, align: 'right' });
