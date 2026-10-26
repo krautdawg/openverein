@@ -7,6 +7,8 @@ interface Input {
   year: number;
   euer: { spheres: { sphere: string; incomeCents: number; expenseCents: number; resultCents: number }[]; rows: { number: string; name: string; kind: 'income' | 'expense'; sphere: string; netCents: number }[]; totals: { incomeCents: number; expenseCents: number; resultCents: number }; warnings: { message: string }[] };
   money: { number: string; name: string; openingCents: number; closingCents: number }[];
+  /** public demo: every page carries the watermark */
+  demo?: boolean;
 }
 
 const mm = (v: number) => (v * 72) / 25.4;
@@ -14,7 +16,7 @@ const euro = (c: number) => (c / 100).toLocaleString('de-DE', { minimumFractionD
 
 /** Treasurer's report for the general assembly: balances, result by sphere, income and expenses by account. */
 export function treasurerReportPdf(d: Input): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'A4', margins: { top: mm(20), left: mm(22), right: mm(20), bottom: mm(18) }, info: { Title: `Kassenbericht ${d.year}`, Author: d.club } });
+  const doc = new PDFDocument({ bufferPages: true, size: 'A4', margins: { top: mm(20), left: mm(22), right: mm(20), bottom: mm(18) }, info: { Title: `Kassenbericht ${d.year}`, Author: d.club } });
   doc.registerFont('text', FONT);
   doc.registerFont('bold', FONT_BOLD);
   const left = mm(22);
@@ -67,6 +69,14 @@ export function treasurerReportPdf(d: Input): Promise<Buffer> {
   const y = doc.y;
   doc.moveTo(left, y).lineTo(left + width * 0.45, y).lineWidth(0.5).strokeColor(ink).stroke();
   doc.font('text').fontSize(8).fillColor(muted).text('Ort, Datum, Kassenwart:in', left, y + 4, { width: width * 0.45 });
+  // The demo mark on every page, drawn last so it does not move the text cursor.
+  if (d.demo) {
+    const range = doc.bufferedPageRange();
+    for (let i = 0; i < range.count; i++) {
+      doc.switchToPage(i);
+      doc.save().rotate(-35, { origin: [doc.page.width / 2, doc.page.height / 2] }).font('bold').fontSize(80).fillColor('#f2c230').opacity(0.25).text('DEMO', 0, doc.page.height / 2 - 60, { width: doc.page.width, align: 'center', lineBreak: false }).restore().opacity(1);
+    }
+  }
   doc.end();
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

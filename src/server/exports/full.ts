@@ -51,6 +51,8 @@ function clean(table: string, row: Record<string, unknown>, failed: Record<strin
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (DROP_COLUMN.test(k)) continue;
+    // The board sees only the counts of a poll: the export does not say who answered what either.
+    if (table === 'poll_vote' && k === 'member_id') continue;
     if (k.endsWith('_encrypted')) {
       out[k.slice(0, -'_encrypted'.length)] = tryDecrypt(k, v);
       continue;

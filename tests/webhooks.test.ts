@@ -84,7 +84,7 @@ describe('webhooks', () => {
       expect(last.headers['x-openverein-signature']).toBe(signature(secret, Number(last.headers['x-openverein-timestamp']), last.body));
 
       // Old delivered entries are pruned, fresh ones kept.
-      await ctx.db.updateTable('webhook_delivery').set({ occurred_at: new Date(Date.now() - 31 * 86_400_000) }).where('status', '=', 'sent').execute();
+      await ctx.db.updateTable('webhook_delivery').set({ occurred_at: new Date(Date.now() - 31 * 86_400_000), sent_at: new Date(Date.now() - 31 * 86_400_000) }).where('status', '=', 'sent').execute();
       expect(await pruneWebhookDeliveries(ctx.db)).toBe(1);
 
       const treasurer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Kassenwart', null) });

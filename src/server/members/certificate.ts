@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import { formatDate } from '../../shared/dates.ts';
 import type { Db } from '../db.ts';
 import { FONT, FONT_BOLD } from '../invoices/pdf.ts';
+import { Problem } from '../http/problem.ts';
 import { orgToday } from './query.ts';
 
 const mm = (v: number) => (v * 72) / 25.4;
@@ -12,6 +13,9 @@ export async function membershipCertificate(db: Db, organizationId: string, memb
   const m = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').innerJoin('organization', 'organization.id', 'member.organization_id')
     .select(['member.membership_number', 'member.join_date', 'member.exit_date', 'member.status', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.birth_date', 'organization.name as club', 'organization.street', 'organization.postal_code', 'organization.city', 'organization.is_demo'])
     .where('member.id', '=', memberId).where('member.organization_id', '=', organizationId).executeTakeFirstOrThrow();
+  // It certifies a membership that exists or existed: not for applicants, rejected ones or memberships still to come.
+  const started = !!m.join_date && m.join_date <= today;
+  if (!started || !['active', 'resigned', 'future', 'former'].includes(m.status) || (m.status === 'former' && !m.exit_date)) throw new Problem(409, 'no-membership', 'Für diese Person gibt es (noch) keine Mitgliedschaft zu bescheinigen.', 'Eine Bescheinigung gibt es ab dem Eintrittsdatum.');
   const groups = await db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select('club_group.name')
     .where('group_membership.member_id', '=', memberId).where('group_membership.valid_from', '<=', today).where((eb) => eb.or([eb('group_membership.valid_to', 'is', null), eb('group_membership.valid_to', '>=', today)])).where('club_group.visible_to_members', '=', true).orderBy('club_group.name').execute();
   const name = m.kind === 'organisation' ? (m.company_name ?? '') : [m.first_name, m.last_name].filter(Boolean).join(' ');

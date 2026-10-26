@@ -118,4 +118,22 @@ describe('review G8', () => {
     const to = (await ctx.db.selectFrom('delivery').select('email').execute()).map((d) => d.email);
     expect(to).toEqual(['kai@example.org']);
   });
+
+  // ---------- review G12 ----------
+
+  it('certifies only memberships that exist or existed', async () => {
+    const applicant = (await admin.post('/members', { firstName: 'Anna', lastName: 'Antrag' })).body;
+    expect(applicant.status).toBe('applicant');
+    expect((await ctx.app.inject({ url: `/api/v1/members/${applicant.id}/certificate.pdf`, headers: { cookie } })).statusCode).toBe(409);
+    const later = (await admin.post('/members', { firstName: 'Fritz', lastName: 'Zukunft', joinDate: new Date(Date.now() + 40 * 86_400_000).toISOString().slice(0, 10) })).body;
+    expect((await ctx.app.inject({ url: `/api/v1/members/${later.id}/certificate.pdf`, headers: { cookie } })).statusCode).toBe(409);
+  });
+
+  it('keeps sent webhook deliveries 30 days from sending, not from the event', async () => {
+    const { pruneWebhookDeliveries } = await import('../src/server/webhooks/worker.ts');
+    const org = (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
+    const hook = await ctx.db.insertInto('webhook').values({ organization_id: org, url: 'https://example.org/h', topics: ['member'], secret_encrypted: 'x', active: true }).returning('id').executeTakeFirstOrThrow();
+    await ctx.db.insertInto('webhook_delivery').values({ organization_id: org, webhook_id: hook.id, event: 'member.updated', entity_type: 'member', entity_id: null, occurred_at: new Date(Date.now() - 40 * 86_400_000), status: 'sent', sent_at: new Date() }).execute();
+    expect(await pruneWebhookDeliveries(ctx.db)).toBe(0);
+  });
 });

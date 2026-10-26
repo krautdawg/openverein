@@ -263,7 +263,9 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/portal/members/:id/certificate.pdf', { schema: { tags, summary: 'Eigene Mitgliedsbescheinigung als PDF', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
     const u = await portalUser(req, reply);
     const m = ownMember(u, req.params.id);
-    const { pdf } = await membershipCertificate(db, u.organizationId, m.memberId, { birthDate: true });
+    // A payer manages children's memberships; an adult with their own address gets their certificate themselves.
+    if (m.viaHousehold && m.email) throw new Problem(403, 'own-access', 'Die Bescheinigung holt sich das Mitglied selbst.', `${m.first_name ?? 'Das Mitglied'} hat eine eigene E-Mail-Adresse und kann sich selbst im Portal anmelden.`);
+    const { pdf } = await membershipCertificate(db, u.organizationId, m.memberId, { birthDate: !m.viaHousehold });
     return reply.header('content-type', 'application/pdf').header('content-disposition', 'attachment; filename="Mitgliedsbescheinigung.pdf"').header('cache-control', 'private, no-store').send(pdf);
   });
 
@@ -301,13 +303,17 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const u = await portalUser(req, reply);
     const m = ownMember(u, req.body.memberId);
     const today = await orgToday(db, u.organizationId);
-    const p = await db.selectFrom('poll').selectAll().where('id', '=', req.params.id).where('organization_id', '=', u.organizationId).executeTakeFirst();
-    if (!p) throw notFound('Umfrage');
-    if (p.closes_on < today) throw new Problem(409, 'closed', 'Die Umfrage ist beendet.');
-    if (!(await eligibleMembers(db, u.organizationId, p.group_id, today).select('member.id').where('member.id', '=', m.memberId).executeTakeFirst())) throw new Problem(403, 'forbidden', 'Diese Umfrage richtet sich an eine andere Gruppe.');
-    const choices = [...new Set(req.body.choices)].sort((a, b) => a - b);
-    if (choices.some((c) => c >= p.options.length) || (!p.multiple && choices.length > 1)) throw new Problem(400, 'validation', p.multiple ? 'Ungültige Antwort.' : 'Bitte nur eine Antwort wählen.');
-    await db.insertInto('poll_vote').values({ poll_id: p.id, member_id: m.memberId, choices }).onConflict((oc) => oc.columns(['poll_id', 'member_id']).doUpdateSet({ choices, voted_at: new Date() })).execute();
+    // In one transaction with the poll row share-locked: closing the poll (an update) waits for votes in flight, and a
+    // vote after the close sees it closed.
+    await db.transaction().execute(async (tx) => {
+      const p = await tx.selectFrom('poll').selectAll().where('id', '=', req.params.id).where('organization_id', '=', u.organizationId).forShare().executeTakeFirst();
+      if (!p) throw notFound('Umfrage');
+      if (p.closes_on < today) throw new Problem(409, 'closed', 'Die Umfrage ist beendet.');
+      if (!(await eligibleMembers(tx, u.organizationId, p.group_id, today).select('member.id').where('member.id', '=', m.memberId).executeTakeFirst())) throw new Problem(403, 'forbidden', 'Diese Umfrage richtet sich an eine andere Gruppe.');
+      const choices = [...new Set(req.body.choices)].sort((a, b) => a - b);
+      if (choices.some((c) => c >= p.options.length) || (!p.multiple && choices.length > 1)) throw new Problem(400, 'validation', p.multiple ? 'Ungültige Antwort.' : 'Bitte nur eine Antwort wählen.');
+      await tx.insertInto('poll_vote').values({ poll_id: p.id, member_id: m.memberId, choices }).onConflict((oc) => oc.columns(['poll_id', 'member_id']).doUpdateSet({ choices, voted_at: new Date() })).execute();
+    });
     return reply.status(204).send();
   });
 

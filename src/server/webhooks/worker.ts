@@ -108,7 +108,9 @@ export async function processWebhooks(db: Db) {
 
 /** Delivered and failed webhook deliveries older than 30 days go; the receiver has had its chance. */
 export async function pruneWebhookDeliveries(db: Db) {
-  const r = await db.deleteFrom('webhook_delivery').where('status', 'in', ['sent', 'failed']).where('occurred_at', '<', new Date(Date.now() - 30 * 86_400_000)).executeTakeFirst();
+  // Counted from the end of the delivery (sent, or the last failed attempt), not from the event: a delivery that was
+  // late because the worker was down still stays 30 days for troubleshooting.
+  const r = await db.deleteFrom('webhook_delivery').where('status', 'in', ['sent', 'failed']).where(sql<boolean>`coalesce(sent_at, claimed_at, occurred_at) < now() - interval '30 days'`).executeTakeFirst();
   return Number(r.numDeletedRows);
 }
 
