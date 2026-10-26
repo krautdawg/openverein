@@ -121,7 +121,8 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
       'Viele Grüße',
       org.name,
     ].join('\n');
-    const { recipients, excluded } = await resolveRecipients(db, actor, a.groupId ? { mode: 'group', groupId: a.groupId } : { mode: 'all' }, 'notice');
+    // Invited is who can take part on the day: the same date as attendance and the eligible count.
+    const { recipients, excluded } = await resolveRecipients(db, actor, a.groupId ? { mode: 'group', groupId: a.groupId } : { mode: 'all' }, 'notice', a.heldOn);
     // Former members are not invited at all; everyone else without e-mail gets a letter.
     const letters = excluded.filter((e) => e.reason !== 'kein aktuelles Mitglied');
     await db.transaction().execute(async (tx) => {

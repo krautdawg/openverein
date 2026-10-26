@@ -94,4 +94,28 @@ describe('review G8', () => {
     expect((await admin.post('/donations', { ...base, inKind: { description: long, source: 'business', valuationDocs: false } })).status).toBe(400);
     expect((await admin.post('/donations', { ...base, inKind: { description: 'Zehn Bälle, neu', source: 'private', valuationDocs: true } })).status).toBe(201);
   });
+
+  // ---------- review G11 ----------
+
+  it('keeps the public fields of a new calendar, with the same rule as a change', async () => {
+    const created = await admin.post('/calendars', { name: 'Spielplan', public: true, publicOrigins: ['https://Verein.example'] });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ public: true, publicOrigins: ['https://verein.example'] });
+    const group = (await admin.post('/groups', { name: 'Vorstand', shortCode: 'VS' })).body.id;
+    expect((await admin.post('/calendars', { name: 'Intern', public: true, groupIds: [group] })).status).toBe(409);
+  });
+
+  it('invites a board meeting by the board as it is on the day of the meeting', async () => {
+    const board = (await admin.post('/groups', { name: 'Vorstand', shortCode: 'VS' })).body.id;
+    const held = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+    const leaving = (await admin.post('/members', { firstName: 'Lea', lastName: 'Geht', email: 'lea@example.org', joinDate: '2020-01-01', groupIds: [board] })).body;
+    const coming = (await admin.post('/members', { firstName: 'Kai', lastName: 'Kommt', email: 'kai@example.org', joinDate: '2020-01-01' })).body;
+    await ctx.db.updateTable('group_membership').set({ valid_to: new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10) }).where('member_id', '=', leaving.id).execute();
+    const org = (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
+    await ctx.db.insertInto('group_membership').values({ organization_id: org, member_id: coming.id, group_id: board, valid_from: new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10) }).execute();
+    const a = (await admin.post('/assemblies', { kind: 'board', groupId: board, title: 'Vorstandssitzung', heldOn: held, startsAt: '19:00', place: 'Online', noticeDays: 7, items: [{ title: 'Beschlüsse', isVote: true }] })).body;
+    expect((await admin.post(`/assemblies/${a.id}/invite`, {})).status).toBe(200);
+    const to = (await ctx.db.selectFrom('delivery').select('email').execute()).map((d) => d.email);
+    expect(to).toEqual(['kai@example.org']);
+  });
 });

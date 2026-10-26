@@ -108,13 +108,23 @@ cmd_restore() {
   say "Sichere zuerst den jetzigen Stand …"
   # The backup being restored must survive the retention of this safety backup.
   cmd_backup "$dir"
+  restore_data "$dir"
+  dc start app
+  trap - EXIT
+  wait_healthy
+  say "Zurückgespielt. Personen, die nach der Sicherung gelöscht wurden, wurden beim Start erneut anonymisiert."
+}
+
+# Database and files from a backup, with the app stopped (it stays stopped; the caller starts the right version).
+# Works without a healthy app, so it also serves the rollback of a failed update.
+restore_data() {
+  local dir="$1" erasures
   # Erasures made after the backup must survive the restore: keep the current erasure log and merge it back.
-  local erasures
   erasures="$(mktemp)"
-  dc exec -T app sh -c 'cat /data/files/erasure-log.jsonl 2>/dev/null || true' > "$erasures"
   dc stop app
   # Whatever fails from here on, the app comes back up (with whatever state there is) instead of staying down.
   trap 'dc start app >/dev/null 2>&1 || true' EXIT
+  dc run --rm --no-deps -T --entrypoint sh app -c 'cat /data/files/erasure-log.jsonl 2>/dev/null || true' > "$erasures"
   say "Spiele die Datenbank zurück …"
   dc exec -T db sh -c 'dropdb -U openverein --force openverein && createdb -U openverein openverein'
   dc exec -T db pg_restore -U openverein -d openverein --no-owner < "$dir/db.dump"
@@ -122,10 +132,6 @@ cmd_restore() {
   dc run --rm --no-deps -T --entrypoint sh app -c 'find /data -mindepth 1 -delete && tar -xzf - -C /data' < "$dir/files.tar.gz"
   dc run --rm --no-deps -T --entrypoint sh app -c 'cat - /data/files/erasure-log.jsonl 2>/dev/null | sort -u > /tmp/e && mkdir -p /data/files && cp /tmp/e /data/files/erasure-log.jsonl' < "$erasures"
   rm -f "$erasures"
-  dc start app
-  trap - EXIT
-  wait_healthy
-  say "Zurückgespielt. Personen, die nach der Sicherung gelöscht wurden, wurden beim Start erneut anonymisiert."
 }
 
 cmd_update() {
@@ -136,13 +142,18 @@ cmd_update() {
   last="$(find "$BACKUP_DIR" -maxdepth 1 -name 'openverein-*' | sort | tail -1)"
   if [ -d "$ROOT/.git" ]; then git -C "$ROOT" pull --ff-only; fi
   dc up -d --build
-  # The new version may have migrated the database: old code must never run on it. Roll back code and data together.
+  # The new version may have migrated the database: old code must never run on it. Roll back code and data together,
+  # without waiting for the broken version to become healthy.
   if ! (wait_healthy) ; then
     say ""
-    say "Das Update ist fehlgeschlagen. Zurück zum Stand vor dem Update:"
-    [ -n "$before" ] && say "  git -C \"$ROOT\" checkout $before"
-    say "  ./ovctl restore $last"
-    exit 1
+    say "Das Update ist fehlgeschlagen. Stelle den Stand vor dem Update wieder her …"
+    restore_data "$last"
+    # Back on the same branch (not a detached checkout); --keep refuses if local changes would be lost.
+    if [ -n "$before" ]; then git -C "$ROOT" reset --keep "$before" || die "Code nicht zurückgesetzt: git -C \"$ROOT\" reset --keep $before, dann docker compose up -d --build."; fi
+    dc up -d --build --force-recreate app
+    trap - EXIT
+    wait_healthy
+    die "Das Update ist fehlgeschlagen; Code und Daten sind wieder auf dem Stand vor dem Update ($last). ./ovctl logs zeigt, was schiefging."
   fi
   say "Aktualisiert."
 }

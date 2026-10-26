@@ -8,7 +8,10 @@ import { requireActor } from '../auth/session.ts';
 import { encrypt } from '../crypto.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { requireClubWide, type Actor } from '../policy.ts';
-import { assertWebhookTarget } from '../webhooks/worker.ts';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import { config } from '../config.ts';
+import { assertWebhookTarget, isPrivateAddress } from '../webhooks/worker.ts';
 
 const tags = ['system'];
 const idParam = z.object({ id: z.uuid() });
@@ -25,7 +28,10 @@ export const webhookRoutes: FastifyPluginAsyncZod = async (app) => {
   };
   const target = async (url: string) => {
     try {
-      await assertWebhookTarget(url);
+      assertWebhookTarget(url);
+      // Early feedback only; every delivery checks the address it actually connects to.
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+      if (!config.webhooksAllowPrivate && !isIP(host) && (await lookup(host, { all: true })).some((a) => isPrivateAddress(a.address))) throw new Error('Diese Adresse liegt in einem privaten Netz.');
     } catch (err) {
       throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'url', message: (err as Error).message }] });
     }

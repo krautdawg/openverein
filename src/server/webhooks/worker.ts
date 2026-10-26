@@ -1,6 +1,8 @@
 import { createHmac } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { lookup as lookupCb, type LookupAddress } from 'node:dns';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { sql } from 'kysely';
 import { config } from '../config.ts';
 import { decrypt } from '../crypto.ts';
@@ -10,23 +12,59 @@ const MAX_ATTEMPTS = 6;
 /** Minutes until the next try after attempt n (1-based). */
 const BACKOFF = [1, 5, 30, 120, 720];
 
-/** Private, loopback, link-local and unspecified addresses: a webhook must not reach into the server's own network. */
+/** Everything that is not a public unicast address: a webhook must not reach into the server's own network. */
+const BLOCKED = new BlockList();
+for (const [net, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]] as const) BLOCKED.addSubnet(net, bits, 'ipv4');
+for (const [net, bits] of [['::', 127], ['64:ff9b::', 96], ['100::', 64], ['2001:db8::', 32], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) BLOCKED.addSubnet(net, bits, 'ipv6');
+
 export function isPrivateAddress(ip: string): boolean {
-  if (isIP(ip) === 4) {
-    const [a, b] = ip.split('.').map(Number) as [number, number];
-    return a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
-  }
-  const v6 = ip.toLowerCase();
-  return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || v6.startsWith('fe80') || (v6.startsWith('::ffff:') && isPrivateAddress(v6.slice(7)));
+  const v = ip.replace(/^\[|\]$/g, '').toLowerCase();
+  // IPv4-mapped IPv6 (::ffff:10.0.0.1) is the IPv4 address.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v)?.[1];
+  if (mapped) return isPrivateAddress(mapped);
+  const kind = isIP(v);
+  if (!kind) return true;
+  return BLOCKED.check(v, kind === 4 ? 'ipv4' : 'ipv6');
 }
 
-/** Refuses plain http and private targets unless explicitly allowed (development). */
-export async function assertWebhookTarget(url: string) {
+/** Plain https only (unless explicitly allowed for development); an IP literal is checked right here. */
+export function assertWebhookTarget(url: string) {
   const u = new URL(url);
   if (config.webhooksAllowPrivate) return;
   if (u.protocol !== 'https:') throw new Error('Webhooks gehen nur an https-Adressen.');
-  const addrs = isIP(u.hostname) ? [{ address: u.hostname }] : await lookup(u.hostname, { all: true });
-  if (addrs.some((a) => isPrivateAddress(a.address))) throw new Error('Diese Adresse liegt in einem privaten Netz.');
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (isIP(host) && isPrivateAddress(host)) throw new Error('Diese Adresse liegt in einem privaten Netz.');
+}
+
+/**
+ * The address check happens in the connection's own DNS lookup: the address that was checked is the address the
+ * socket connects to, so a name cannot answer with a public address for the check and a private one for the
+ * connection (DNS rebinding). TLS still verifies the certificate against the host name.
+ */
+const pinnedLookup: LookupFunction = (hostname, options, cb) => {
+  lookupCb(hostname, { ...options, all: true }, (err, addrs) => {
+    if (err) return cb(err, '', 4);
+    const list = addrs as unknown as LookupAddress[];
+    if (!config.webhooksAllowPrivate && (!list.length || list.some((a) => isPrivateAddress(a.address)))) return cb(new Error('Diese Adresse liegt in einem privaten Netz.'), '', 4);
+    if (options.all) return (cb as unknown as (e: null, a: LookupAddress[]) => void)(null, list);
+    return cb(null, list[0]!.address, list[0]!.family);
+  });
+};
+
+/** POST with the pinned lookup; no redirects are followed. Resolves with the status code. */
+function post(url: string, headers: Record<string, string>, body: string) {
+  return new Promise<number>((resolve, reject) => {
+    const u = new URL(url);
+    const send = u.protocol === 'https:' ? httpsRequest : httpRequest;
+    const req = send(u, { method: 'POST', headers: { ...headers, 'content-length': String(Buffer.byteLength(body)) }, lookup: pinnedLookup, timeout: 10_000 }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode ?? 0));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('Keine Antwort innerhalb von 10 Sekunden.')));
+    req.on('error', reject);
+    req.end(body);
+  });
 }
 
 export const signature = (secret: string, timestamp: number, body: string) => 'sha256=' + createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
@@ -51,17 +89,10 @@ export async function processWebhooks(db: Db) {
     if (!hook || !hook.active) error = 'Webhook ist deaktiviert.';
     else {
       try {
-        await assertWebhookTarget(hook.url);
+        assertWebhookTarget(hook.url);
         const ts = Math.floor(Date.now() / 1000);
-        const res = await fetch(hook.url, {
-          method: 'POST',
-          redirect: 'manual',
-          signal: AbortSignal.timeout(10_000),
-          headers: { 'content-type': 'application/json', 'user-agent': 'OpenVerein-Webhook/1', 'x-openverein-event': d.event, 'x-openverein-delivery': d.id, 'x-openverein-timestamp': String(ts), 'x-openverein-signature': signature(decrypt(hook.secret_encrypted), ts, body) },
-          body,
-        });
-        status = res.status;
-        if (res.status < 200 || res.status >= 300) error = `Antwort ${res.status}`;
+        status = await post(hook.url, { 'content-type': 'application/json', 'user-agent': 'OpenVerein-Webhook/1', 'x-openverein-event': d.event, 'x-openverein-delivery': d.id, 'x-openverein-timestamp': String(ts), 'x-openverein-signature': signature(decrypt(hook.secret_encrypted), ts, body) }, body);
+        if (status < 200 || status >= 300) error = `Antwort ${status}`;
       } catch (err) {
         error = (err as Error).message.slice(0, 300);
       }

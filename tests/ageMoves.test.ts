@@ -14,7 +14,9 @@ beforeEach(async () => {
 });
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-const yearsAgo = (years: number, days = 0) => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() - years); d.setUTCDate(d.getUTCDate() + days); return iso(d); };
+// The club's today (Europe/Berlin), as noon UTC: around midnight UTC and Berlin are on different days.
+const clubToday = () => new Date(`${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date())}T12:00:00Z`);
+const yearsAgo = (years: number, days = 0) => { const d = clubToday(); d.setUTCFullYear(d.getUTCFullYear() - years); d.setUTCDate(d.getUTCDate() + days); return iso(d); };
 
 describe('age-based group change', () => {
   it('previews and applies moves on the birthday, leaves later additions alone, and validates the rule', async () => {
@@ -30,12 +32,12 @@ describe('age-based group change', () => {
 
     const preview = (await admin.get(`/groups/${youth.id}/age-moves`)).body as { memberId: string; moveOn: string }[];
     expect(preview.map((p) => p.memberId)).toEqual([due, soon]);
-    expect(preview[0]!.moveOn).toBe(iso(new Date()));
+    expect(preview[0]!.moveOn).toBe(iso(clubToday()));
 
     expect(await applyAgeMoves(ctx.db)).toBe(1);
     expect(await applyAgeMoves(ctx.db)).toBe(0);
     const detail = (await admin.get(`/members/${due}`)).body as { memberships: { groupName: string; validTo: string | null }[] };
-    expect(detail.memberships.find((m) => m.groupName === 'Jugend')!.validTo).toBe(iso(new Date(Date.now() - 86_400_000)));
+    expect(detail.memberships.find((m) => m.groupName === 'Jugend')!.validTo).toBe(iso(new Date(clubToday().getTime() - 86_400_000)));
     expect(detail.memberships.find((m) => m.groupName === 'Erwachsene')!.validTo).toBeNull();
 
     // Without the birth-date right, no preview (it would give birthdays away).
@@ -46,12 +48,12 @@ describe('age-based group change', () => {
   it('starts a future target membership today, never moves into an archived group, and refuses archiving a rule target', async () => {
     const adults = (await admin.post('/groups', { name: 'Erwachsene', shortCode: 'ERW', kind: 'segment' })).body.id;
     const youth = (await admin.post('/groups', { name: 'Jugend', shortCode: 'JUG', kind: 'segment', nextGroupId: adults, nextGroupAge: 18, nextGroupOn: 'birthday' })).body;
-    const later = iso(new Date(Date.now() + 40 * 86_400_000));
+    const later = iso(new Date(clubToday().getTime() + 40 * 86_400_000));
     const due = (await admin.post('/members', { lastName: 'Zukunft', birthDate: yearsAgo(18, -1), joinDate: yearsAgo(5), groupIds: [youth.id] })).body.id;
     await ctx.db.insertInto('group_membership').values({ organization_id: (await ctx.db.selectFrom('club_group').select('organization_id').executeTakeFirstOrThrow()).organization_id, member_id: due, group_id: adults, valid_from: later }).execute();
     expect(await applyAgeMoves(ctx.db)).toBe(1);
     const rows = await ctx.db.selectFrom('group_membership').select(['valid_from']).where('member_id', '=', due).where('group_id', '=', adults).execute();
-    expect(rows.map((r) => String(r.valid_from).slice(0, 10))).toEqual([iso(new Date())]);
+    expect(rows.map((r) => String(r.valid_from).slice(0, 10))).toEqual([iso(clubToday())]);
 
     // Archiving a group an age rule feeds is refused; with the target archived anyway, nobody moves into it.
     expect((await admin.post(`/groups/${adults}/archive`, {})).body.type).toMatch(/age-rule-target$/);

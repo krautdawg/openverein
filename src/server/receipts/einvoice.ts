@@ -11,6 +11,19 @@ export interface EinvoiceSuggestion {
   totalCents: number | null;
   /** gross per VAT rate */
   groups: { ratePct: number; grossCents: number }[];
+  /** Why amounts are not suggested (credit note, foreign currency): the receipt must be entered by hand. */
+  unsupported: string | null;
+}
+
+/** UN/CEFACT 1001 document types that are credit notes, not invoices. */
+const CREDIT_NOTE_TYPES = new Set(['81', '83', '261', '262', '296', '308', '381', '396', '420', '458', '532']);
+const currencyOf = (v: unknown) => (v && typeof v === 'object' ? text((v as Node)['@currencyID']) : null);
+
+/** Credit notes would be booked as expenses, foreign amounts as euros: no money is suggested from them. */
+function guard(x: Omit<EinvoiceSuggestion, 'unsupported'>, creditNote: boolean, currencies: (string | null)[]): EinvoiceSuggestion {
+  const foreign = currencies.find((c) => c && c.toUpperCase() !== 'EUR');
+  const unsupported = creditNote ? 'Das ist eine Gutschrift. Gutschriften von Lieferanten lassen sich hier noch nicht übernehmen; erfasse sie von Hand.' : foreign ? `Die Rechnung lautet auf ${foreign}. Hier gehen nur Beträge in Euro; erfasse den Euro-Betrag von Hand.` : null;
+  return unsupported ? { ...x, totalCents: null, groups: [], unsupported } : { ...x, unsupported: null };
 }
 
 type Node = Record<string, unknown>;
@@ -39,7 +52,8 @@ export function parseEinvoiceXml(xml: string): EinvoiceSuggestion | null {
     const settle = at(tx, 'ApplicableHeaderTradeSettlement');
     const groups = arr(at(settle, 'ApplicableTradeTax') as Node | Node[]).map((t) => ({ ratePct: Number(text(at(t, 'RateApplicablePercent')) ?? 0), grossCents: (cents(at(t, 'BasisAmount')) ?? 0) + (cents(at(t, 'CalculatedAmount')) ?? 0) }));
     const sum = at(settle, 'SpecifiedTradeSettlementHeaderMonetarySummation');
-    return {
+    const type = text(at(cii, 'ExchangedDocument', 'TypeCode'));
+    return guard({
       format: 'cii',
       supplier: text(at(tx, 'ApplicableHeaderTradeAgreement', 'SellerTradeParty', 'Name')),
       number: text(at(cii, 'ExchangedDocument', 'ID')),
@@ -47,13 +61,14 @@ export function parseEinvoiceXml(xml: string): EinvoiceSuggestion | null {
       dueDate: isoDate(at(arr(at(settle, 'SpecifiedTradePaymentTerms') as Node | Node[])[0], 'DueDateDateTime', 'DateTimeString')),
       totalCents: cents(at(sum, 'GrandTotalAmount')),
       groups,
-    };
+    }, CREDIT_NOTE_TYPES.has(type ?? ''), [text(at(settle, 'InvoiceCurrencyCode')), currencyOf(at(sum, 'GrandTotalAmount')), currencyOf(at(sum, 'TaxBasisTotalAmount'))]);
   }
   const ubl = (doc.Invoice ?? doc.CreditNote) as Node | undefined;
   if (ubl) {
     const party = at(ubl, 'AccountingSupplierParty', 'Party');
     const groups = arr(at(ubl, 'TaxTotal', 'TaxSubtotal') as Node | Node[]).map((t) => ({ ratePct: Number(text(at(t, 'TaxCategory', 'Percent')) ?? 0), grossCents: (cents(at(t, 'TaxableAmount')) ?? 0) + (cents(at(t, 'TaxAmount')) ?? 0) }));
-    return {
+    const type = text(at(ubl, 'InvoiceTypeCode')) ?? text(at(ubl, 'CreditNoteTypeCode'));
+    return guard({
       format: 'ubl',
       supplier: text(at(party, 'PartyLegalEntity', 'RegistrationName')) ?? text(at(party, 'PartyName', 'Name')),
       number: text(at(ubl, 'ID')),
@@ -61,7 +76,7 @@ export function parseEinvoiceXml(xml: string): EinvoiceSuggestion | null {
       dueDate: isoDate(at(ubl, 'DueDate')),
       totalCents: cents(at(ubl, 'LegalMonetaryTotal', 'TaxInclusiveAmount')),
       groups,
-    };
+    }, !!doc.CreditNote || CREDIT_NOTE_TYPES.has(type ?? ''), [text(at(ubl, 'DocumentCurrencyCode')), currencyOf(at(ubl, 'LegalMonetaryTotal', 'TaxInclusiveAmount'))]);
   }
   return null;
 }

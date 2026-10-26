@@ -158,7 +158,8 @@ function ReceiptSheet({ onClose }: { onClose: () => void }) {
             onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) void attach(f); }}
           >
             {file ? <p>{file.name}{file.duplicateOf && <span className="error"> · Dieselbe Datei gehört schon zu: {file.duplicateOf}</span>}</p> : <p className="muted">PDF, Foto oder E-Rechnung (ZUGFeRD, XRechnung) hierher ziehen</p>}
-            {prefill && <p className="meta" role="status">E-Rechnung erkannt ({prefill.format === 'cii' ? 'CII' : 'UBL'}): Angaben übernommen{prefill.totalCents !== null ? `, Summe ${euro(prefill.totalCents)}` : ''}. Bitte Konten wählen und prüfen.</p>}
+            {prefill?.unsupported && <div className="alert alert-warn" role="status">{prefill.unsupported}</div>}
+            {prefill && !prefill.unsupported && <p className="meta" role="status">E-Rechnung erkannt ({prefill.format === 'cii' ? 'CII' : 'UBL'}): Angaben übernommen{prefill.totalCents !== null ? `, Summe ${euro(prefill.totalCents)}` : ''}. Bitte Konten wählen und prüfen.</p>}
             <button type="button" className="btn" aria-busy={busy} disabled={busy} onClick={() => input.current?.click()}>{file ? 'Andere Datei' : 'Datei wählen oder fotografieren'}</button>
             <input ref={input} type="file" accept="application/pdf,image/*,.xml" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void attach(f); e.target.value = ''; }} />
           </div>
@@ -420,4 +421,4 @@ function DecideClaim({ claim, action, onClose }: { claim: ExpenseClaim; action: 
   );
 }
 
-interface Einvoice { format: 'cii' | 'ubl'; supplier: string | null; number: string | null; receiptDate: string | null; dueDate: string | null; totalCents: number | null; groups: { ratePct: number; grossCents: number }[] }
+interface Einvoice { format: 'cii' | 'ubl'; supplier: string | null; number: string | null; receiptDate: string | null; dueDate: string | null; totalCents: number | null; groups: { ratePct: number; grossCents: number }[]; unsupported: string | null }

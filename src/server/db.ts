@@ -1132,6 +1132,9 @@ export interface AllowancePaymentTable {
   text: string;
   created_by: string | null;
   created_at: Generated<Date>;
+  voided_at: Date | null;
+  voided_by: string | null;
+  void_reason: string | null;
 }
 export interface AllowanceDeclarationTable {
   organization_id: string;
