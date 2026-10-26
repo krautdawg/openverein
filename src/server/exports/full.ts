@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { decrypt } from '../crypto.ts';
+import { decrypt, decryptBytes } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { getBlob } from '../files/store.ts';
 import { MIGRATIONS_TABLE } from '../migrate.ts';
@@ -8,7 +8,7 @@ import { Problem } from '../http/problem.ts';
 import { zip } from './zip.ts';
 
 /** Bumped whenever the shape of the export changes; documented in docs/export-schema.md. */
-export const EXPORT_SCHEMA_VERSION = '1';
+export const EXPORT_SCHEMA_VERSION = '2';
 
 /** Sign-in secrets and live sessions never leave the instance. */
 const SKIP_TABLES = new Set(['session', 'portal_session', 'login_code', 'portal_verify_failure', 'totp_recovery_code', 'idempotency_key', 'instance_setting', 'operator_event', MIGRATIONS_TABLE]);
@@ -58,6 +58,16 @@ function clean(table: string, row: Record<string, unknown>, failed: Record<strin
     // Bank changes from the portal keep both values encrypted in the generic value columns.
     if (table === 'change_request' && row.field === 'iban' && (k === 'old_value' || k === 'new_value') && typeof v === 'string' && v.startsWith('v1:')) {
       out[k] = tryDecrypt(k, v);
+      continue;
+    }
+    // The issued XRechnung is stored encrypted without the `_encrypted` suffix: exported as the readable XML.
+    if (table === 'invoice_einvoice' && k === 'xml' && Buffer.isBuffer(v)) {
+      try {
+        out[k] = decryptBytes(v).toString('utf8');
+      } catch {
+        failed[`${table}.${k}`] = (failed[`${table}.${k}`] ?? 0) + 1;
+        out[k] = null;
+      }
       continue;
     }
     out[k] = v instanceof Date ? v.toISOString() : Buffer.isBuffer(v) ? { base64: v.toString('base64') } : v;

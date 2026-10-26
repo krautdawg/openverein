@@ -44,7 +44,11 @@ export async function anonymiseBlockers(tx: Db, organizationId: string, personId
  * Removes a person's personal data. Issued invoices, receipts and the journal keep their own snapshots until their
  * retention ends; the person row stays with an opaque id. Files under retention or legal hold stay as well.
  */
+/** Erasures and the end of a full export of one club never overlap (see runFullExport). */
+export const lockErasures = (tx: Db, organizationId: string) => sql`select pg_advisory_xact_lock(hashtext(${`openverein:erasure:${organizationId}`}))`.execute(tx);
+
 export async function anonymise(tx: Db, organizationId: string, personId: string) {
+  await lockErasures(tx, organizationId);
   const p = await tx.selectFrom('person').select('email').where('id', '=', personId).where('organization_id', '=', organizationId).forUpdate().executeTakeFirstOrThrow();
   const today = await orgToday(tx, organizationId);
   await tx

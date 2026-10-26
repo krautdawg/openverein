@@ -165,7 +165,8 @@ export async function unpostedPayments(db: Db, organizationId: string, after: st
     .selectFrom('allocation')
     .select(sql<number>`count(*)::int`.as('n'))
     .where('organization_id', '=', organizationId)
-    .where('status', '=', 'confirmed')
+    // Reversed ones too: reversed before their first posting, they still need it (and then its reversal).
+    .where('status', 'in', ['confirmed', 'reversed'])
     .where('method', '!=', 'write_off')
     .where('booked_on', '<=', date)
     .$if(!!after, (q) => q.where('booked_on', '>', after!))

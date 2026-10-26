@@ -62,7 +62,8 @@ export function client(app: App, auth: { cookie?: string; token?: string }) {
   const headers = { ...(auth.cookie ? { cookie: auth.cookie } : {}), ...(auth.token ? { authorization: `Bearer ${auth.token}` } : {}) };
   const call = async (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) => {
     // A fresh idempotency key per call, as the web client does.
-    const res = await app.inject({ method, url: `/api/v1${url}`, headers: method === 'POST' ? { ...headers, 'idempotency-key': randomUUID() } : headers, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
+    // PATCH needs If-Match; tests that are not about concurrency overwrite on purpose (`*`).
+    const res = await app.inject({ method, url: `/api/v1${url}`, headers: method === 'POST' ? { ...headers, 'idempotency-key': randomUUID() } : method === 'PATCH' ? { 'if-match': '*', ...headers } : headers, ...(method === 'GET' ? {} : { payload: (payload ?? {}) as object }) });
     return { status: res.statusCode, body: res.body ? (res.headers['content-type']?.includes('json') ? res.json() : res.body) : null, headers: res.headers };
   };
   return {

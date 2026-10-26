@@ -65,7 +65,7 @@ describe('full export', () => {
     const res = await ctx.app.inject({ url: link, headers: { cookie } });
     const files = unzip(res.rawPayload);
     const manifest = JSON.parse(files.get('manifest.json')!.toString());
-    expect(manifest.schemaVersion).toBe('1');
+    expect(manifest.schemaVersion).toBe('2');
     for (const [name, hash] of Object.entries(manifest.files)) expect(createHash('sha256').update(files.get(name)!).digest('hex')).toBe(hash);
     expect(manifest.counts.member).toBe(1);
     expect(manifest.counts.invoice).toBe(1);
@@ -86,6 +86,10 @@ describe('full export', () => {
     await admin.post(`/members/${gone.id}/resign`, { noticeDate: '2020-01-01', exitDate: '2020-12-31' });
     expect((await admin.post(`/persons/${gone.personId}/anonymise`, {})).status).toBe(200);
     expect(await ctx.db.selectFrom('file').select('id').where('purpose', '=', 'export').execute()).toHaveLength(0);
+    // Older than 7 days: no link, no download, even before the sweep removed it.
+    await ctx.db.updateTable('file').set({ created_at: new Date(Date.now() - 8 * 86_400_000) }).where('id', '=', run.body.id).execute();
+    expect((await admin.post(`/exports/full/${run.body.id}/link`, {})).status).toBe(404);
+    expect((await ctx.app.inject({ url: link, headers: { cookie } })).statusCode).toBe(404);
   });
 
   it('fails a queued export when the starting admin lost the role, and retries a crashed job once', async () => {

@@ -89,8 +89,10 @@ export function scopeOf(actor: Actor, module: Module, need: Exclude<Level, 'none
 /** A field is hidden only if every grant that can read the module hides it. */
 export function restrictedFields(actor: Actor, module: Module = 'members'): Set<string> {
   const readers = actor.grants.filter((g) => rank[g.permissions[module] ?? 'none'] >= 1);
-  if (readers.length === 0) return new Set(RESTRICTABLE_FIELDS);
-  return new Set(RESTRICTABLE_FIELDS.filter((f) => readers.every((g) => g.restricted.includes(f))));
+  const hidden = readers.length === 0 ? new Set<string>(RESTRICTABLE_FIELDS) : new Set<string>(RESTRICTABLE_FIELDS.filter((f) => readers.every((g) => g.restricted.includes(f))));
+  // Columns that hold the same kind of data go with their field: the e-invoice address is an e-mail address.
+  if (hidden.has('email')) hidden.add('einvoice_address');
+  return hidden;
 }
 
 /** A signed-in user holding the built-in admin role for the whole club. */

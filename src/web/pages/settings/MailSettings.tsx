@@ -59,7 +59,7 @@ export function MailSettings({ me }: { me: Me }) {
         {canWrite && (
           <div className="actions-row">
             <button className="btn" aria-busy={busy} disabled={busy} onClick={() => void sendTest()}>Test-E-Mail an mich</button>
-            {org.mailPausedReason && <button className="btn btn-primary" onClick={() => void api('/mail/resume', { method: 'POST', body: {} }).then(() => qc.invalidateQueries({ queryKey: ['organization'] }))}>Versand fortsetzen</button>}
+            {org.mailPausedReason && <button className="btn btn-primary" onClick={() => void api('/mail/resume', { method: 'POST', body: {} }).then(() => Promise.all([qc.invalidateQueries({ queryKey: ['organization'] }), qc.invalidateQueries({ queryKey: ['mail-status'] })]))}>Versand fortsetzen</button>}
           </div>
         )}
         {test && (

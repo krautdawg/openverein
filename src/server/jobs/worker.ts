@@ -38,8 +38,9 @@ export async function processJobs(db: Db) {
       returning *`.execute(db).then((r) => r.rows[0]);
     if (!job) return n;
     n++;
+    // The lease is the attempt number: a run whose job was reclaimed after going stale can no longer write.
     const finish = (set: { status: 'done' | 'failed'; error?: string; result_file_id?: string | null; result?: string | null }) =>
-      db.updateTable('job').set({ ...set, progress: set.status === 'done' ? 100 : sql<number>`progress`, finished_at: new Date() }).where('id', '=', job.id).execute();
+      db.updateTable('job').set({ ...set, progress: set.status === 'done' ? 100 : sql<number>`progress`, finished_at: new Date() }).where('id', '=', job.id).where('attempts', '=', job.attempts).where('status', '=', 'running').execute();
     if (job.attempts > MAX_ATTEMPTS) {
       await finish({ status: 'failed', error: 'Die Aufgabe wurde unterbrochen. Starte sie neu.' });
       continue;
@@ -47,9 +48,14 @@ export async function processJobs(db: Db) {
     try {
       const actor = await currentActor(db, job);
       const progress = async (share: number, detail?: string) => {
-        await db.updateTable('job').set({ progress: Math.min(99, Math.round(share * 100)), claimed_at: new Date(), ...(detail !== undefined && { detail }) }).where('id', '=', job.id).execute();
+        const r = await db.updateTable('job').set({ progress: Math.min(99, Math.round(share * 100)), claimed_at: new Date(), ...(detail !== undefined && { detail }) }).where('id', '=', job.id).where('attempts', '=', job.attempts).where('status', '=', 'running').executeTakeFirst();
+        if (!Number(r.numUpdatedRows)) throw new JobError('Die Aufgabe wurde inzwischen neu gestartet.');
       };
-      const result = await HANDLERS[job.kind]({ db, job, actor, progress });
+      const owned = async (tx: Db) => {
+        const row = await tx.selectFrom('job').select('id').where('id', '=', job.id).where('attempts', '=', job.attempts).where('status', '=', 'running').forUpdate().executeTakeFirst();
+        if (!row) throw new JobError('Die Aufgabe wurde inzwischen neu gestartet.');
+      };
+      const result = await HANDLERS[job.kind]({ db, job, actor, progress, owned });
       await finish({ status: 'done', result_file_id: result.fileId ?? null, result: result.result === undefined ? null : JSON.stringify(result.result) });
     } catch (err) {
       if (!(err instanceof JobError)) console.error('job failed', job.id, job.kind, err);

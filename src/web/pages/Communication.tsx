@@ -53,7 +53,7 @@ export function Communication({ me }: { me: Me }) {
     return () => clearTimeout(t);
   }, [subject, body, first]);
   const [sending, setSending] = useState(false);
-  const org = useQuery({ queryKey: ['organization'], queryFn: () => api<{ mailPausedReason: string | null }>('/organization') });
+  const org = useQuery({ queryKey: ['mail-status'], queryFn: () => api<{ mailPausedReason: string | null }>('/messages/status') });
   const templates = useQuery({ queryKey: ['mail-templates'], queryFn: () => api<MailTemplate[]>('/mail-templates'), enabled: canWrite });
   const own = templates.data?.filter((t) => !t.key) ?? [];
   const [naming, setNaming] = useState<string | null>(null);

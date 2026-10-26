@@ -349,6 +349,13 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     };
   }
 
+  app.get('/messages/status', { schema: { tags, summary: 'Ob der Versand gerade pausiert ist (und warum)', response: { 200: z.object({ mailPausedReason: z.string().nullable() }) } } }, async (req) => {
+    const actor = requireActor(req);
+    requirePermission(actor, 'communication', 'read');
+    const o = await db.selectFrom('organization').select('mail_paused_reason').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+    return { mailPausedReason: o.mail_paused_reason };
+  });
+
   app.get('/messages', { schema: { tags, summary: 'Versendete E-Mails', response: { 200: z.array(messageDto) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'communication', 'read');

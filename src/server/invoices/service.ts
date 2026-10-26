@@ -15,7 +15,7 @@ import { missingFields, xrechnungCii, type XInvoice } from './xrechnung.ts';
 export interface IssueSnapshot {
   recipient: { name: string; lines: string[] };
   membershipNumber: string | null;
-  org: { name: string; street: string | null; postalCode: string | null; city: string | null; email: string | null; iban: string | null; bic: string | null; bankName: string | null; isDemo: boolean };
+  org: { name: string; street: string | null; postalCode: string | null; city: string | null; email: string | null; iban: string | null; bic: string | null; bankName: string | null; isDemo: boolean; smallBusiness?: boolean };
   paymentMethod: string | null;
   cancelsNumber: string | null;
   /** SEPA pre-notification data, frozen at issue (direct debit only) */
@@ -40,12 +40,14 @@ export function personLines(p: { kind: string; first_name: string | null; last_n
 export async function issueInvoice(tx: Db, organizationId: string, invoiceId: string, issueDate: string, dueDate?: string | null, opts: { paymentMethod?: PaymentMethod } = {}) {
   const inv = await tx.selectFrom('invoice').selectAll().where('id', '=', invoiceId).where('organization_id', '=', organizationId).forUpdate().executeTakeFirstOrThrow();
   if (inv.status !== 'draft') throw new Problem(409, 'not-draft', 'Die Rechnung ist bereits ausgestellt.');
-  const lines = await tx.selectFrom('invoice_line').select(['total_cents']).where('invoice_id', '=', inv.id).execute();
+  const lines = await tx.selectFrom('invoice_line').select(['total_cents', 'tax_rate']).where('invoice_id', '=', inv.id).execute();
   if (lines.length === 0) throw new Problem(400, 'no-lines', 'Eine Rechnung braucht mindestens eine Position.');
   const due = dueDate ?? inv.due_date;
   if (due && due < issueDate && inv.kind !== 'cancellation') throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'dueDate', message: 'Die Fälligkeit liegt vor dem Rechnungsdatum.' }] });
   const total = lines.reduce((s, l) => s + l.total_cents, 0);
   const org = await tx.selectFrom('organization').selectAll().where('id', '=', organizationId).executeTakeFirstOrThrow();
+  // A small business (§ 19 UStG) shows no VAT: PDF, e-invoice and the booking must all agree on 0 %.
+  if (org.small_business && lines.some((l) => Number(l.tax_rate) > 0)) throw new Problem(400, 'validation', 'Als Kleinunternehmer (§ 19 UStG) weist der Verein keine Umsatzsteuer aus.', 'Setze den Steuersatz aller Positionen auf 0 %.', { errors: [{ field: 'lines', message: 'Steuersatz muss 0 % sein.' }] });
   const person = await tx.selectFrom('person').selectAll().where('id', '=', inv.recipient_person_id).executeTakeFirstOrThrow();
   const member = inv.member_id ? await tx.selectFrom('member').select(['membership_number', 'payment_method']).where('id', '=', inv.member_id).executeTakeFirst() : undefined;
   const mandate = await tx.selectFrom('sepa_mandate').select('reference').where('person_id', '=', inv.recipient_person_id).where('status', '=', 'active').executeTakeFirst();
@@ -58,7 +60,7 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
   const snapshot: IssueSnapshot = {
     recipient: personLines(person),
     membershipNumber: member?.membership_number ?? null,
-    org: { name: org.name, street: org.street, postalCode: org.postal_code, city: org.city, email: org.email, iban: org.iban, bic: org.bic, bankName: org.bank_name, isDemo: org.is_demo },
+    org: { name: org.name, street: org.street, postalCode: org.postal_code, city: org.city, email: org.email, iban: org.iban, bic: org.bic, bankName: org.bank_name, isDemo: org.is_demo, smallBusiness: org.small_business },
     paymentMethod: opts.paymentMethod ?? member?.payment_method ?? null,
     cancelsNumber: cancels?.number ?? null,
     mandateReference: mandate?.reference ?? null,

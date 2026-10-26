@@ -3,7 +3,7 @@ import { signIn } from './helpers.ts';
 
 test('fees: plan, assignment, fee run preview and posting, payment', async ({ page }) => {
   await signIn(page);
-  await page.request.patch('/api/v1/organization', { data: { street: 'Sportplatzweg 1', postalCode: '12345', city: 'Musterstadt', iban: 'DE89370400440532013000' } });
+  await page.request.patch('/api/v1/organization', { headers: { 'if-match': '*' }, data: { street: 'Sportplatzweg 1', postalCode: '12345', city: 'Musterstadt', iban: 'DE89370400440532013000' } });
   const member = await (await page.request.post('/api/v1/members', { data: { firstName: 'Rita', lastName: 'Rechnung', joinDate: '2025-01-01', street: 'Am Hang 2', postalCode: '12345', city: 'Musterstadt' } })).json();
 
   await page.goto('/beitraege');

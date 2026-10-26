@@ -92,8 +92,10 @@ const COLUMNS = {
 export const organizationRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  app.get('/organization', { schema: { tags: ['organization'], summary: 'Stammdaten des Vereins (ETag für If-Match)', response: { 200: organization } } }, async (req, reply) => {
+  app.get('/organization', { schema: { tags: ['organization'], summary: 'Stammdaten des Vereins (ETag für If-Match); braucht settings:read', response: { 200: organization } } }, async (req, reply) => {
     const actor = requireActor(req);
+    // Bank details, tax number, creditor ID and templates: only for those who may see the settings.
+    requirePermission(actor, 'settings', 'read');
     const o = toDto(await db.selectFrom('organization').selectAll().where('id', '=', actor.organizationId).executeTakeFirstOrThrow());
     setETag(reply, o.version);
     return o;
