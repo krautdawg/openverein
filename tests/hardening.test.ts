@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
@@ -41,5 +42,36 @@ describe('review G8', () => {
     expect(issued.body.title).toContain('§ 19 UStG');
     const plain = (await admin.post('/invoices', { memberId: m.id, lines: [{ text: 'Beitrag', unitCents: 6000 }] })).body;
     expect((await admin.post(`/invoices/${plain.id}/issue`, {})).status).toBe(200);
+  });
+
+  // ---------- review G9 ----------
+
+  it('gives the e-invoice XML only to roles that may see what it contains', async () => {
+    await admin.patch('/organization', { email: 'kasse@example.org', vatId: 'DE123456789', einvoiceContactName: 'Erika Mustermann', einvoiceContactPhone: '+49 30 1234567' });
+    const m = (await admin.post('/members', { lastName: 'Stadt', street: 'Weg 2', postalCode: '12345', city: 'Musterstadt', joinDate: '2024-01-01' })).body;
+    await admin.patch(`/members/${m.id}`, { einvoiceFormat: 'xrechnung', buyerReference: '04011000-12345-67', einvoiceAddress: 'rechnung@stadt.example' });
+    const inv = (await admin.post('/invoices', { memberId: m.id, lines: [{ text: 'Hallennutzung', unitCents: 11900, taxRate: 19 }] })).body;
+    expect((await admin.post(`/invoices/${inv.id}/issue`, {})).status).toBe(200);
+    const xml = (c: string) => ctx.app.inject({ url: `/api/v1/invoices/${inv.id}/xrechnung.xml`, headers: { cookie: c } });
+    // A transfer invoice has no member IBAN: a role without IBAN rights still gets it …
+    expect((await xml(await userWithRole(ctx.app, cookie, 'Abteilungsleitung'))).statusCode).toBe(200);
+    // … but the buyer's e-invoice address is in every XML.
+    expect((await xml(await userWithRole(ctx.app, cookie, 'Steuerberatung'))).statusCode).toBe(403);
+  });
+
+  it('hides gender like other restricted fields, and keeps the census from roles without birth date or gender', async () => {
+    const m = (await admin.post('/members', { firstName: 'Gina', lastName: 'Gender', gender: 'female', birthDate: '1990-01-01', joinDate: '2024-01-01' })).body;
+    const adviser = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Steuerberatung') });
+    const seen = (await adviser.get(`/members/${m.id}`)).body;
+    expect(seen.restricted).toContain('gender');
+    expect(seen).not.toHaveProperty('gender');
+    expect((await adviser.get(`/reports/census?year=${new Date().getFullYear()}`)).status).toBe(403);
+    expect((await admin.get(`/members/${m.id}`)).body.gender).toBe('female');
+  });
+
+  it('exports every person column in the Art. 15 answer (or names why not)', async () => {
+    const { PERSON_EXPORT, PERSON_NOT_EXPORTED } = await import('../src/server/routes/privacy.ts');
+    const cols = (await sql<{ c: string }>`select column_name as c from information_schema.columns where table_schema = 'public' and table_name = 'person'`.execute(ctx.db)).rows.map((r) => r.c);
+    expect(cols.filter((c) => !(c in PERSON_EXPORT) && !PERSON_NOT_EXPORTED.includes(c))).toEqual([]);
   });
 });

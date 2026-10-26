@@ -130,7 +130,7 @@ export const timelineEntry = z.object({ at: z.string(), action: z.string(), acto
 
 export const memberDetail = memberListItem.extend({
   birthDate: z.string().nullable().optional(),
-  gender: z.enum(['female', 'male', 'diverse']).nullable(),
+  gender: z.enum(['female', 'male', 'diverse']).nullable().optional(),
   phone: z.string().nullable().optional(),
   street: z.string().nullable(),
   postalCode: z.string().nullable(),

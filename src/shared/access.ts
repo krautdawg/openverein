@@ -18,7 +18,7 @@ export const MODULE_LABEL: Record<string, string> = {
   imports: 'Import und Export',
   api: 'API',
 };
-export const FIELD_LABEL: Record<string, string> = { iban: 'IBAN', note: 'Notizen', birth_date: 'Geburtsdatum', email: 'E-Mail', phone: 'Telefon' };
+export const FIELD_LABEL: Record<string, string> = { iban: 'IBAN', note: 'Notizen', birth_date: 'Geburtsdatum', email: 'E-Mail', phone: 'Telefon', gender: 'Geschlecht' };
 export const LEVEL_LABEL = { none: 'Kein Zugriff', read: 'Lesen', write: 'Schreiben' } as const;
 
 export const role = z.object({

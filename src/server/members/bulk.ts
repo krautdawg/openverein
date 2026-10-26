@@ -4,7 +4,7 @@ import { audit } from '../audit.ts';
 import type { Db } from '../db.ts';
 import { forbidden, Problem } from '../http/problem.ts';
 import { scopeOf, type Actor } from '../policy.ts';
-import { applyScope, orgToday } from './query.ts';
+import { orgToday } from './query.ts';
 
 /** Above this many members a bulk action runs as a job. */
 export const BULK_INLINE_MAX = 100;
@@ -19,16 +19,24 @@ export async function assertGroup(db: Db, actor: Actor, groupId: string) {
 }
 
 /** Adds members to or ends their membership in a group; members outside the actor's scope are skipped with a reason. */
-export async function memberBulk(db: Db, actor: Actor, input: z.infer<typeof bulkBody>) {
+export async function memberBulk(db: Db, actor: Actor, input: z.infer<typeof bulkBody>, hooks: { before?: (tx: Db) => Promise<void>; after?: (tx: Db, result: { succeeded: number; skipped: { id: string; reason: string }[] }) => Promise<void> } = {}) {
     const today = await orgToday(db, actor.organizationId);
     const { ids, action, groupId, date: on } = input;
-    const writable = new Set(
-      (await db.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('id', 'in', ids).where(applyScope(actor, today, 'write')).execute()).map((r) => r.id),
-    );
     const skipped: { id: string; reason: string }[] = [];
     let succeeded = 0;
     await db.transaction().execute(async (tx) => {
+      await hooks.before?.(tx);
       await assertGroup(tx, actor, groupId);
+      // Decided inside the transaction, with the memberships that give a scoped actor the right locked: a
+      // concurrent removal from the actor's groups either waits for this transaction or is already seen.
+      const scope = scopeOf(actor, 'members', 'write');
+      const writable = new Set(
+        scope === null
+          ? (await tx.selectFrom('member').select('id').where('organization_id', '=', actor.organizationId).where('id', 'in', ids).execute()).map((r) => r.id)
+          : scope.length === 0
+            ? []
+            : (await tx.selectFrom('group_membership').select('member_id').where('organization_id', '=', actor.organizationId).where('member_id', 'in', ids).where('group_id', 'in', scope).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>=', today)])).forShare().execute()).map((r) => r.member_id),
+      );
       for (const id of ids) {
         if (!writable.has(id)) {
           skipped.push({ id, reason: 'Nicht in Deinem Bereich oder nicht gefunden.' });
@@ -64,6 +72,7 @@ export async function memberBulk(db: Db, actor: Actor, input: z.infer<typeof bul
         succeeded++;
       }
       await audit(tx, actor.organizationId, actor, { action: `member.bulk.${action}`, entityType: 'club_group', entityId: groupId, diff: { date: on, ids, succeeded, skipped: skipped.length } });
+      await hooks.after?.(tx, { succeeded, skipped });
     });
   return { succeeded, skipped };
 }

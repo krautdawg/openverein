@@ -213,11 +213,16 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'read');
     await detail(actor, req.params.id); // scope check
-    // A direct-debit e-invoice carries the full IBAN: only for roles that may see IBANs.
-    if (restrictedFields(actor).has('iban')) throw forbidden('members.field.iban');
+    // The XML is immutable, so it is never redacted: a role gets it only if it may see what it contains.
+    // It always names the buyer's e-invoice address (often an e-mail address).
+    const hidden = restrictedFields(actor);
+    if (hidden.has('einvoice_address')) throw forbidden('members.field.email');
     const e = await db.selectFrom('invoice_einvoice').innerJoin('invoice', 'invoice.id', 'invoice_einvoice.invoice_id').select(['invoice_einvoice.xml', 'invoice.number']).where('invoice_einvoice.invoice_id', '=', req.params.id).where('invoice_einvoice.organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!e) throw notFound('E-Rechnung');
-    return reply.header('content-type', 'application/xml; charset=utf-8').header('content-disposition', `attachment; filename="${e.number}.xml"`).header('cache-control', 'private, no-store').send(decryptBytes(e.xml));
+    const xml = decryptBytes(e.xml);
+    // A direct-debit e-invoice carries the member's full IBAN.
+    if (hidden.has('iban') && xml.includes('PayerPartyDebtorFinancialAccount')) throw forbidden('members.field.iban');
+    return reply.header('content-type', 'application/xml; charset=utf-8').header('content-disposition', `attachment; filename="${e.number}.xml"`).header('cache-control', 'private, no-store').send(xml);
   });
 
   app.post('/invoices', { schema: { tags, summary: 'Rechnungsentwurf anlegen', body: invoiceCreate, response: { 201: invoiceDetail } } }, async (req, reply) => {

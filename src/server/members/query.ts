@@ -173,7 +173,7 @@ export async function memberDetail(db: Db, actor: Actor, id: string, extraWarnin
   return {
     ...toListItem(row, groups, hidden),
     ...pick('birth_date', row.birth_date),
-    gender: row.gender,
+    ...pick('gender', row.gender),
     ...pick('phone', row.phone),
     ...pick('note', row.note),
     street: row.street,

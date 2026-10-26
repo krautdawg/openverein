@@ -45,6 +45,19 @@ function exportPdf(title: string, sections: [string, Row[]][]): Promise<Buffer> 
   return done;
 }
 
+/**
+ * Every column of `person` that holds data about the person, with its label in the Art. 15 export. A test checks
+ * that each column is either here or in PERSON_NOT_EXPORTED, so a new column cannot be forgotten.
+ */
+export const PERSON_EXPORT: Record<string, string> = {
+  kind: 'Art', first_name: 'Vorname', last_name: 'Nachname', company_name: 'Firma', birth_date: 'Geburtsdatum', gender: 'Geschlecht',
+  email: 'E-Mail', phone: 'Telefon', street: 'Straße', postal_code: 'PLZ', city: 'Ort', country: 'Land', preferred_channel: 'Bevorzugter Weg',
+  note: 'Notiz', status: 'Status', created_at: 'Erfasst am', einvoice_format: 'E-Rechnung', buyer_reference: 'Käuferreferenz (Leitweg-ID)',
+  einvoice_address: 'E-Rechnungsadresse', vat_id: 'USt-IdNr.', legal_hold_reason: 'Löschsperre',
+};
+/** Technical columns; `custom` goes out as its own section (Weitere Angaben). */
+export const PERSON_NOT_EXPORTED = ['id', 'organization_id', 'updated_at', 'import_run_id', 'anonymised_at', 'custom'];
+
 export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
@@ -155,7 +168,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     ]);
     const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
-      ['Stammdaten', [{ Vorname: p.first_name, Nachname: p.last_name, Firma: p.company_name, Geburtsdatum: p.birth_date, 'E-Mail': p.email, Telefon: p.phone, Straße: p.street, PLZ: p.postal_code, Ort: p.city, Land: p.country, Notiz: p.note }]],
+      ['Stammdaten', [Object.fromEntries(Object.entries(PERSON_EXPORT).map(([col, label]) => [label, p[col as keyof typeof p]]))]],
       // Archived fields included: their values are still stored.
       ['Weitere Angaben', [Object.fromEntries((await db.selectFrom('custom_field').select(['id', 'label', 'type']).where('organization_id', '=', actor.organizationId).orderBy('position').execute()).filter((f) => p.custom[f.id] !== undefined).map((f) => [f.label, customText(f.type, p.custom[f.id])]))]],
       ['Mitgliedschaften', members.map((m) => ({ Nummer: m.membership_number, Status: m.status, Antrag: m.application_date, Eintritt: m.join_date, Kündigung: m.notice_date, Austritt: m.exit_date, Zahlweise: m.payment_method }))],

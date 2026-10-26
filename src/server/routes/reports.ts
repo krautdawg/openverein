@@ -7,7 +7,7 @@ import { csvCell } from './members.ts';
 import { displayName } from '../../shared/members.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
 import { audit } from '../audit.ts';
-import { notFound } from '../http/problem.ts';
+import { forbidden, notFound } from '../http/problem.ts';
 import { requireClubWide, requirePermission, restrictedFields, type Actor } from '../policy.ts';
 
 /** Age brackets of the DOSB/LSB census; the age is the year of the census minus the year of birth. */
@@ -30,6 +30,9 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
   async function census(actor: Actor, year: number) {
     // Club-wide figures: a division lead would see a partial total and report it as the club's.
     requireClubWide(actor, 'members', 'read');
+    // Age brackets and gender per division: in a small division a cell names one person's hidden data.
+    const hidden = restrictedFields(actor);
+    for (const f of ['birth_date', 'gender']) if (hidden.has(f)) throw forbidden(`members.field.${f}`);
     const date = `${year}-01-01`;
     // Members on the census date (by join and exit date, not today's status); one row per member and division.
     const members = await sql<{ id: string; gender: string | null; birth_year: number | null; group_id: string | null; group_name: string | null }>`

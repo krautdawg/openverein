@@ -17,6 +17,7 @@ Caddy fetches the HTTPS certificate on its own. Open `https://<domain>` and crea
 
 ```sh
 ./ovctl backup               # database (pg_dump) and files into backups/openverein-<time>/ with SHA256SUMS; keeps the last 14
+                             # (the app stops for the seconds this takes, so both halves match; every stored file is checked)
 ./ovctl restore backups/openverein-20261024-0300   # checks the sums, backs up the current state first, then restores
 ./ovctl update               # backup, git pull, rebuild, restart; if the new version does not come up, it prints the commands to go back (code and data together)
 ./ovctl doctor               # services, health, DATA_KEY, free disk, age of the last backup, certificate expiry
