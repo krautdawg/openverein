@@ -30,4 +30,25 @@ describe('volunteer allowances', () => {
     const lead = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Abteilungsleitung', null) });
     expect((await lead.get('/allowances?year=2026')).status).toBe(403);
   });
+
+  it('uses the limits of the year, keeps voided payments as evidence, and audits declarations with their old values', async () => {
+    const t = (await admin.post('/members', { firstName: 'Olaf', lastName: 'Alt', joinDate: '2010-01-01' })).body;
+    await admin.post('/allowances/payments', { personId: t.personId, kind: 'uebungsleiter', paidOn: '2020-12-01', amountCents: 300_000, text: 'Training 2020' });
+    const y2020 = (await admin.get('/allowances?year=2020')).body;
+    expect(y2020[0]).toMatchObject({ limitCents: 240_000, remainingCents: -60_000 });
+    expect((await admin.get('/allowances?year=2012')).status).toBe(400);
+    expect((await admin.post('/allowances/payments', { personId: t.personId, kind: 'ehrenamt', paidOn: '2012-05-01', amountCents: 100, text: 'Alt' })).status).toBe(400);
+
+    const id = y2020[0].payments[0].id;
+    expect((await admin.del(`/allowances/payments/${id}`)).status).toBe(204);
+    expect((await admin.get('/allowances?year=2020')).body).toEqual([]);
+    const kept = await ctx.db.selectFrom('allowance_payment').select(['voided_at', 'void_reason']).where('id', '=', id).executeTakeFirstOrThrow();
+    expect(kept.voided_at).not.toBeNull();
+    await expect(ctx.db.deleteFrom('allowance_payment').where('id', '=', id).execute()).rejects.toThrow(/voided, not deleted/);
+
+    await admin.put('/allowances/declarations', { personId: t.personId, year: 2026, kind: 'ehrenamt', otherCents: 10_000, declaredOn: '2026-01-10' });
+    await admin.put('/allowances/declarations', { personId: t.personId, year: 2026, kind: 'ehrenamt', otherCents: 20_000, declaredOn: '2026-02-10' });
+    const audits = await ctx.db.selectFrom('audit_event').select('diff').where('action', '=', 'allowance.declared').orderBy('id', 'desc').execute();
+    expect((audits[0]!.diff as { otherCents: number[] }).otherCents).toEqual([10_000, 20_000]);
+  });
 });

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { ALLOWANCE_KINDS, allowanceLimit, type AllowanceKind } from '../../shared/allowances.ts';
+import { ALLOWANCE_KINDS, allowanceLimit, type AllowanceKind, ALLOWANCE_FIRST_YEAR } from '../../shared/allowances.ts';
 import { displayName } from '../../shared/members.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
@@ -9,7 +9,7 @@ import { requireClubWide, type Actor } from '../policy.ts';
 
 const tags = ['ledger'];
 const kind = z.enum(ALLOWANCE_KINDS);
-const yearQuery = z.object({ year: z.coerce.number().int().min(2000).max(2100) });
+const yearQuery = z.object({ year: z.coerce.number().int().min(ALLOWANCE_FIRST_YEAR, `Erst ab ${ALLOWANCE_FIRST_YEAR}.`).max(2100) });
 const row = z.object({ personId: z.uuid(), name: z.string(), kind, paidCents: z.number(), otherCents: z.number(), limitCents: z.number(), remainingCents: z.number(), payments: z.array(z.object({ id: z.uuid(), paidOn: z.string(), amountCents: z.number(), text: z.string() })) });
 
 export const allowanceRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -19,7 +19,7 @@ export const allowanceRoutes: FastifyPluginAsyncZod = async (app) => {
   async function overview(actor: Actor, year: number, onlyPerson?: string) {
     let pq = db.selectFrom('allowance_payment').innerJoin('person', 'person.id', 'allowance_payment.person_id')
       .select(['allowance_payment.id', 'allowance_payment.person_id', 'allowance_payment.kind', 'allowance_payment.paid_on', 'allowance_payment.amount_cents', 'allowance_payment.text', 'person.kind as pkind', 'person.first_name', 'person.last_name', 'person.company_name'])
-      .where('allowance_payment.organization_id', '=', actor.organizationId).where('paid_on', '>=', `${year}-01-01`).where('paid_on', '<=', `${year}-12-31`);
+      .where('allowance_payment.organization_id', '=', actor.organizationId).where('allowance_payment.voided_at', 'is', null).where('paid_on', '>=', `${year}-01-01`).where('paid_on', '<=', `${year}-12-31`);
     if (onlyPerson) pq = pq.where('allowance_payment.person_id', '=', onlyPerson);
     const payments = await pq.orderBy('paid_on').execute();
     const declarations = await db.selectFrom('allowance_declaration').innerJoin('person', 'person.id', 'allowance_declaration.person_id')
@@ -51,14 +51,14 @@ export const allowanceRoutes: FastifyPluginAsyncZod = async (app) => {
     return overview(actor, req.query.year);
   });
 
-  app.post('/allowances/payments', { schema: { tags, summary: 'Pauschale festhalten (die Auszahlung selbst wird wie jede Ausgabe gebucht); warnt, wenn die steuerfreie Grenze überschritten wird', body: z.object({ personId: z.uuid(), kind, paidOn: z.iso.date(), amountCents: z.number().int().positive().max(10_000_000), text: z.string().trim().min(1, 'Wofür?').max(200) }), response: { 201: z.object({ row, warning: z.string().nullable() }) } } }, async (req, reply) => {
+  app.post('/allowances/payments', { schema: { tags, summary: 'Pauschale festhalten (die Auszahlung selbst wird wie jede Ausgabe gebucht); warnt, wenn die steuerfreie Grenze überschritten wird', body: z.object({ personId: z.uuid(), kind, paidOn: z.iso.date().refine((d) => Number(d.slice(0, 4)) >= ALLOWANCE_FIRST_YEAR, `Erst ab ${ALLOWANCE_FIRST_YEAR}.`), amountCents: z.number().int().positive().max(10_000_000), text: z.string().trim().min(1, 'Wofür?').max(200) }), response: { 201: z.object({ row, warning: z.string().nullable() }) } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
     const b = req.body;
     if (!(await db.selectFrom('person').select('id').where('id', '=', b.personId).where('organization_id', '=', actor.organizationId).executeTakeFirst())) throw notFound('Person');
     await db.transaction().execute(async (tx) => {
       const p = await tx.insertInto('allowance_payment').values({ organization_id: actor.organizationId, person_id: b.personId, kind: b.kind, paid_on: b.paidOn, amount_cents: b.amountCents, text: b.text, created_by: actor.userId }).returning('id').executeTakeFirstOrThrow();
-      await audit(tx, actor.organizationId, actor, { action: 'allowance.paid', entityType: 'person', entityId: b.personId, diff: { kind: [null, b.kind], amountCents: [null, b.amountCents], payment: [null, p.id] } });
+      await audit(tx, actor.organizationId, actor, { action: 'allowance.paid', entityType: 'allowance_payment', entityId: p.id, diff: { person: [null, b.personId], kind: [null, b.kind], paidOn: [null, b.paidOn], amountCents: [null, b.amountCents], text: [null, b.text] } });
     });
     const year = Number(b.paidOn.slice(0, 4));
     const r = (await overview(actor, year, b.personId)).find((x) => x.kind === b.kind)!;
@@ -68,26 +68,28 @@ export const allowanceRoutes: FastifyPluginAsyncZod = async (app) => {
     return { row: r, warning };
   });
 
-  app.delete('/allowances/payments/:id', { schema: { tags, summary: 'Falsch erfasste Pauschale löschen', params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
+  app.delete('/allowances/payments/:id', { schema: { tags, summary: 'Falsch erfasste Pauschale ungültig machen (sie bleibt als Nachweis erhalten und zählt nicht mehr)', params: z.object({ id: z.uuid() }), body: z.object({ reason: z.string().trim().min(3).max(300).optional() }).optional() } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
     await db.transaction().execute(async (tx) => {
-      const p = await tx.deleteFrom('allowance_payment').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).returning(['person_id', 'amount_cents', 'kind']).executeTakeFirst();
+      const p = await tx.updateTable('allowance_payment').set({ voided_at: new Date(), voided_by: actor.userId, void_reason: req.body?.reason ?? 'Falsch erfasst' }).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('voided_at', 'is', null).returning(['id', 'person_id', 'amount_cents', 'kind', 'paid_on', 'text']).executeTakeFirst();
       if (!p) throw notFound('Zahlung');
-      await audit(tx, actor.organizationId, actor, { action: 'allowance.deleted', entityType: 'person', entityId: p.person_id, diff: { kind: [p.kind, null], amountCents: [Number(p.amount_cents), null] } });
+      await audit(tx, actor.organizationId, actor, { action: 'allowance.voided', entityType: 'allowance_payment', entityId: p.id, diff: { person: [p.person_id, p.person_id], kind: [p.kind, p.kind], paidOn: [p.paid_on, p.paid_on], amountCents: [Number(p.amount_cents), Number(p.amount_cents)], text: [p.text, p.text], reason: [null, req.body?.reason ?? 'Falsch erfasst'] } });
     });
     return reply.status(204).send();
   });
 
-  app.put('/allowances/declarations', { schema: { tags, summary: 'Erklärung der Person: im Jahr schon anderweitig genutzter Teil der Pauschale', body: z.object({ personId: z.uuid(), year: z.number().int().min(2000).max(2100), kind, otherCents: z.number().int().min(0).max(10_000_000), declaredOn: z.iso.date() }), response: { 200: z.array(row) } } }, async (req) => {
+  app.put('/allowances/declarations', { schema: { tags, summary: 'Erklärung der Person: im Jahr schon anderweitig genutzter Teil der Pauschale', body: z.object({ personId: z.uuid(), year: z.number().int().min(ALLOWANCE_FIRST_YEAR, `Erst ab ${ALLOWANCE_FIRST_YEAR}.`).max(2100), kind, otherCents: z.number().int().min(0).max(10_000_000), declaredOn: z.iso.date() }), response: { 200: z.array(row) } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
     const b = req.body;
     if (!(await db.selectFrom('person').select('id').where('id', '=', b.personId).where('organization_id', '=', actor.organizationId).executeTakeFirst())) throw notFound('Person');
     await db.transaction().execute(async (tx) => {
+      // The audit keeps what the declaration said before, so the evidence of each year stays reconstructable.
+      const before = await tx.selectFrom('allowance_declaration').select(['other_cents', 'declared_on']).where('person_id', '=', b.personId).where('year', '=', b.year).where('kind', '=', b.kind).forUpdate().executeTakeFirst();
       await tx.insertInto('allowance_declaration').values({ organization_id: actor.organizationId, person_id: b.personId, year: b.year, kind: b.kind, other_cents: b.otherCents, declared_on: b.declaredOn })
         .onConflict((oc) => oc.columns(['person_id', 'year', 'kind']).doUpdateSet({ other_cents: b.otherCents, declared_on: b.declaredOn })).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'allowance.declared', entityType: 'person', entityId: b.personId, diff: { year: [null, b.year], kind: [null, b.kind], otherCents: [null, b.otherCents] } });
+      await audit(tx, actor.organizationId, actor, { action: 'allowance.declared', entityType: 'person', entityId: b.personId, diff: { year: [b.year, b.year], kind: [b.kind, b.kind], otherCents: [before ? Number(before.other_cents) : null, b.otherCents], declaredOn: [before?.declared_on ?? null, b.declaredOn] } });
     });
     return overview(actor, b.year, b.personId);
   });

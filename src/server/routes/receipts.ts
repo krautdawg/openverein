@@ -115,7 +115,7 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     await tx.updateTable('file').set({ retention_class: 'temporary', retain_until: null }).where('id', '=', fileId).where('organization_id', '=', organizationId).execute();
   }
 
-  app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200).optional() }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable(), einvoice: z.object({ format: z.enum(['cii', 'ubl']), supplier: z.string().nullable(), number: z.string().nullable(), receiptDate: z.string().nullable(), dueDate: z.string().nullable(), totalCents: z.number().nullable(), groups: z.array(z.object({ ratePct: z.number(), grossCents: z.number() })) }).nullable() }) } } }, async (req, reply) => {
+  app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200).optional() }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable(), einvoice: z.object({ format: z.enum(['cii', 'ubl']), supplier: z.string().nullable(), number: z.string().nullable(), receiptDate: z.string().nullable(), dueDate: z.string().nullable(), totalCents: z.number().nullable(), groups: z.array(z.object({ ratePct: z.number(), grossCents: z.number() })), unsupported: z.string().nullable() }).nullable() }) } } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
     const bytes = req.body as Buffer;

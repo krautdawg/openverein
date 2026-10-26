@@ -130,7 +130,9 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'events', 'write');
     if (scopeOf(actor, 'events', 'write') !== null) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Kalender legen Zugänge für den ganzen Verein an.', { permission: 'events:write (ganzer Verein)' });
     const c = await db.transaction().execute(async (tx) => {
-      const c = await tx.insertInto('calendar').values({ organization_id: actor.organizationId, name: req.body.name, color: req.body.color, group_ids: req.body.groupIds ?? null }).returningAll().executeTakeFirstOrThrow();
+      // The public fields count here as in PATCH, with the same rule: a group calendar is not public.
+      if (req.body.public && req.body.groupIds) throw new Problem(409, 'not-public', 'Ein Kalender nur für bestimmte Gruppen kann nicht öffentlich sein.');
+      const c = await tx.insertInto('calendar').values({ organization_id: actor.organizationId, name: req.body.name, color: req.body.color, group_ids: req.body.groupIds ?? null, ...(req.body.public !== undefined ? { public: req.body.public } : {}), ...(req.body.publicOrigins ? { public_origins: req.body.publicOrigins.map((o) => o.toLowerCase()) } : {}) }).returningAll().executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'calendar.created', entityType: 'calendar', entityId: c.id, diff: { name: [null, c.name] } });
       return c;
     });

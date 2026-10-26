@@ -64,19 +64,24 @@ async function dnsHints(address: string) {
 const TEMPLATE_KEYS = Object.keys(SYSTEM_TEMPLATES) as [SystemTemplateKey, ...SystemTemplateKey[]];
 
 /** Recipients with their e-mail, and everyone left out with the reason. Former members never get mail. */
-export async function resolveRecipients(db: Db, actor: Actor, f: z.infer<typeof filter>, category: 'notice' | 'newsletter') {
+/** `asOf`: membership (and group membership) on that day instead of today, e.g. the day of an assembly. */
+export async function resolveRecipients(db: Db, actor: Actor, f: z.infer<typeof filter>, category: 'notice' | 'newsletter', asOf?: string) {
   if (restrictedFields(actor).has('email')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Du darfst keine E-Mail-Adressen sehen.', { permission: 'members.field.email' });
   const today = await orgToday(db, actor.organizationId);
   let q = db
     .selectFrom('member')
     .innerJoin('person', 'person.id', 'member.person_id')
-    .select(['member.id', 'member.person_id', 'member.status', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
+    .select(['member.id', 'member.person_id', 'member.status', 'member.join_date', 'member.exit_date', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
     .where('member.organization_id', '=', actor.organizationId)
     // Sending reaches only members the actor may write to (current group members, not last year's).
     .where(applyScope(actor, today, 'write', 'communication'));
   if (f.mode === 'group') {
     if (!f.groupId) throw new Problem(400, 'validation', 'Bitte eine Gruppe wählen.');
-    q = q.where(scopePredicate([f.groupId], today, 'write'));
+    q = q.where(
+      asOf
+        ? sql<boolean>`exists (select 1 from group_membership gm where gm.member_id = member.id and gm.group_id = ${f.groupId} and gm.valid_from <= ${asOf}::date and (gm.valid_to is null or gm.valid_to >= ${asOf}::date))`
+        : scopePredicate([f.groupId], today, 'write'),
+    );
   }
   if (f.mode === 'members') q = q.where('member.id', 'in', f.memberIds?.length ? f.memberIds : ['00000000-0000-0000-0000-000000000000']);
   const rows = await q.orderBy('person.last_name').orderBy('person.first_name').execute();
@@ -89,8 +94,9 @@ export async function resolveRecipients(db: Db, actor: Actor, f: z.infer<typeof 
   const seen = new Set<string>();
   for (const r of rows) {
     const name = displayName({ kind: r.kind, firstName: r.first_name, lastName: r.last_name, companyName: r.company_name });
+    const member = asOf ? !!r.join_date && r.join_date <= asOf && (!r.exit_date || r.exit_date >= asOf) : ['active', 'future', 'resigned'].includes(r.status);
     const reason =
-      !['active', 'future', 'resigned'].includes(r.status) ? 'kein aktuelles Mitglied'
+      !member ? 'kein aktuelles Mitglied'
       : !r.email ? 'keine E-Mail-Adresse'
       : category === 'newsletter' && r.preferred_channel === 'none' ? 'möchte keine Post'
       : suppressed.has(emailHash(r.email)) ? 'Adresse gesperrt (abgemeldet oder unzustellbar)'

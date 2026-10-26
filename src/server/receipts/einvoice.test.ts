@@ -27,7 +27,16 @@ describe('incoming e-invoices', () => {
   });
 
   it('reads UBL', async () => {
-    expect(await readEinvoice(Buffer.from(ubl))).toEqual({ format: 'ubl', supplier: 'Ballshop GmbH', number: 'INV-7', receiptDate: '2026-03-05', dueDate: '2026-03-19', totalCents: 11900, groups: [{ ratePct: 19, grossCents: 11900 }] });
+    expect(await readEinvoice(Buffer.from(ubl))).toEqual({ format: 'ubl', supplier: 'Ballshop GmbH', number: 'INV-7', receiptDate: '2026-03-05', dueDate: '2026-03-19', totalCents: 11900, groups: [{ ratePct: 19, grossCents: 11900 }], unsupported: null });
+  });
+
+  it('suggests no amounts for credit notes and foreign currencies', async () => {
+    const credit = await readEinvoice(Buffer.from(ubl.replace('<Invoice ', '<CreditNote ').replace('</Invoice>', '</CreditNote>').replace('urn:oasis:names:specification:ubl:schema:xsd:Invoice-2', 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2')));
+    expect(credit).toMatchObject({ totalCents: null, groups: [], unsupported: expect.stringContaining('Gutschrift') });
+    const ciiCredit = await readEinvoice(Buffer.from(cii.replace('<ram:TypeCode>380</ram:TypeCode>', '<ram:TypeCode>381</ram:TypeCode>')));
+    expect(ciiCredit?.unsupported).toContain('Gutschrift');
+    const usd = await readEinvoice(Buffer.from(ubl.replaceAll('currencyID="EUR"', 'currencyID="USD"')));
+    expect(usd).toMatchObject({ totalCents: null, unsupported: expect.stringContaining('USD') });
   });
 
   it('finds the XML inside a ZUGFeRD PDF and ignores other files', async () => {
