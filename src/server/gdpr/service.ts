@@ -8,6 +8,7 @@ import { encrypt } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { deleteChain, deletionBlocker, lockChain } from '../files/chain.ts';
 import { emailHash } from '../mail/worker.ts';
+import { purgeTenant, recordPurgeFile } from '../tenantPurge.ts';
 import { orgToday } from '../members/query.ts';
 
 export const ANONYMOUS = 'Anonymisiert';
@@ -118,10 +119,15 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
   }
   const seen = new Set<string>();
   const entries: { o: string; p: string }[] = [];
+  const purged = new Set<string>();
   text.split('\n').forEach((line, i) => {
     if (!line.trim()) return;
     try {
-      const { o, p } = JSON.parse(line) as { o: unknown; p: unknown };
+      const { o, p, purge } = JSON.parse(line) as { o: unknown; p: unknown; purge?: unknown };
+      if (purge === true && typeof o === 'string' && UUID.test(o)) {
+        purged.add(o);
+        return;
+      }
       if (typeof o !== 'string' || typeof p !== 'string' || !UUID.test(o) || !UUID.test(p)) throw new Error('shape');
       seen.add(p);
       entries.push({ o, p });
@@ -134,8 +140,25 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
     await recordErasureFile(r.organization_id, r.person_id);
     seen.add(r.person_id);
   }
+  // Deleted clubs (managed hosting): the database record wins if the file append failed after the commit.
+  for (const r of await db.selectFrom('operator_event').select('organization_id').where('action', '=', 'tenant.purged').execute()) {
+    if (purged.has(r.organization_id)) continue;
+    await recordPurgeFile(r.organization_id);
+    purged.add(r.organization_id);
+  }
   let n = 0;
+  for (const o of purged) {
+    if (!(await db.selectFrom('organization').select('id').where('id', '=', o).executeTakeFirst())) continue;
+    try {
+      await purgeTenant(db, o);
+      log.warn(`club ${o} deleted again after a restore`);
+      n++;
+    } catch (err) {
+      log.warn(`Deletion of club ${o} could not be repeated after the restore; repeat it by hand: ${String(err)}`);
+    }
+  }
   for (const { o, p } of entries) {
+    if (purged.has(o)) continue;
     // One erasure that cannot be repeated must not keep the server from starting; it is logged for the operator.
     const again = await db.transaction().execute(async (tx) => {
       const row = await tx.selectFrom('person').select('anonymised_at').where('id', '=', p).where('organization_id', '=', o).forUpdate().executeTakeFirst();

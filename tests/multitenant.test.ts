@@ -1,7 +1,28 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 import { sql } from 'kysely';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
+import { encrypt } from '../src/server/crypto.ts';
+import { replayErasures } from '../src/server/gdpr/service.ts';
 import { client, enrollTotp, reset, testApp } from './helpers.ts';
+
+config.filesDir = await mkdtemp(join(tmpdir(), 'ov-tenants-'));
+
+/** All entries of a ZIP from our writer (local headers, deflate), as text. */
+function unzipText(z: Buffer) {
+  let text = '';
+  for (let at = 0; z.readUInt32LE(at) === 0x04034b50;) {
+    const size = z.readUInt32LE(at + 18);
+    const nameLen = z.readUInt16LE(at + 26);
+    const start = at + 30 + nameLen + z.readUInt16LE(at + 28);
+    text += inflateRawSync(z.subarray(start, start + size)).toString('latin1');
+    at = start + size;
+  }
+  return text;
+}
 
 const ctx = await testApp();
 const TOKEN = 'o'.repeat(40);
@@ -94,5 +115,57 @@ describe('managed hosting (several clubs)', () => {
     expect((await b.admin.get('/members')).body.items).toHaveLength(1);
     expect((await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { host: 'verein-a.example.org' }, payload: { email: 'admin-a@example.org', password: 'ein-sehr-langes-passwort' } })).statusCode).toBe(401);
     expect((await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' })).statusCode).toBe(404);
+  });
+
+  it('refuses to delete a club while a row of another club points into it, and deletes nothing', async () => {
+    const a = await club('TSV A', 'verein-a.example.org', 'admin-a@example.org');
+    const b = await club('SV B', 'verein-b.example.org', 'admin-b@example.org');
+    const anna = (await a.admin.post('/members', { firstName: 'Anna', lastName: 'Alpha', joinDate: '2024-01-01' })).body;
+    const bert = (await b.admin.post('/members', { firstName: 'Bert', lastName: 'Beta', joinDate: '2024-01-01' })).body;
+    // A cross-club reference the app never creates, made by hand: club B's member sits in club A's household.
+    const hh = await ctx.db.insertInto('household').values({ organization_id: a.id, name: 'Familie Alpha', payer_person_id: anna.personId }).returning('id').executeTakeFirstOrThrow();
+    await ctx.db.updateTable('member').set({ household_id: hh.id }).where('id', '=', bert.id).execute();
+    const count = async (org: string) => Number((await sql<{ n: number }>`select (select count(*) from member where organization_id = ${org}) + (select count(*) from person where organization_id = ${org}) as n`.execute(ctx.db)).rows[0]!.n);
+    const before = await count(a.id);
+
+    const res = await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().type).toMatch(/purge-dangling$/);
+    expect(res.json().title).toContain('member_household_id_fkey');
+    // Rolled back: club A is complete, and the replica mode did not outlive the transaction.
+    expect(await count(a.id)).toBe(before);
+    expect((await operator('GET', '/tenants')).json()).toHaveLength(2);
+    expect((await sql<{ r: string }>`select current_setting('session_replication_role') as r`.execute(ctx.db)).rows[0]!.r).toBe('origin');
+  });
+
+  it('catches a reference from another schema, keeps the OIDC secret out of the export, and records operator actions', async () => {
+    const a = await club('TSV A', 'verein-a.example.org', 'admin-a@example.org');
+    await ctx.db.updateTable('organization').set({ oidc_enabled: true, oidc_issuer: 'https://idp.example.org', oidc_client_id: 'ov', oidc_client_secret_encrypted: encrypt('streng-geheimes-oidc-secret') }).where('id', '=', a.id).execute();
+    const zip = await operator('GET', `/tenants/${a.id}/export.zip`);
+    expect(zip.statusCode).toBe(200);
+    expect(zip.headers['cache-control']).toBe('private, no-store');
+    const text = unzipText(zip.rawPayload);
+    expect(text).toContain('verein-a.example.org');
+    expect(text).not.toContain('streng-geheimes-oidc-secret');
+    expect(text).not.toContain('oidc_client_secret');
+
+    const user = await ctx.db.selectFrom('app_user').select('id').where('organization_id', '=', a.id).executeTakeFirstOrThrow();
+    await sql`create schema ext; create table ext.link (user_id uuid references public.app_user (id)); insert into ext.link values (${sql.lit(user.id)})`.execute(ctx.db);
+    try {
+      const res = await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().title).toContain('ext.link');
+    } finally {
+      await sql`drop schema ext cascade`.execute(ctx.db);
+    }
+    expect((await operator('DELETE', `/tenants/${a.id}`, { confirmHostname: 'verein-a.example.org' })).statusCode).toBe(200);
+    const events = await ctx.db.selectFrom('operator_event').select(['action', 'organization_id']).orderBy('at').execute();
+    expect(events.map((e) => e.action)).toEqual(['tenant.exported', 'tenant.purged']);
+    await expect(ctx.db.deleteFrom('operator_event').execute()).rejects.toThrow();
+
+    // Restoring an older backup brings the club back; start-up deletes it again.
+    await ctx.db.insertInto('organization').values({ id: a.id, name: 'TSV A', hostname: 'verein-a.example.org' }).execute();
+    await replayErasures(ctx.db, { warn: () => undefined });
+    expect(await ctx.db.selectFrom('organization').select('id').where('id', '=', a.id).executeTakeFirst()).toBeUndefined();
   });
 });

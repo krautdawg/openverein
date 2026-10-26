@@ -76,18 +76,19 @@ export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/operator/tenants/:id/export.zip', { schema: { tags, summary: 'Gesamtexport eines Vereins zur Übergabe (Betreiber)', security: [], params: z.object({ id: z.uuid() }) } }, async (req, reply) => {
     const o = await db.selectFrom('organization').select(['id', 'hostname']).where('id', '=', req.params.id).executeTakeFirst();
     if (!o) throw notFound('Verein');
-    const { file } = await buildFullExport(db, o.id);
+    const { file, manifest } = await buildFullExport(db, o.id);
+    // A deletion that committed before the export's snapshot leaves a valid but empty archive: refuse it.
+    if (manifest.counts.organization !== 1) throw notFound('Verein');
+    await db.insertInto('operator_event').values({ action: 'tenant.exported', organization_id: o.id, hostname: o.hostname, detail: JSON.stringify({ sha256: createHash('sha256').update(file).digest('hex'), bytes: file.length }) }).execute();
     req.log.warn({ organizationId: o.id }, 'operator downloaded full export');
-    return reply.header('content-type', 'application/zip').header('content-disposition', `attachment; filename="openverein-${o.hostname ?? o.id}.zip"`).send(file);
+    // The whole club in clear text: no cache may keep it (the operator token is not a standard auth header).
+    return reply.header('cache-control', 'private, no-store').header('content-type', 'application/zip').header('content-disposition', `attachment; filename="openverein-${o.hostname ?? o.id}.zip"`).send(file);
   });
 
   app.delete('/operator/tenants/:id', { schema: { tags, summary: 'Verein mit allen Daten endgültig löschen; zur Bestätigung den Hostnamen angeben (Betreiber)', security: [], params: z.object({ id: z.uuid() }), body: z.object({ confirmHostname: z.string().trim().toLowerCase() }), response: { 200: z.object({ deleted: z.record(z.string(), z.number()) }) } } }, async (req) => {
-    const o = await db.selectFrom('organization').select(['id', 'hostname']).where('id', '=', req.params.id).executeTakeFirst();
-    if (!o) throw notFound('Verein');
-    if (!o.hostname || req.body.confirmHostname !== o.hostname) throw new Problem(400, 'validation', 'Zur Bestätigung den Hostnamen des Vereins angeben.', undefined, { errors: [{ field: 'confirmHostname', message: 'Stimmt nicht mit dem Hostnamen überein.' }] });
-    const deleted = await purgeTenant(db, o.id);
-    // The club's own audit log is gone with it; the operator's log keeps the fact.
-    req.log.warn({ organizationId: o.id, hostname: o.hostname, deleted }, 'operator deleted club');
+    const deleted = await purgeTenant(db, req.params.id, req.body.confirmHostname);
+    // The club's own audit log is gone with it; operator_event and the server log keep the fact.
+    req.log.warn({ organizationId: req.params.id, deleted }, 'operator deleted club');
     return { deleted };
   });
 };

@@ -1007,6 +1007,7 @@ export interface Database {
   custom_field: CustomFieldTable;
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
+  operator_event: OperatorEventTable;
   idempotency_key: IdempotencyKeyTable;
   invoice_einvoice: InvoiceEinvoiceTable;
   duplicate_dismissal: DuplicateDismissalTable;
@@ -1333,6 +1334,15 @@ export interface ConsentTable {
   withdrawn_at: Date | null;
   withdrawn_source: ConsentSource | null;
   created_by: string | null;
+}
+
+export interface OperatorEventTable {
+  id: Generated<string>;
+  at: Generated<Date>;
+  action: 'tenant.exported' | 'tenant.purged';
+  organization_id: string;
+  hostname: string | null;
+  detail: unknown;
 }
 
 export interface ErasureLogTable {
