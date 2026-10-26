@@ -42,6 +42,10 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
     const b = req.body;
     if ((b.type === 'select' || b.type === 'multiselect') && b.options.length < 2) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'options', message: 'Eine Auswahl braucht mindestens zwei Möglichkeiten.' }] });
     const f = await db.transaction().execute(async (tx) => {
+      // The audit log keeps old values under `custom.<key>`: a reused key would show a deleted field's values again.
+      const used = await tx.selectFrom('audit_event').select('id').where('organization_id', '=', actor.organizationId).where(sql<boolean>`diff ? ${`custom.${b.key}`}`).limit(1).executeTakeFirst();
+      const live = await tx.selectFrom('custom_field').select('id').where('organization_id', '=', actor.organizationId).where('key', '=', b.key).executeTakeFirst();
+      if (used && !live) throw new Problem(409, 'key-used', 'Diesen Schlüssel hatte schon ein gelöschtes Feld.', 'Wähle einen anderen Schlüssel; die alten Werte bleiben im Protokoll verborgen.', { errors: [{ field: 'key', message: 'Schon einmal vergeben.' }] });
       const f = await tx.insertInto('custom_field').values({ organization_id: actor.organizationId, key: b.key, label: b.label, type: b.type, options: b.options, required: b.required, position: b.position, visible_to_member: b.visibleToMember, editable_by_member: b.editableByMember, sensitive: b.sensitive }).returning('id').executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'custom_field.created', entityType: 'custom_field', entityId: f.id, diff: { key: [null, b.key], type: [null, b.type] } });
       return f;

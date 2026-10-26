@@ -22,7 +22,8 @@ import { sendSystemMail } from '../mail/system.ts';
 import { requireActor, sha256 } from '../auth/session.ts';
 import type { Db, Level } from '../db.ts';
 import { CONSTRAINT_MESSAGES, forbidden, notFound, Problem } from '../http/problem.ts';
-import { maskDiff } from '../members/query.ts';
+import { visibleDiffKeys } from '../members/custom.ts';
+import { maskCustom, maskDiff } from '../members/query.ts';
 import { type Actor, level, loadGrants, MODULES, requirePermission, requireStepUp, RESTRICTABLE_FIELDS, restrictedFields, scopeOf } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.role_organization_id_name_key = 'Eine Rolle mit diesem Namen gibt es schon.';
@@ -408,8 +409,9 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     if (req.query.cursor) q = q.where('id', '<', req.query.cursor);
     const rows = await q.orderBy('id', 'desc').limit(req.query.limit).execute();
     const hidden = restrictedFields(actor);
+    const customKeys = await visibleDiffKeys(db, actor);
     return {
-      items: rows.map((r) => ({ id: r.id, at: r.at.toISOString(), actor: r.actor_label, action: r.action, entityType: r.entity_type, entityId: r.entity_id, diff: maskDiff(r.diff, hidden) })),
+      items: rows.map((r) => ({ id: r.id, at: r.at.toISOString(), actor: r.actor_label, action: r.action, entityType: r.entity_type, entityId: r.entity_id, diff: maskCustom(maskDiff(r.diff, hidden), customKeys) })),
       nextCursor: rows.length === req.query.limit ? rows[rows.length - 1]!.id : null,
     };
   });

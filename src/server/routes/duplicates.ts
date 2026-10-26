@@ -3,14 +3,17 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
-import { notFound, Problem } from '../http/problem.ts';
+import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { orgToday } from '../members/query.ts';
-import { requireClubWide, restrictedFields } from '../policy.ts';
+import { requireClubWide, requireStepUp, restrictedFields } from '../policy.ts';
 
 const tags = ['members'];
 const side = z.object({ personId: z.uuid(), memberId: z.uuid().nullable(), name: z.string(), membershipNumber: z.string().nullable(), birthDate: z.string().nullable(), email: z.string().nullable(), street: z.string().nullable(), postalCode: z.string().nullable(), city: z.string().nullable() });
 const pair = z.object({ score: z.number(), matches: z.array(z.enum(['name', 'birthDate', 'email', 'iban', 'address'])), a: side, b: side });
 const ordered = (x: string, y: string) => (x < y ? [x, y] : [y, x]) as [string, string];
+CONSTRAINT_MESSAGES.person_archived = 'Diese Person ist als Dublette archiviert. Nimm die Person, die geblieben ist.';
+/** Scoring and even which pairs appear reveal these fields, so the search needs all of them visible. */
+const SCORING_FIELDS = ['birth_date', 'email', 'iban'];
 
 /** Score 0–100: name similarity (trigram) up to 50, same birth date 20, same e-mail 15, same IBAN 10, same address 5. */
 export const duplicateRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -20,6 +23,7 @@ export const duplicateRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'read');
     const hidden = restrictedFields(actor);
+    if (SCORING_FIELDS.some((f) => hidden.has(f))) throw new Problem(403, 'forbidden', 'Die Dublettensuche braucht Einblick in Geburtsdatum, E-Mail und IBAN.', 'Sie vergleicht diese Felder; schon die Treffer würden verraten, was Deine Rolle nicht sieht.', { permission: 'fields' });
     const key = (t: 'a' | 'b') => sql.raw(`ov_dup_key(${t}.first_name, ${t}.last_name, ${t}.company_name)`);
     const live = (t: 'a' | 'b') => sql`${sql.ref(`${t}.organization_id`)} = ${actor.organizationId} and ${sql.ref(`${t}.status`)} = 'active' and ${sql.ref(`${t}.anonymised_at`)} is null`;
     // Candidates come from index-backed keys (trigram name, e-mail, shared IBAN); only those pairs are scored.
@@ -52,15 +56,11 @@ export const duplicateRoutes: FastifyPluginAsyncZod = async (app) => {
       ) x where score >= ${req.query.threshold}
       order by score desc, id, b_id limit 200`.execute(db);
     const nameOf = (kind: unknown, first: unknown, last: unknown, company: unknown) => (kind === 'organisation' ? String(company ?? '') : [first, last].filter(Boolean).join(' '));
-    // Fields the role hides are neither shown nor named as a match (the score may still use them).
-    const hideBirth = hidden.has('birth_date');
-    const hideEmail = hidden.has('email');
-    const hideIban = hidden.has('iban');
     return rows.rows.map((r) => ({
         score: r.score,
-        matches: [r.name_sim >= 0.6 ? 'name' : null, r.same_birth && !hideBirth ? 'birthDate' : null, r.same_email && !hideEmail ? 'email' : null, r.same_iban && !hideIban ? 'iban' : null, r.same_address ? 'address' : null].filter((x): x is 'name' => !!x),
-        a: { personId: String(r.id), memberId: (r.member_id as string) ?? null, name: nameOf(r.kind, r.first_name, r.last_name, r.company_name), membershipNumber: (r.membership_number as string) ?? null, birthDate: hideBirth ? null : ((r.birth_date as string) ?? null), email: hideEmail ? null : ((r.email as string) ?? null), street: (r.street as string) ?? null, postalCode: (r.postal_code as string) ?? null, city: (r.city as string) ?? null },
-        b: { personId: String(r.b_id), memberId: (r.b_member as string) ?? null, name: nameOf(r.b_kind, r.b_first, r.b_last, r.b_company), membershipNumber: (r.b_number as string) ?? null, birthDate: hideBirth ? null : ((r.b_birth as string) ?? null), email: hideEmail ? null : ((r.b_email as string) ?? null), street: (r.b_street as string) ?? null, postalCode: (r.b_postal as string) ?? null, city: (r.b_city as string) ?? null },
+        matches: [r.name_sim >= 0.6 ? 'name' : null, r.same_birth ? 'birthDate' : null, r.same_email ? 'email' : null, r.same_iban ? 'iban' : null, r.same_address ? 'address' : null].filter((x): x is 'name' => !!x),
+        a: { personId: String(r.id), memberId: (r.member_id as string) ?? null, name: nameOf(r.kind, r.first_name, r.last_name, r.company_name), membershipNumber: (r.membership_number as string) ?? null, birthDate: (r.birth_date as string) ?? null, email: (r.email as string) ?? null, street: (r.street as string) ?? null, postalCode: (r.postal_code as string) ?? null, city: (r.city as string) ?? null },
+        b: { personId: String(r.b_id), memberId: (r.b_member as string) ?? null, name: nameOf(r.b_kind, r.b_first, r.b_last, r.b_company), membershipNumber: (r.b_number as string) ?? null, birthDate: (r.b_birth as string) ?? null, email: (r.b_email as string) ?? null, street: (r.b_street as string) ?? null, postalCode: (r.b_postal as string) ?? null, city: (r.b_city as string) ?? null },
       }));
   });
 
@@ -81,11 +81,21 @@ export const duplicateRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/members/duplicates/resolve', { schema: { tags, summary: 'Dublette archivieren (nur ohne Finanzdaten); die Mitgliedschaft endet heute mit dem Grund „Dublette“', body: z.object({ keepPersonId: z.uuid(), archivePersonId: z.uuid() }) } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
+    // It ends fee assignments and a membership: fee rights and a fresh second factor.
+    requireClubWide(actor, 'fees', 'write');
+    requireStepUp(actor);
     const { keepPersonId, archivePersonId } = req.body;
     if (keepPersonId === archivePersonId) throw new Problem(400, 'validation', 'Zwei verschiedene Personen angeben.');
     await db.transaction().execute(async (tx) => {
       const persons = await tx.selectFrom('person').select(['id', 'status']).where('organization_id', '=', actor.organizationId).where('id', 'in', [keepPersonId, archivePersonId]).forUpdate().execute();
       if (persons.length !== 2) throw notFound('Person');
+      // Only a pair the search would propose: similar name, same e-mail or same IBAN.
+      const [pa, pb] = ordered(keepPersonId, archivePersonId);
+      const plausible = await sql<{ ok: boolean }>`select (ov_dup_key(a.first_name, a.last_name, a.company_name) % ov_dup_key(b.first_name, b.last_name, b.company_name))
+          or (a.email is not null and lower(a.email) = lower(b.email))
+          or exists (select 1 from sepa_mandate x join sepa_mandate y on x.iban_hash = y.iban_hash where x.person_id = a.id and y.person_id = b.id) as ok
+        from person a, person b where a.id = ${pa} and b.id = ${pb}`.execute(tx);
+      if (!plausible.rows[0]?.ok) throw new Problem(409, 'not-a-duplicate', 'Diese beiden Personen sind keine mögliche Dublette.', 'Archivieren geht nur für Paare mit ähnlichem Namen, gleicher E-Mail-Adresse oder gleicher IBAN.');
       // Both must still be active: two opposite clicks at once must not archive both.
       if (persons.some((p) => p.status !== 'active')) throw new Problem(409, 'archived', 'Eine der beiden Personen ist schon archiviert.', 'Lade die Liste neu.');
       // Financial records stay with the person they were issued to: such a duplicate cannot be archived here.
@@ -96,18 +106,27 @@ export const duplicateRoutes: FastifyPluginAsyncZod = async (app) => {
         ['Lastschriften', () => tx.selectFrom('collection_item').select('id').where('person_id', '=', archivePersonId).executeTakeFirst()],
         ['Haushalte', () => tx.selectFrom('household').select('id').where('payer_person_id', '=', archivePersonId).executeTakeFirst()],
         ['Beitragsabrechnungen', () => tx.selectFrom('assessment').innerJoin('member', 'member.id', 'assessment.member_id').select('assessment.id').where('member.person_id', '=', archivePersonId).executeTakeFirst()],
+        ['Angebote', () => tx.selectFrom('offer').select('id').where('person_id', '=', archivePersonId).executeTakeFirst()],
+        ['Pauschalen', () => tx.selectFrom('allowance_payment').select('id').where('person_id', '=', archivePersonId).executeTakeFirst()],
+        ['Pauschalen-Erklärungen', () => tx.selectFrom('allowance_declaration').select('person_id').where('person_id', '=', archivePersonId).executeTakeFirst()],
+        ['Auslagen', () => tx.selectFrom('expense_claim').select('id').where('person_id', '=', archivePersonId).executeTakeFirst()],
       ];
+      // New records for this person wait for this transaction (row lock above) and are refused once it is archived (migration 0064).
       const blocked: string[] = [];
       for (const [label, check] of checks) if (await check()) blocked.push(label);
       if (blocked.length) throw new Problem(409, 'has-financial-records', 'Diese Dublette hat Finanzdaten und bleibt bestehen.', `Vorhanden: ${blocked.join(', ')}. Archiviere stattdessen die andere Person, oder bereinige von Hand.`, { blockers: blocked });
       const today = await orgToday(tx, actor.organizationId);
       const keep = await tx.selectFrom('person').leftJoin('member', 'member.person_id', 'person.id').select(['member.membership_number']).where('person.id', '=', keepPersonId).executeTakeFirst();
       const m = await tx.selectFrom('member').selectAll().where('person_id', '=', archivePersonId).executeTakeFirst();
+      let feeChanges: { ended: string[]; removed: string[] } | null = null;
       if (m && !['former', 'rejected'].includes(m.status)) {
         const exit = m.join_date && m.join_date > today ? m.join_date : today;
         // An applicant was never admitted: rejected, not former. Never-billed fee assignments go (no assessment exists, checked above).
         await tx.updateTable('member').set({ status: m.status === 'applicant' ? 'rejected' : 'former', exit_date: m.status === 'applicant' ? null : exit, exit_reason: `Dublette${keep?.membership_number ? ` von Nr. ${keep.membership_number}` : ''}`, household_id: null, updated_at: new Date() }).where('id', '=', m.id).execute();
-        await tx.deleteFrom('fee_assignment').where('member_id', '=', m.id).execute();
+        // Fee assignments end with the membership (history stays); ones that had not started yet are removed.
+        const ended = await tx.updateTable('fee_assignment').set({ valid_to: exit }).where('member_id', '=', m.id).where('valid_from', '<=', exit).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>', exit)])).returning('id').execute();
+        const dropped = await tx.deleteFrom('fee_assignment').where('member_id', '=', m.id).where('valid_from', '>', exit).returning('id').execute();
+        feeChanges = { ended: ended.map((x) => x.id), removed: dropped.map((x) => x.id) };
         // Group memberships end with the membership; ones that had not started yet are removed.
         await tx.deleteFrom('group_membership').where('member_id', '=', m.id).where('valid_from', '>', exit).execute();
         await tx.updateTable('group_membership').set({ valid_to: exit }).where('member_id', '=', m.id).where((eb) => eb.or([eb('valid_to', 'is', null), eb('valid_to', '>', exit)])).execute();
@@ -115,7 +134,7 @@ export const duplicateRoutes: FastifyPluginAsyncZod = async (app) => {
       await tx.updateTable('person').set({ status: 'archived', updated_at: new Date() }).where('id', '=', archivePersonId).execute();
       const [a, b] = ordered(keepPersonId, archivePersonId);
       await tx.insertInto('duplicate_dismissal').values({ organization_id: actor.organizationId, person_a: a, person_b: b, dismissed_by: actor.userId }).onConflict((oc) => oc.doNothing()).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'duplicate.archived', entityType: 'person', entityId: archivePersonId, diff: { keep: [null, keepPersonId], memberStatus: [m?.status ?? null, m ? (m.status === 'applicant' ? 'rejected' : 'former') : null] } });
+      await audit(tx, actor.organizationId, actor, { action: 'duplicate.archived', entityType: 'person', entityId: archivePersonId, diff: { keep: [null, keepPersonId], memberStatus: [m?.status ?? null, m ? (m.status === 'applicant' ? 'rejected' : 'former') : null], feeAssignments: [null, feeChanges] } });
     });
     return reply.status(204).send();
   });

@@ -29,6 +29,7 @@ import { previewHouseholds, type PreviewHousehold } from '../fees/household.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
+import { lockFees } from '../fees/lock.ts';
 import { loadGrants, requireClubWide, requirePermission, scopeOf, type Actor } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.fee_plan_organization_id_name_key = 'Einen Beitrag mit diesem Namen gibt es schon.';
@@ -78,7 +79,6 @@ export async function runFeeSchedules(db: Db) {
 }
 
 /** One lock per club for fee runs and every change to their inputs: a run posts what its preview saw. */
-const lockFees = (tx: Db, organizationId: string) => sql`select pg_advisory_xact_lock(hashtext(${`fees:${organizationId}`}))`.execute(tx);
 
 export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -527,9 +527,12 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
           if (h.discountCents > 0) created.push({ text: h.label, quantity: 1, unitCents: -h.discountCents, taxRate: 0, discount: true });
           if (created.reduce((s, c) => s + c.unitCents, 0) <= 0) continue;
           const invId = await createDraft(tx, { organizationId: actor.organizationId, kind: 'membership', personId: h.payerPersonId, memberId: h.anchorMemberId, dueDate: run.due_date, feeRunId: run.id, coverText: `Beiträge für den Haushalt ${h.name}`, createdBy: actor.userId }, created);
-          // The payer's active mandate makes it a direct debit (pre-notified on the invoice), else the anchor's method.
+          // The payer's active mandate makes it a direct debit (pre-notified on the invoice); without one the payer pays
+          // as their own membership says, and a payer who is no member transfers. Never a child's method.
           const payerMandate = await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', h.payerPersonId).where('status', '=', 'active').executeTakeFirst();
-          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date, payerMandate ? { paymentMethod: 'direct_debit' } : {});
+          const ownMethod = h.anchorMemberId ? (await tx.selectFrom('member').select('payment_method').where('id', '=', h.anchorMemberId).executeTakeFirstOrThrow()).payment_method : null;
+          const paymentMethod = payerMandate ? 'direct_debit' : ownMethod === 'direct_debit' || !ownMethod ? 'transfer' : ownMethod;
+          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date, { paymentMethod });
           invoices++;
         }
         await tx.updateTable('fee_run').set({ status: 'posted', posted_at: new Date() }).where('id', '=', run.id).execute();

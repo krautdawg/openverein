@@ -78,4 +78,17 @@ describe('custom fields', () => {
     expect((await admin.post(`/persons/${m.personId}/anonymise`, {})).status).toBe(200);
     expect((await ctx.db.selectFrom('person').select('custom').where('id', '=', m.personId).executeTakeFirstOrThrow()).custom).toEqual({});
   });
+
+  it('keeps a deleted field\'s old values out of the audit log and refuses to reuse its key', async () => {
+    const f = (await admin.post('/custom-fields', { key: 'allergie', label: 'Allergie', type: 'text' })).body;
+    const m = (await admin.post('/members', { firstName: 'Ali', lastName: 'Audit', joinDate: '2024-01-01' })).body;
+    await admin.patch(`/members/${m.id}`, { custom: { [f.id]: 'Nüsse' } });
+    expect(JSON.stringify((await admin.get('/audit-events?limit=50')).body)).toContain('Nüsse');
+    expect((await admin.del(`/custom-fields/${f.id}`)).status).toBe(409);
+    await ctx.app.inject({ method: 'DELETE', url: `/api/v1/custom-fields/${f.id}`, headers: { cookie }, payload: { confirm: 'Allergie' } });
+    expect(JSON.stringify((await admin.get('/audit-events?limit=50')).body)).not.toContain('Nüsse');
+    const reused = await admin.post('/custom-fields', { key: 'allergie', label: 'Allergie neu', type: 'text' });
+    expect(reused.status).toBe(409);
+    expect(reused.body.type).toMatch(/key-used$/);
+  });
 });
