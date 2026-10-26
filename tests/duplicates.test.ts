@@ -43,7 +43,7 @@ describe('duplicates', () => {
     expect((await admin.get('/members/duplicates?threshold=60')).body).toHaveLength(0);
   });
 
-  it('hides restricted fields, archives an applicant as rejected, ends groups, drops unbilled fees, and refuses crossed resolves', async () => {
+  it('hides restricted fields, archives an applicant as rejected, ends groups, ends fees, refuses unrelated pairs and new invoices for the archived, and refuses crossed resolves', async () => {
     const plan = (await admin.post('/fee-plans', { name: 'Erwachsene', version: { validFrom: '2020-01-01', amountCents: 12000, intervalMonths: 12 } })).body.id;
     const group = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN' })).body.id;
     const a = (await admin.post('/members', { firstName: 'Paul', lastName: 'Paar', birthDate: '1980-01-01', email: 'pp@example.org', joinDate: '2015-01-01' })).body;
@@ -53,15 +53,24 @@ describe('duplicates', () => {
     expect(applicant.status).toBe('applicant');
 
     const adviser = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Steuerberatung', null) });
-    const seen = (await adviser.get('/members/duplicates?threshold=60')).body as { matches: string[]; a: { email: string | null; birthDate: string | null } }[];
-    expect(seen.length).toBeGreaterThan(0);
-    expect(seen.every((p) => p.a.email === null && p.a.birthDate === null && !p.matches.includes('email') && !p.matches.includes('birthDate'))).toBe(true);
+    // Scores and even which pairs appear would reveal the fields the adviser's role hides.
+    expect((await adviser.get('/members/duplicates?threshold=60')).status).toBe(403);
+    // Only a pair the search would propose can be archived.
+    const stranger = (await admin.post('/members', { firstName: 'Zora', lastName: 'Zander', joinDate: '2020-01-01' })).body;
+    expect((await admin.post('/members/duplicates/resolve', { keepPersonId: a.personId, archivePersonId: stranger.personId })).body.type).toMatch(/not-a-duplicate$/);
 
     expect((await admin.post('/members/duplicates/resolve', { keepPersonId: a.personId, archivePersonId: applicant.personId })).status).toBe(204);
     expect((await admin.get(`/members/${applicant.id}`)).body.status).toBe('rejected');
 
     expect((await admin.post('/members/duplicates/resolve', { keepPersonId: a.personId, archivePersonId: b.personId })).status).toBe(204);
-    expect(await ctx.db.selectFrom('fee_assignment').select('id').where('member_id', '=', b.id).execute()).toHaveLength(0);
+    // The started fee assignment ends with the membership; history stays.
+    const fees = await ctx.db.selectFrom('fee_assignment').select('valid_to').where('member_id', '=', b.id).execute();
+    expect(fees).toHaveLength(1);
+    expect(fees[0]!.valid_to).not.toBeNull();
+    // An archived duplicate gets no new financial records.
+    const inv = await admin.post('/invoices', { memberId: b.id, lines: [{ text: 'Beitrag', unitCents: 100 }] });
+    expect(inv.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(inv.body)).toContain('Dublette archiviert');
     const gm = await ctx.db.selectFrom('group_membership').select('valid_to').where('member_id', '=', b.id).execute();
     expect(gm.every((g) => g.valid_to !== null)).toBe(true);
     // The opposite click on the same pair is refused.

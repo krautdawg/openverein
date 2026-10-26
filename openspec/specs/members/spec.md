@@ -181,8 +181,12 @@ The system SHALL treat ü/ue, ö/oe, ä/ae and ß/ss as equal when comparing nam
 The system SHALL store a saved view as the list's parameters and SHALL evaluate every list request under the viewer's own permissions, so a shared view shows each viewer only what they may see.
 
 #### Scenario: Trainer opens a shared view
-- **WHEN** a trainer limited to the tennis group opens a view shared with the trainer role that filters on open balances
-- **THEN** the list contains only tennis members with open balances
+- **WHEN** a trainer limited to the tennis group opens a view shared with the trainer role that filters on members aged 10 to 14
+- **THEN** the list contains only tennis members aged 10 to 14
+
+#### Scenario: Shared view with a facet the viewer may not use
+- **WHEN** a trainer without invoice rights opens a shared view that filters on open balances
+- **THEN** the request is refused with an explanation, because even the filter would reveal who owes money
 
 ### Requirement: Bulk actions over all filter results
 The system SHALL let a user select all members matching the current filter, confirm a bulk action after seeing the count and five sample names, and run actions over more than 100 members as a background job with a per-record result.

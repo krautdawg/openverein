@@ -56,4 +56,12 @@ describe('member facets and saved views', () => {
     expect((await trainer.del(`/member-views/${shared.body.id}`)).status).toBe(403);
     expect((await admin.del(`/member-views/${mine.body.id}`)).status).toBe(204);
   });
+
+  it('does not let an admin delete (or even find) another user\'s private view', async () => {
+    const trainer = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Trainer:in') });
+    const own = await trainer.post('/member-views', { name: 'Meine', params: 'alter_bis=17' });
+    expect(own.status).toBe(201);
+    expect((await admin.del(`/member-views/${own.body.id}`)).status).toBe(404);
+    expect((await trainer.del(`/member-views/${own.body.id}`)).status).toBe(204);
+  });
 });

@@ -7,6 +7,7 @@ import type { Db } from '../db.ts';
 import { ruleLabel } from '../fees/household.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { orgToday } from '../members/query.ts';
+import { lockFees } from '../fees/lock.ts';
 import { requireClubWide, restrictedFields, type Actor } from '../policy.ts';
 
 const tags = ['members'];
@@ -61,6 +62,8 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
     requireClubWide(actor, 'fees', 'write');
     const b = req.body;
     const id = await db.transaction().execute(async (tx) => {
+      // Household changes alter fee inputs: never while a fee run is being posted.
+      await lockFees(tx, actor.organizationId);
       if (!(await tx.selectFrom('person').select('id').where('id', '=', b.payerPersonId).where('organization_id', '=', actor.organizationId).where('anonymised_at', 'is', null).executeTakeFirst())) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'payerPersonId', message: 'Zahlende Person nicht gefunden.' }] });
       await assertMembers(tx, actor, b.memberIds, null);
       const h = await tx.insertInto('household').values({ organization_id: actor.organizationId, name: b.name, payer_person_id: b.payerPersonId }).returning('id').executeTakeFirstOrThrow();
@@ -79,6 +82,8 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
     // Payer and members decide who is billed and who gets the discount.
     if (b.payerPersonId || b.memberIds) requireClubWide(actor, 'fees', 'write');
     await db.transaction().execute(async (tx) => {
+      // Household changes alter fee inputs: never while a fee run is being posted.
+      await lockFees(tx, actor.organizationId);
       const h = await tx.selectFrom('household').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!h) throw notFound('Haushalt');
       const payer = b.payerPersonId ?? h.payer_person_id;
@@ -104,6 +109,8 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
     requireClubWide(actor, 'fees', 'write');
     const b = req.body;
     await db.transaction().execute(async (tx) => {
+      // Household changes alter fee inputs: never while a fee run is being posted.
+      await lockFees(tx, actor.organizationId);
       const h = await tx.selectFrom('household').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!h) throw notFound('Haushalt');
       const prior = await tx.selectFrom('household_rule').selectAll().where('household_id', '=', h.id).where('valid_from', '=', b.validFrom).executeTakeFirst();
@@ -120,7 +127,10 @@ export const householdRoutes: FastifyPluginAsyncZod = async (app) => {
   app.delete('/households/:id', { schema: { tags, summary: 'Haushalt auflösen (die Mitglieder bleiben, werden wieder einzeln abgerechnet)', params: idParam, body: z.object({}).optional() } }, async (req, reply) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
+    requireClubWide(actor, 'fees', 'write');
     await db.transaction().execute(async (tx) => {
+      // Household changes alter fee inputs: never while a fee run is being posted.
+      await lockFees(tx, actor.organizationId);
       const h = await tx.selectFrom('household').select(['id', 'name']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!h) throw notFound('Haushalt');
       await tx.updateTable('member').set({ household_id: null, updated_at: new Date() }).where('household_id', '=', h.id).execute();

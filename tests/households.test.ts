@@ -1,13 +1,15 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { client, reset, setupClub, testApp } from './helpers.ts';
+import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
 afterAll(() => ctx.close());
 
 let admin: ReturnType<typeof client>;
+let adminCookie: string;
 beforeEach(async () => {
   await reset(ctx.db);
-  admin = client(ctx.app, { cookie: (await setupClub(ctx.app)).cookie });
+  adminCookie = (await setupClub(ctx.app)).cookie;
+  admin = client(ctx.app, { cookie: adminCookie });
   await admin.patch('/organization', { street: 'Platz 1', postalCode: '12345', city: 'Musterstadt' });
 });
 
@@ -81,5 +83,29 @@ describe('households', () => {
     const inv = (await ctx.db.selectFrom('invoice').select('recipient').where('kind', '=', 'membership').executeTakeFirstOrThrow()).recipient as { paymentMethod: string; mandateReference: string | null };
     expect(inv.paymentMethod).toBe('direct_debit');
     expect(inv.mandateReference).toBeTruthy();
+  });
+
+  it('puts the payer\'s own membership on the household invoice even when the payer is not billed, never a child\'s method', async () => {
+    const kids = (await admin.post('/fee-plans', { name: 'Kinder', version: { validFrom: '2020-01-01', amountCents: 6000, intervalMonths: 12 } })).body.id;
+    // The payer is a member without a fee in this run; the child is set to direct debit but there is no mandate.
+    const payer = (await admin.post('/members', { firstName: 'Pia', lastName: 'Familie', birthDate: '1980-01-01', street: 'Weg 1', postalCode: '12345', city: 'Musterstadt', joinDate: '2026-01-01' })).body;
+    await admin.patch(`/members/${payer.id}/payment-method`, { paymentMethod: 'transfer' });
+    const kid = await familyMember(kids, 'Kim', '2014-05-01');
+    await ctx.db.updateTable('member').set({ payment_method: 'direct_debit' }).where('id', '=', kid.id).execute();
+    const hh = (await admin.post('/households', { name: 'Familie', payerPersonId: payer.personId, memberIds: [payer.id, kid.id] })).body;
+    const run = (await admin.post('/fee-runs', { until: '2026-12-31', issueDate: '2026-02-01' })).body;
+    expect((await admin.post(`/fee-runs/${run.id}/post`, {})).status).toBe(200);
+    const inv = await ctx.db.selectFrom('invoice').select(['member_id', 'recipient', 'recipient_person_id']).executeTakeFirstOrThrow();
+    expect(inv.recipient_person_id).toBe(payer.personId);
+    expect(inv.member_id).toBe(payer.id);
+    expect((inv.recipient as { paymentMethod: string; membershipNumber: string }).paymentMethod).toBe('transfer');
+    expect((inv.recipient as { membershipNumber: string }).membershipNumber).toBe(payer.membershipNumber);
+
+    // Dissolving a household changes billing: it needs fee rights like every other household change.
+    const perms = (await admin.get('/roles')).body.find((r: { name: string }) => r.name === 'Admin').permissions as Record<string, string>;
+    await admin.post('/roles', { name: 'Mitgliederpflege', permissions: { ...Object.fromEntries(Object.keys(perms).map((m) => [m, 'read'])), members: 'write' } });
+    const clerk = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Mitgliederpflege') });
+    expect((await clerk.del(`/households/${hh.id}`)).status).toBe(403);
+    expect((await admin.del(`/households/${hh.id}`)).status).toBe(204);
   });
 });

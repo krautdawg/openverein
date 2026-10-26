@@ -49,7 +49,11 @@ describe('receipts', () => {
     const file = await ctx.app.inject({ url: `/api/v1/receipts/${r.body.receipt.id}/file`, headers: { cookie } });
     expect(file.rawPayload.equals(pdf)).toBe(true);
 
-    expect((await admin.post(`/receipts/${r.body.receipt.id}/void`, { reason: 'Doppelt erfasst' })).body.status).toBe('void');
+    // Voiding books a reversal: a retry with the same key replays the answer instead of "already void".
+    const voidOnce = () => ctx.app.inject({ method: 'POST', url: `/api/v1/receipts/${r.body.receipt.id}/void`, headers: { cookie, 'idempotency-key': 'void-key-0001' }, payload: { reason: 'Doppelt erfasst' } });
+    expect((await voidOnce()).json().status).toBe('void');
+    const again = await voidOnce();
+    expect([again.statusCode, again.headers['idempotent-replayed'], again.json().status]).toEqual([200, 'true', 'void']);
     const journal = (await admin.get('/ledger/entries?from=2026-01-01&to=2030-12-31')).body as { source: string; reversesNumber: number | null }[];
     expect(journal.some((e) => e.reversesNumber === 1)).toBe(true);
   });

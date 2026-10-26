@@ -52,6 +52,8 @@ export const viewRoutes: FastifyPluginAsyncZod = async (app) => {
     requirePermission(actor, 'members', 'read');
     const v = await db.selectFrom('saved_view').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!v) throw notFound('Ansicht');
+    // Someone else's private view does not exist for this user; a shared one goes only with settings rights.
+    if (v.owner_id !== actor.id && !v.shared_role_id) throw notFound('Ansicht');
     if (v.owner_id !== actor.id && !can(actor, 'settings', 'write')) throw new Problem(403, 'forbidden', 'Das ist nicht Deine Ansicht.');
     await db.transaction().execute(async (tx) => {
       await tx.deleteFrom('saved_view').where('id', '=', v.id).execute();

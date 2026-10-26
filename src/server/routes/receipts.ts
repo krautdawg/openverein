@@ -99,8 +99,20 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!f) throw notFound('Belegdatei');
     const other = await tx.selectFrom('receipt').select('supplier').where('file_id', '=', fileId).where('status', '<>', 'void').$if(!!receiptId, (q) => q.where('id', '<>', receiptId!)).executeTakeFirst();
     if (other) throw new Problem(409, 'file-in-use', `Diese Datei gehört schon zum Beleg von ${other.supplier}.`);
+    // Eight years from the end of the booking year (today); an existing longer period is never shortened.
     const today = await orgToday(tx, organizationId);
-    await tx.updateTable('file').set({ retention_class: 'voucher', retain_until: addYears(`${today.slice(0, 4)}-12-31`, 8) }).where('id', '=', fileId).execute();
+    const until = addYears(`${today.slice(0, 4)}-12-31`, 8);
+    await tx.updateTable('file').set({ retention_class: 'voucher', retain_until: sql<string>`greatest(retain_until, ${until}::date)` }).where('id', '=', fileId).execute();
+  }
+
+  /** A file taken off an open receipt that nothing else uses goes back to temporary, so the sweep removes it. */
+  async function releaseFile(tx: Db, organizationId: string, fileId: string | null) {
+    if (!fileId) return;
+    // Any receipt counts, a void one too: it stays a record with its voucher.
+    const onReceipt = await tx.selectFrom('receipt').select('id').where('file_id', '=', fileId).executeTakeFirst();
+    const onClaim = await tx.selectFrom('expense_claim').select('id').where('file_id', '=', fileId).executeTakeFirst();
+    if (onReceipt || onClaim) return;
+    await tx.updateTable('file').set({ retention_class: 'temporary', retain_until: null }).where('id', '=', fileId).where('organization_id', '=', organizationId).execute();
   }
 
   app.post('/receipts/files', { schema: { tags, summary: 'Belegdatei hochladen (PDF, Bild, ZUGFeRD/XRechnung unverändert); Aufbewahrung 8 Jahre', querystring: z.object({ name: z.string().trim().min(1).max(200).optional() }), response: { 201: z.object({ id: z.uuid(), sha256: z.string(), duplicateOf: z.string().nullable(), einvoice: z.object({ format: z.enum(['cii', 'ubl']), supplier: z.string().nullable(), number: z.string().nullable(), receiptDate: z.string().nullable(), dueDate: z.string().nullable(), totalCents: z.number().nullable(), groups: z.array(z.object({ ratePct: z.number(), grossCents: z.number() })) }).nullable() }) } } }, async (req, reply) => {
@@ -234,6 +246,7 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
       await tx.updateTable('receipt').set({ supplier: b.supplier, number: b.number ?? null, receipt_date: b.receiptDate, due_date: b.dueDate ?? null, total_cents: total, file_id: b.fileId ?? null, note: b.note ?? null, updated_at: new Date() }).where('id', '=', r.id).execute();
       await tx.deleteFrom('receipt_line').where('receipt_id', '=', r.id).execute();
       await tx.insertInto('receipt_line').values(b.lines.map((l, i) => ({ receipt_id: r.id, position: i + 1, text: l.text ?? null, gross_cents: l.grossCents, account_id: l.accountId, tax_rate_id: l.taxRateId ?? null, sphere: l.sphere ?? null, cost_center_id: l.costCenterId ?? null }))).execute();
+      if ((b.fileId ?? null) !== r.file_id) await releaseFile(tx, actor.organizationId, r.file_id);
       await audit(tx, actor.organizationId, actor, { action: 'receipt.updated', entityType: 'receipt', entityId: r.id, diff: { totalCents: [Number(r.total_cents), total], supplier: [r.supplier, b.supplier] } });
       return warnings;
     });

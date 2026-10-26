@@ -67,8 +67,8 @@ export interface PreviewHousehold {
   name: string;
   payerPersonId: string;
   payerName: string;
-  /** member that carries the invoice (payer's own membership, else the first member): number and payment method */
-  anchorMemberId: string;
+  /** the payer's own membership (number and payment method on the invoice), whether or not it is billed in this run; null when the payer is no member */
+  anchorMemberId: string | null;
   memberIds: string[];
   discountCents: number;
   perMember: Record<string, number>;
@@ -90,6 +90,9 @@ export async function previewHouseholds(db: import('../db.ts').Db, organizationI
     .where('member.id', 'in', ids)
     .execute();
   const byHousehold = Map.groupBy(rows, (r) => r.household_id!);
+  // Looked up apart from the billed members: a payer without a line in this run must not hand the invoice to a child.
+  const payers = [...new Set(rows.map((r) => r.payer_person_id))];
+  const payerMember = new Map((payers.length ? await db.selectFrom('member').select(['id', 'person_id']).where('organization_id', '=', organizationId).where('person_id', 'in', payers).execute() : []).map((m) => [m.person_id, m.id]));
   const out: PreviewHousehold[] = [];
   for (const [householdId, hm] of byHousehold) {
     const rule = await db.selectFrom('household_rule').selectAll().where('household_id', '=', householdId).where('valid_from', '<=', date).orderBy('valid_from', 'desc').executeTakeFirst();
@@ -103,19 +106,18 @@ export async function previewHouseholds(db: import('../db.ts').Db, organizationI
     }));
     const d = householdDiscount(r, inputs, date);
     const sorted = [...hm].sort((a, b) => a.membership_number.localeCompare(b.membership_number));
-    const anchor = sorted.find((m) => m.person_id === hm[0]!.payer_person_id) ?? sorted[0]!;
     out.push({
       householdId,
       name: hm[0]!.hh_name,
       payerPersonId: hm[0]!.payer_person_id,
       payerName: nameOf({ kind: hm[0]!.payer_kind, first_name: hm[0]!.payer_first, last_name: hm[0]!.payer_last, company_name: hm[0]!.payer_company }),
-      anchorMemberId: anchor.id,
+      anchorMemberId: payerMember.get(hm[0]!.payer_person_id) ?? null,
       memberIds: sorted.map((m) => m.id),
       discountCents: d.discountCents,
       perMember: d.perMember,
       label: d.label,
       // Changes to payer, members, birth dates or the rule make a stored preview stale.
-      hash: JSON.stringify([hm[0]!.payer_person_id, rule && [rule.id, rule.kind, rule.from_nth, rule.percent_bp, rule.cap_cents], sorted.map((m) => [m.id, m.birth_date])]),
+      hash: JSON.stringify([hm[0]!.payer_person_id, payerMember.get(hm[0]!.payer_person_id) ?? null, rule && [rule.id, rule.kind, rule.from_nth, rule.percent_bp, rule.cap_cents], sorted.map((m) => [m.id, m.birth_date])]),
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

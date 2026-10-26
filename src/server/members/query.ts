@@ -6,7 +6,8 @@ import { notFound } from '../http/problem.ts';
 import { fieldsFor, visibleDiffKeys, visibleValues } from './custom.ts';
 import { versionOf } from '../http/concurrency.ts';
 
-const maskCustom = (diff: unknown, keys: Set<string>) => (diff && typeof diff === 'object' && !Array.isArray(diff) ? Object.fromEntries(Object.entries(diff).filter(([k]) => !k.startsWith('custom.') || keys.has(k))) : diff);
+/** Drops custom-field values the viewer may not see today (sensitive, archived, deleted, not in their fields). */
+export const maskCustom = (diff: unknown, keys: Set<string>) => (diff && typeof diff === 'object' && !Array.isArray(diff) ? Object.fromEntries(Object.entries(diff).filter(([k]) => !k.startsWith('custom.') || keys.has(k))) : diff);
 import { level, restrictedFields, scopeOf, type Actor, type Module } from '../policy.ts';
 
 export async function orgToday(db: Db, organizationId: string) {
