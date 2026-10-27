@@ -47,7 +47,8 @@ export function AgentTokens({ base, whoAmI, modules }: { base: '/personal-tokens
 
   const live = tokens.data?.filter((t) => !t.revoked && t.expiresAt > new Date().toISOString()) ?? [];
   const gone = tokens.data?.filter((t) => !live.includes(t)) ?? [];
-  const curl = secret && `curl -H "Authorization: Bearer ${secret}" ${location.origin}/api/v1${whoAmI}`;
+  const op = whoAmI === '/auth/me' ? 'getAuthMe' : 'getPortalMe';
+  const cli = secret && `curl -fsSLO ${location.origin}/ov.mjs\nexport OV_URL=${location.origin} OV_TOKEN=${secret}\nnode ov.mjs ${op}`;
   const claudeCode = secret && `claude mcp add --transport http openverein ${location.origin}/mcp --header "Authorization: Bearer ${secret}"`;
 
   return (
@@ -61,8 +62,8 @@ export function AgentTokens({ base, whoAmI, modules }: { base: '/personal-tokens
           </div>
           <p className="agents-step">Claude Code oder ein anderer MCP-Client verbindet sich so:</p>
           <pre className="agents-code">{claudeCode}</pre>
-          <p className="agents-step">Oder probier es im Terminal. Damit fragst Du, wer Du bist:</p>
-          <pre className="agents-code">{curl}</pre>
+          <p className="agents-step">Oder im Terminal, mit der Kommandozeile <code>ov</code>. Damit fragst Du, wer Du bist:</p>
+          <pre className="agents-code">{cli}</pre>
           <p className="agents-step">Alle Operationen stehen unter <a href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>.</p>
         </section>
       )}
