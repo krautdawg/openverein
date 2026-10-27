@@ -48,6 +48,8 @@ export async function reverseEntry(tx: Db, organizationId: string, entryId: stri
   if (e.reverses_id) throw new Problem(409, 'is-reversal', 'Eine Stornobuchung wird nicht noch einmal storniert.');
   const done = await tx.selectFrom('journal_entry').select('id').where('reverses_id', '=', e.id).executeTakeFirst();
   if (done) throw new Problem(409, 'reversed', 'Diese Buchung ist schon storniert.');
+  // A reversal before its original would show the correction without the booking it corrects.
+  if (date < String(e.entry_date)) throw new Problem(409, 'reversal-before-entry', `Eine Stornobuchung kann nicht vor der Buchung (${String(e.entry_date)}) liegen.`, 'Warte bis zum Buchungsdatum oder storniere mit einem späteren Datum.');
   const lines = await tx.selectFrom('journal_line').selectAll().where('entry_id', '=', e.id).execute();
   return postEntry(tx, organizationId, {
     date,
@@ -211,6 +213,7 @@ export async function bookingLines(tx: Db, organizationId: string, b: { kind: 'i
     const { net, tax } = splitGross(l.grossCents, rate?.rate_bp ?? 0);
     // Input tax is only refundable in the taxable spheres; elsewhere the gross amount is the expense.
     const taxAccount = b.kind === 'income' ? rate?.output_account_id : sph === 'zweck' || sph === 'wirtschaft' ? rate?.input_account_id : null;
+    if (tax && taxAccount && accounts.find((a) => a.id === taxAccount)?.retired_at) throw new Problem(409, 'tax-account-retired', `Das Steuerkonto des Satzes „${rate!.label}“ ist stillgelegt.`, 'Beende den Satz und lege einen mit einem aktiven Steuerkonto an.');
     const side = (c: number) => (b.kind === 'income' ? { creditCents: c } : { debitCents: c });
     lines.push({ accountId: acc.id, ...side(tax && taxAccount ? net : l.grossCents), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate?.id ?? null, text: l.text ?? null });
     if (tax && taxAccount) lines.push({ accountId: taxAccount, ...side(tax), sphere: sph, costCenterId: l.costCenterId ?? null, taxRateId: rate!.id, text: l.text ?? null });

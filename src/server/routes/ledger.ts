@@ -88,8 +88,8 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     const b = req.body;
     for (const [field, id] of [['outputAccountId', b.outputAccountId], ['inputAccountId', b.inputAccountId]] as const) {
       if (!id) continue;
-      const acc = await db.selectFrom('ledger_account').select('kind').where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
-      if (acc?.kind !== 'tax') throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message: 'Bitte ein Steuerkonto wählen.' }] });
+      const acc = await db.selectFrom('ledger_account').select(['kind', 'retired_at']).where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+      if (acc?.kind !== 'tax' || acc.retired_at) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field, message: 'Bitte ein Steuerkonto wählen.' }] });
     }
     if (b.rateBp > 0 && !b.outputAccountId && !b.inputAccountId) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'outputAccountId', message: 'Ein Steuersatz über 0 % braucht ein Umsatzsteuer- oder Vorsteuerkonto.' }] });
     const t = await db.transaction().execute(async (tx) => {
@@ -104,15 +104,17 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
   app.patch('/ledger/tax-rates/:id', { schema: { tags, summary: 'Gültigkeit eines Steuersatzes beenden oder verlängern (der Satz selbst bleibt)', params: idParam, body: z.object({ validTo: z.iso.date().nullable() }), response: { 200: taxRate } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'ledger', 'write');
-    const before = await db.selectFrom('tax_rate').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
-    if (!before) throw notFound('Steuersatz');
-    if (req.body.validTo && req.body.validTo < before.valid_from) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'validTo', message: 'Das Ende liegt vor dem Beginn.' }] });
-    // Lines already booked with this rate keep it; ending it earlier than a booked line is refused.
-    if (req.body.validTo) {
-      const later = await db.selectFrom('journal_line').innerJoin('journal_entry', 'journal_entry.id', 'journal_line.entry_id').select('journal_entry.entry_date as date').where('journal_line.tax_rate_id', '=', before.id).where('journal_entry.entry_date', '>', req.body.validTo).orderBy('journal_entry.entry_date', 'desc').executeTakeFirst();
-      if (later) throw new Problem(409, 'rate-in-use', `Mit diesem Satz ist noch am ${later.date.split('-').reverse().join('.')} gebucht.`);
-    }
+    // Under the journal lock (as every booking): no line with this rate can slip in after the check below.
     const t = await db.transaction().execute(async (tx) => {
+      await lockJournal(tx, actor.organizationId);
+      const before = await tx.selectFrom('tax_rate').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
+      if (!before) throw notFound('Steuersatz');
+      if (req.body.validTo && req.body.validTo < before.valid_from) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'validTo', message: 'Das Ende liegt vor dem Beginn.' }] });
+      // Lines already booked with this rate keep it; ending it earlier than a booked line is refused.
+      if (req.body.validTo) {
+        const later = await tx.selectFrom('journal_line').innerJoin('journal_entry', 'journal_entry.id', 'journal_line.entry_id').select('journal_entry.entry_date as date').where('journal_line.tax_rate_id', '=', before.id).where('journal_entry.entry_date', '>', req.body.validTo).orderBy('journal_entry.entry_date', 'desc').executeTakeFirst();
+        if (later) throw new Problem(409, 'rate-in-use', `Mit diesem Satz ist noch am ${later.date.split('-').reverse().join('.')} gebucht.`);
+      }
       const t = await tx.updateTable('tax_rate').set({ valid_to: req.body.validTo }).where('id', '=', before.id).returningAll().executeTakeFirstOrThrow();
       await audit(tx, actor.organizationId, actor, { action: 'ledger.tax_rate_updated', entityType: 'tax_rate', entityId: t.id, diff: { validTo: [before.valid_to, t.valid_to] } });
       return t;

@@ -50,3 +50,12 @@ Not covered by a test:
 | G13 | Closing text in the XRechnung | `g13Second` "puts the closing text …" | yes |
 | G13 | Non-member payer sees the household invoice (deny wins) | `portalVerify` "Codex review G13 …" | yes |
 | G13 | Expense decision mail queued in the decision's transaction | `g13Second` "queues the expense decision mail …" | yes |
+| G14 | Tasks closed to API keys | `g14Second` "keeps tasks away from API keys" | yes |
+| G14 | Task edit checked against the locked row | `g14Second` "checks a task edit …" | yes |
+| G14 | No future bank booking; no reversal before its original | `g14Second` "does not book a bank movement …" | yes |
+| G14 | Unmatch rights follow the movement's state | `g14Second` "lets a treasurer without invoice rights …" | yes |
+| G14 | Offer drafts erased, exported, no convert after anonymisation | `g14Second` "erases offer drafts …" | yes |
+| G14 | No tax on a retired tax account | `g14Second` "posts no tax to a retired tax account" | yes |
+| G14 | Greetings only for preferred channel e-mail | `g14Second` "sends no greeting mail …" | yes |
+| G14 | Scheduled preview retried after a passing fault | `g14Second` "gives the month back …" | yes |
+| G14 | Tax-rate end date under the journal lock | none | Not tested: a booking would have to stop between its rate check and its insert, and the code has no hook for that. The fix is the same `lockJournal` that every booking takes first. |

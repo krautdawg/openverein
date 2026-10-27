@@ -179,6 +179,8 @@ export const offerRoutes: FastifyPluginAsyncZod = async (app) => {
     const invoiceId = await db.transaction().execute(async (tx) => {
       const o = await tx.selectFrom('offer').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!o) throw notFound('Angebot');
+      const person = await tx.selectFrom('person').select('anonymised_at').where('id', '=', o.person_id).executeTakeFirst();
+      if (person?.anonymised_at) throw new Problem(409, 'person-anonymised', 'Die Person ist anonymisiert: aus dem Angebot wird keine Rechnung mehr.');
       if (!['sent', 'accepted'].includes(o.status)) throw new Problem(409, 'offer-state', o.status === 'converted' ? 'Aus diesem Angebot gibt es schon eine Rechnung.' : 'Nur ein verschicktes oder angenommenes Angebot wird zur Rechnung.');
       const lines = await tx.selectFrom('offer_line').selectAll().where('offer_id', '=', o.id).orderBy('position').execute();
       const inv = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId: o.person_id, memberId: o.member_id, coverText: `Zu unserem Angebot ${o.number}.`, createdBy: actor.userId },

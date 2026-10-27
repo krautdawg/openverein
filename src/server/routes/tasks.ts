@@ -76,11 +76,14 @@ export const taskRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/tasks', { schema: { tags, summary: 'Aufgaben: offen (Standard), meine oder erledigt', querystring: z.object({ filter: z.enum(['open', 'mine', 'done']).default('open') }), response: { 200: z.array(task) } } }, async (req) => {
     const actor = requireActor(req);
+    // Tasks are between people of the club: an API key (scoped to some module or group) sees none.
+    personal(actor);
     return list(actor, { filter: req.query.filter });
   });
 
   app.get('/tasks/assignees', { schema: { tags, summary: 'Wem eine Aufgabe gegeben werden kann (aktive Zugänge)', response: { 200: z.array(z.object({ id: z.uuid(), name: z.string() })) } } }, async (req) => {
     const actor = requireActor(req);
+    personal(actor);
     return db.selectFrom('app_user').select(['id', 'name']).where('organization_id', '=', actor.organizationId).where('status', '=', 'active').orderBy('name').execute();
   });
 
@@ -100,8 +103,9 @@ export const taskRoutes: FastifyPluginAsyncZod = async (app) => {
     return (await list(actor, { id }))[0]!;
   });
 
-  async function editable(actor: Actor, id: string) {
-    const t = await db.selectFrom('task').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
+  /** Locked and checked in the caller's transaction: a reassignment meanwhile is seen before the change. */
+  async function editable(tx: Db, actor: Actor, id: string) {
+    const t = await tx.selectFrom('task').selectAll().where('id', '=', id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
     if (!t) throw notFound('Aufgabe');
     if (t.created_by !== actor.userId && t.assignee_user_id !== actor.userId && !isAdmin(actor)) throw new Problem(403, 'forbidden', 'Diese Aufgabe ändern nur die Person, die sie angelegt hat, die zuständige Person oder die Verwaltung.');
     return t;
@@ -110,10 +114,10 @@ export const taskRoutes: FastifyPluginAsyncZod = async (app) => {
   app.patch('/tasks/:id', { schema: { tags, summary: 'Aufgabe ändern, zuweisen oder erledigen', params: idParam, body: taskPatch, response: { 200: task } } }, async (req) => {
     const actor = requireActor(req);
     const userId = personal(actor);
-    const t = await editable(actor, req.params.id);
     const b = req.body;
     const assignee = b.assigneeUserId ? await assigneeOf(db, actor, b.assigneeUserId) : null;
-    await db.transaction().execute(async (tx) => {
+    const t = await db.transaction().execute(async (tx) => {
+      const t = await editable(tx, actor, req.params.id);
       await tx.updateTable('task').set({
         ...(b.title !== undefined ? { title: b.title } : {}),
         ...(b.note !== undefined ? { note: b.note } : {}),
@@ -122,6 +126,7 @@ export const taskRoutes: FastifyPluginAsyncZod = async (app) => {
         ...(b.done !== undefined ? { done_at: b.done ? new Date() : null, done_by: b.done ? userId : null } : {}),
       }).where('id', '=', t.id).execute();
       await audit(tx, actor.organizationId, actor, { action: b.done === true ? 'task.done' : b.done === false ? 'task.reopened' : 'task.updated', entityType: 'task', entityId: t.id });
+      return t;
     });
     if (assignee && assignee.id !== t.assignee_user_id && assignee.id !== userId) await notify(actor, assignee, b.title ?? t.title, b.dueOn ?? t.due_on);
     return (await list(actor, { id: t.id }))[0]!;
@@ -129,9 +134,9 @@ export const taskRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.delete('/tasks/:id', { schema: { tags, summary: 'Aufgabe löschen (Person, die sie angelegt hat, oder Verwaltung)', params: idParam } }, async (req, reply) => {
     const actor = requireActor(req);
-    const t = await editable(actor, req.params.id);
-    if (t.created_by !== actor.userId && !isAdmin(actor)) throw new Problem(403, 'forbidden', 'Löschen kann nur die Person, die die Aufgabe angelegt hat.');
     await db.transaction().execute(async (tx) => {
+      const t = await editable(tx, actor, req.params.id);
+      if (t.created_by !== actor.userId && !isAdmin(actor)) throw new Problem(403, 'forbidden', 'Löschen kann nur die Person, die die Aufgabe angelegt hat.');
       await tx.deleteFrom('task').where('id', '=', t.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'task.deleted', entityType: 'task', entityId: t.id, diff: { title: [t.title, null] } });
     });

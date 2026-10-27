@@ -61,10 +61,12 @@ export async function runFeeSchedules(db: Db) {
     if (!claimed.numUpdatedRows) continue;
     const user = o.fee_schedule_user_id ? await db.selectFrom('app_user').select(['id', 'name', 'email', 'status', 'organization_id']).where('id', '=', o.fee_schedule_user_id).executeTakeFirst() : undefined;
     const until = addDays(today, o.fee_schedule_lead_days);
+    let made = false;
     try {
       if (!user || user.status !== 'active' || user.organization_id !== o.id) throw new Problem(409, 'schedule-user', 'Das Konto, das die automatische Vorschau eingerichtet hat, ist nicht mehr aktiv.');
       const actor: Actor = { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: o.id, grants: await loadGrants(db, user.id) };
       const run = await scheduledRun(actor, until);
+      made = true;
       if (!run) continue;
       created++;
       const org = await db.selectFrom('organization').selectAll().where('id', '=', o.id).executeTakeFirstOrThrow();
@@ -72,6 +74,8 @@ export async function runFeeSchedules(db: Db) {
       const sum = (run.totals.totalCents / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
       await mailer().sendMail({ from: { name: sender.name, address: sender.address }, to: user.email, subject: `Beitragslauf bis ${formatDate(until)}: Vorschau ist fertig`, text: `Hallo ${user.name},\n\ndie automatische Vorschau des Beitragslaufs bis ${formatDate(until)} ist fertig: ${run.totals.members} Mitglieder, ${sum}. Gebucht ist noch nichts.\n\nPrüfen und buchen: ${baseUrlOf(org)}/beitraege/laeufe/${run.id}\n\n${o.name}` }).catch(() => undefined);
     } catch (err) {
+      // A passing fault (database, timeout) before the preview exists gives the month back: the next hourly run retries.
+      if (!made && !(err instanceof Problem)) await db.updateTable('organization').set({ fee_schedule_last_run: o.fee_schedule_last_run }).where('id', '=', o.id).where('fee_schedule_last_run', '=', today).execute();
       await audit(db, o.id, null, { action: 'fee_schedule.failed', entityType: 'organization', entityId: o.id, diff: { reason: [null, err instanceof Problem ? err.message : 'Fehler beim Erstellen der Vorschau'] } });
     }
   }
