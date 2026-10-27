@@ -26,7 +26,7 @@ describe('e-invoices', () => {
   it('refuses to issue while XRechnung fields are missing, then issues with a stored XML', async () => {
     const m = (await admin.post('/members', { kind: 'organisation', companyName: 'Stadt Lindenhof', street: 'Rathausplatz 1', postalCode: '12345', city: 'Lindenhof', joinDate: '2024-01-01', einvoiceFormat: 'xrechnung' })).body;
     expect(m.einvoice.format).toBe('xrechnung');
-    const draft = (await admin.post('/invoices', { memberId: m.id, lines: [{ text: 'Hallennutzung', unitCents: 11900, taxRate: 19 }] })).body;
+    const draft = (await admin.post('/invoices', { memberId: m.id, coverText: 'Rechnung für {{name}}', lines: [{ text: 'Hallennutzung', unitCents: 11900, taxRate: 19 }] })).body;
     const refused = await admin.post(`/invoices/${draft.id}/issue`, {});
     expect(refused.status).toBe(409);
     expect(refused.body.missing.join(' ')).toMatch(/Leitweg-ID.*E-Rechnungsadresse|E-Rechnungsadresse/);
@@ -40,6 +40,9 @@ describe('e-invoices', () => {
     expect(xml.statusCode).toBe(200);
     expect(xml.body).toContain('<ram:BuyerReference>04011000-12345-67</ram:BuyerReference>');
     expect(xml.body).toContain('<ram:DuePayableAmount>119.00</ram:DuePayableAmount>');
+    // The XML carries the cover text as filled for the PDF, not the template.
+    expect(xml.body).toContain('Rechnung für Stadt Lindenhof');
+    expect(xml.body).not.toContain('{{name}}');
     await expect(ctx.db.updateTable('invoice_einvoice').set({ sha256: 'x' }).execute()).rejects.toThrow();
 
     // Mailed to the e-invoice address (the city has no ordinary e-mail here), with PDF and XML attached.

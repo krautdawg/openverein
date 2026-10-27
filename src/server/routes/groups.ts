@@ -8,7 +8,7 @@ import { requireActor } from '../auth/session.ts';
 import type { ClubGroupTable } from '../db.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { applyScope, currentGroups, loadMemberRow, memberColumns, orgToday, toListItem } from '../members/query.ts';
-import { requirePermission, restrictedFields, type Actor } from '../policy.ts';
+import { requireClubWide, requirePermission, restrictedFields, type Actor } from '../policy.ts';
 import { assertGroup } from '../members/bulk.ts';
 import { upcomingAgeMoves } from '../members/ageMoves.ts';
 
@@ -50,6 +50,11 @@ const columns = (b: Partial<z.infer<typeof groupPatch>>) => {
   if (b.portalOverrides !== undefined) out.portal_overrides = JSON.stringify(b.portalOverrides);
   return out;
 };
+
+/** Turning a portal function on for a group overrides the board's club-wide switch: settings rights; turning it off narrows and is fine. */
+function assertOverrides(actor: Actor, overrides: Record<string, 'allow' | 'deny'> | null | undefined) {
+  if (overrides && Object.values(overrides).includes('allow')) requireClubWide(actor, 'settings', 'write');
+}
 
 export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
@@ -123,6 +128,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'groups', 'write');
     const before = await loadGroup(actor, req.params.id);
+    assertOverrides(actor, req.body.portalOverrides);
     await checkParent(actor, req.body.parentId, before.id);
     if (req.body.nextGroupId) await loadGroup(actor, req.body.nextGroupId);
     const values = columns(req.body);
