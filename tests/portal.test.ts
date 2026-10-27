@@ -250,6 +250,10 @@ describe('member portal', () => {
     expect(closed).toMatchObject({ open: false, answered: 1, counts: [0, 1] });
     expect((await get('/portal/polls', cookie)).json()[0].results.counts).toEqual([0, 1]);
     expect((await post(`/portal/polls/${poll.id}/vote`, { memberId: m.id, choices: [0] }, cookie)).statusCode).toBe(409);
+    // The voter leaving the club later does not change the finished poll's participation.
+    const before = closed.eligible;
+    await ctx.db.updateTable('member').set({ exit_date: day(1), status: 'resigned' }).where('id', '=', m.id).execute();
+    expect((await admin.get('/polls')).body.find((x: { id: string }) => x.id === poll.id).eligible).toBe(before);
   });
 
   it('lets the household payer manage its members, but adults with their own address resign themselves', async () => {
@@ -263,6 +267,9 @@ describe('member portal', () => {
     expect(me.members.map((m: { name: string; managed: boolean }) => [m.name, m.managed]).sort()).toEqual([['Kim Haus', true], ['Maria Haus', false], ['Paul Haus', true]]);
     expect((await post('/portal/resignation', { memberId: kid.id }, cookie)).statusCode).toBe(200);
     expect((await post('/portal/resignation', { memberId: partner.id }, cookie)).statusCode).toBe(403);
+    // Paul's certificate (with his birth date) is his own business; the child's the payer may fetch.
+    expect((await get(`/portal/members/${partner.id}/certificate.pdf`, cookie)).statusCode).toBe(403);
+    expect((await get(`/portal/members/${kid.id}/certificate.pdf`, cookie)).statusCode).toBe(200);
     // Paul's own portal shows only Paul.
     const paul = await signIn('paul@example.org');
     expect((await get('/portal/me', paul)).json().members.map((m: { name: string }) => m.name)).toEqual(['Paul Haus']);

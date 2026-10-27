@@ -410,7 +410,7 @@ export const ledgerRoutes: FastifyPluginAsyncZod = async (app) => {
     const from = `${req.query.year}-01-01`;
     const to = `${req.query.year}-12-31`;
     const org = await db.selectFrom('organization').select(['name', 'is_demo']).where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
-    const pdf = await treasurerReportPdf({ club: org.name, year: req.query.year, euer: await euer(actor, from, to), money: (await balances(actor, from, to)).filter((b) => b.kind === 'money') });
+    const pdf = await treasurerReportPdf({ club: org.name, year: req.query.year, euer: await euer(actor, from, to), money: (await balances(actor, from, to)).filter((b) => b.kind === 'money'), demo: org.is_demo });
     await audit(db, actor.organizationId, actor, { action: 'ledger.report_treasurer', entityType: 'organization', entityId: actor.organizationId, diff: { year: [null, req.query.year] } });
     return reply.header('content-type', 'application/pdf').header('content-disposition', `attachment; filename="Kassenbericht-${req.query.year}.pdf"`).header('cache-control', 'private, no-store').send(pdf);
   });

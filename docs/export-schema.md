@@ -31,6 +31,7 @@ files/<sha256>       every stored file once, named by its SHA-256 (see data/file
 - Dates and timestamps are ISO strings; binary columns (stored PDFs, DATEV ZIPs) are `{ "base64": "…" }` in JSONL and left out of the CSV.
 - Encrypted columns are exported decrypted under the name without `_encrypted` (for example `sepa_mandate.iban`); IBAN change requests from the portal are decrypted in `change_request.old_value` / `new_value`; the issued XRechnung is `invoice_einvoice.xml` as text (its `sha256` is the hash of that text).
 - CSV headers come from the schema, so empty tables still have their header row.
+- Poll answers (`poll_vote`) come without `member_id`: the board sees only counts, the export too.
 - Never exported: sessions, portal sessions, login codes, recovery codes, idempotency keys, password hashes, invitation and API token hashes, TOTP secrets, keyed lookup hashes (`*_hash` blind indexes).
 
 ## Restoring

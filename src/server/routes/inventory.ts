@@ -63,6 +63,8 @@ export const inventoryRoutes: FastifyPluginAsyncZod = async (app) => {
     requireClubWide(actor, 'documents', 'write');
     const b = req.body;
     await db.transaction().execute(async (tx) => {
+      // Same lock as lending: a loan made meanwhile counts before the quantity is checked.
+      if (!(await tx.selectFrom('inventory_item').select('id').where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst())) throw notFound('Gegenstand');
       const open = await tx.selectFrom('inventory_loan').select(sql<number>`coalesce(sum(quantity), 0)::int`.as('n')).where('item_id', '=', req.params.id).where('returned_on', 'is', null).executeTakeFirstOrThrow();
       if (b.archived && open.n > 0) throw new Problem(409, 'lent', 'Der Gegenstand ist noch ausgeliehen.', 'Erst zurücknehmen, dann ausmustern.');
       if (b.quantity < open.n) throw new Problem(409, 'lent', `Es sind noch ${open.n} Stück ausgeliehen.`);
@@ -75,10 +77,13 @@ export const inventoryRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/inventory/:id/loans', { schema: { tags, summary: 'Ausleihen an ein Mitglied', params: idParam, body: z.object({ memberId: z.uuid(), quantity: z.number().int().min(1).default(1), lentOn: z.iso.date(), dueOn: z.iso.date().nullish(), note: z.string().trim().max(500).nullish() }), response: { 201: item } } }, async (req, reply) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'documents', 'write');
+    // The inventory belongs to the whole club (like its catalogue): lending and returns too.
+    requireClubWide(actor, 'documents', 'write');
     await loadMemberRow(db, actor, req.body.memberId, 'read');
     const b = req.body;
     if (b.dueOn && b.dueOn < b.lentOn) throw new Problem(400, 'validation', 'Die Rückgabe liegt vor der Ausleihe.');
+    // A loan records what happened: lent today at the latest (a future one would block the stock from now on).
+    if (b.lentOn > (await orgToday(db, actor.organizationId))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'lentOn', message: 'Das Datum liegt in der Zukunft.' }] });
     await db.transaction().execute(async (tx) => {
       // Lock the item so two loans at the same time cannot lend more than there is.
       const i = await tx.selectFrom('inventory_item').select(['quantity', 'archived_at']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
@@ -94,14 +99,16 @@ export const inventoryRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/inventory/loans/:id/return', { schema: { tags, summary: 'Rückgabe festhalten', params: idParam, body: z.object({ returnedOn: z.iso.date() }), response: { 200: item } } }, async (req) => {
     const actor = requireActor(req);
-    requirePermission(actor, 'documents', 'write');
+    requireClubWide(actor, 'documents', 'write');
     const l = await db.selectFrom('inventory_loan').select(['item_id', 'lent_on', 'returned_on', 'member_id']).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).executeTakeFirst();
     if (!l) throw notFound('Ausleihe');
-    if (l.returned_on) throw new Problem(409, 'returned', 'Schon zurückgegeben.');
     if (req.body.returnedOn < l.lent_on) throw new Problem(400, 'validation', 'Die Rückgabe liegt vor der Ausleihe.');
+    if (req.body.returnedOn > (await orgToday(db, actor.organizationId))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'returnedOn', message: 'Das Datum liegt in der Zukunft.' }] });
     await db.transaction().execute(async (tx) => {
-      await tx.updateTable('inventory_loan').set({ returned_on: req.body.returnedOn }).where('id', '=', req.params.id).execute();
-      await audit(tx, actor.organizationId, actor, { action: 'inventory.returned', entityType: 'inventory_item', entityId: l.item_id, diff: { loan: [null, req.params.id] } });
+      // Only the first of two simultaneous returns counts; the second must not overwrite its date.
+      const r = await tx.updateTable('inventory_loan').set({ returned_on: req.body.returnedOn }).where('id', '=', req.params.id).where('returned_on', 'is', null).returning('id').executeTakeFirst();
+      if (!r) throw new Problem(409, 'returned', 'Schon zurückgegeben.');
+      await audit(tx, actor.organizationId, actor, { action: 'inventory.returned', entityType: 'inventory_item', entityId: l.item_id, diff: { loan: [null, req.params.id], returnedOn: [null, req.body.returnedOn] } });
     });
     return (await list(actor, l.item_id))[0]!;
   });
