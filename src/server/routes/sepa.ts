@@ -28,7 +28,8 @@ async function remittanceFor(tx: Db, org: { name: string; remittance_template: s
   const inv = await tx.selectFrom('invoice').leftJoin('member', 'member.id', 'invoice.member_id').select(['invoice.id', 'member.membership_number']).where('invoice.id', '=', c.invoiceId).executeTakeFirstOrThrow();
   const p = await tx.selectFrom('invoice_line').innerJoin('assessment', 'assessment.id', 'invoice_line.assessment_id').select([sql<string | null>`min(assessment.period_start)::text`.as('from'), sql<string | null>`max(assessment.period_end)::text`.as('to')]).where('invoice_line.invoice_id', '=', inv.id).executeTakeFirst();
   const zeitraum = p?.from && p.to ? `${formatDate(p.from)}–${formatDate(p.to)}` : '';
-  return fillRemittance(org.remittance_template, { rechnungsnummer: c.number, mitgliedsnummer: inv.membership_number ?? '', zeitraum, verein: org.name });
+  // pain.008 needs at least one character: a template that fills to nothing falls back to the invoice number.
+  return fillRemittance(org.remittance_template, { rechnungsnummer: c.number, mitgliedsnummer: inv.membership_number ?? '', zeitraum, verein: org.name }).trim() || c.number;
 }
 
 export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {

@@ -136,4 +136,24 @@ describe('review G8', () => {
     await ctx.db.insertInto('webhook_delivery').values({ organization_id: org, webhook_id: hook.id, event: 'member.updated', entity_type: 'member', entity_id: null, occurred_at: new Date(Date.now() - 40 * 86_400_000), status: 'sent', sent_at: new Date() }).execute();
     expect(await pruneWebhookDeliveries(ctx.db)).toBe(0);
   });
+
+  // ---------- review G13 ----------
+
+  it('lets only settings admins switch a portal function on for a group', async () => {
+    const group = (await admin.post('/groups', { name: 'Jugend', shortCode: 'JUG' })).body.id;
+    const perms = (await admin.get('/roles')).body.find((r: { name: string }) => r.name === 'Admin').permissions as Record<string, string>;
+    await admin.post('/roles', { name: 'Gruppenpflege', permissions: { ...Object.fromEntries(Object.keys(perms).map((m) => [m, 'read'])), groups: 'write', settings: 'none' } });
+    const keeper = client(ctx.app, { cookie: await userWithRole(ctx.app, cookie, 'Gruppenpflege') });
+    expect((await keeper.patch(`/groups/${group}`, { portalOverrides: { bank: 'allow' } })).status).toBe(403);
+    expect((await keeper.patch(`/groups/${group}`, { portalOverrides: { bank: 'deny' } })).status).toBe(200);
+    expect((await admin.patch(`/groups/${group}`, { portalOverrides: { bank: 'allow' } })).status).toBe(200);
+  });
+
+  it('prints no dunning letter for a credit note', async () => {
+    const m = (await admin.post('/members', { firstName: 'Gerd', lastName: 'Gutschrift', street: 'Weg 1', postalCode: '12345', city: 'Musterstadt', joinDate: '2024-01-01' })).body;
+    const credit = (await admin.post('/invoices', { memberId: m.id, kind: 'credit_note', lines: [{ text: 'Erstattung', unitCents: 1200 }] })).body;
+    expect((await admin.post(`/invoices/${credit.id}/issue`, {})).status).toBe(200);
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/dunning-letters.pdf', headers: { cookie, 'content-type': 'application/json' }, payload: { invoiceIds: [credit.id] } });
+    expect(res.statusCode).toBe(409);
+  });
 });

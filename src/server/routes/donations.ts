@@ -211,32 +211,36 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'donations', 'write');
     requireClubWide(actor, 'communication', 'write');
-    const rows = await db.selectFrom('donation_receipt as r').innerJoin('person', 'person.id', 'r.person_id')
-      .select(['r.id', 'r.number', 'r.person_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
-      .where('r.organization_id', '=', actor.organizationId).where('r.status', '=', 'issued').where('r.id', 'in', req.body.receiptIds).orderBy('r.number').execute();
-    const sentBefore = new Set(req.body.resend || !rows.length ? [] : (await db.selectFrom('delivery').select('donation_receipt_id').where('donation_receipt_id', 'in', rows.map((r) => r.id)).where('status', 'in', ['queued', 'sending', 'sent']).execute()).map((d) => d.donation_receipt_id));
-    const suppressed = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId).where('reason', 'in', ['bounce', 'manual']).execute()).map((x) => x.email_hash));
-    const send: { personId: string; memberId: string | null; email: string; donationReceiptId: string }[] = [];
-    const toPrint: { receiptId: string; number: string; name: string; reason: string }[] = [];
-    let alreadySent = 0;
-    for (const r of rows) {
-      if (sentBefore.has(r.id)) { alreadySent++; continue; }
-      const reason = r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !r.email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(r.email)) ? 'Adresse unzustellbar' : null;
-      if (reason) toPrint.push({ receiptId: r.id, number: r.number, name: nameOf(r), reason });
-      else send.push({ personId: r.person_id, memberId: null, email: r.email!, donationReceiptId: r.id });
-    }
-    const own = await db.selectFrom('mail_template').select(['subject', 'body']).where('organization_id', '=', actor.organizationId).where('key', '=', 'donation_receipt').executeTakeFirst();
-    const text = own ?? SYSTEM_TEMPLATES.donation_receipt;
-    // One delivery per person and message: several receipts for one person go out as separate messages.
-    const batches: (typeof send)[] = [];
-    for (const x of send) {
-      const b = batches.find((bb) => !bb.some((y) => y.personId === x.personId));
-      if (b) b.push(x);
-      else batches.push([x]);
-    }
-    const messageIds: string[] = [];
-    await db.transaction().execute(async (tx) => {
+    // One send at a time per club, with the "already sent" check inside: a double click or two treasurers at once
+    // send each receipt once (the same lock pattern as the invoice mailing).
+    const { send, alreadySent, messageIds, toPrint } = await db.transaction().execute(async (tx) => {
+      await sql`select pg_advisory_xact_lock(hashtext(${`receipt-mail:${actor.organizationId}`}))`.execute(tx);
+      const rows = await tx.selectFrom('donation_receipt as r').innerJoin('person', 'person.id', 'r.person_id')
+        .select(['r.id', 'r.number', 'r.person_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.email', 'person.preferred_channel'])
+        .where('r.organization_id', '=', actor.organizationId).where('r.status', '=', 'issued').where('r.id', 'in', req.body.receiptIds).orderBy('r.number').execute();
+      const sentBefore = new Set(req.body.resend || !rows.length ? [] : (await tx.selectFrom('delivery').select('donation_receipt_id').where('donation_receipt_id', 'in', rows.map((r) => r.id)).where('status', 'in', ['queued', 'sending', 'sent']).execute()).map((d) => d.donation_receipt_id));
+      const suppressed = new Set((await tx.selectFrom('suppression').select('email_hash').where('organization_id', '=', actor.organizationId).where('reason', 'in', ['bounce', 'manual']).execute()).map((x) => x.email_hash));
+      const send: { personId: string; memberId: string | null; email: string; donationReceiptId: string }[] = [];
+      const toPrint: { receiptId: string; number: string; name: string; reason: string }[] = [];
+      let alreadySent = 0;
+      for (const r of rows) {
+        if (sentBefore.has(r.id)) { alreadySent++; continue; }
+        const reason = r.preferred_channel === 'letter' ? 'bevorzugt Brief' : !r.email ? 'keine E-Mail-Adresse' : suppressed.has(emailHash(r.email)) ? 'Adresse unzustellbar' : null;
+        if (reason) toPrint.push({ receiptId: r.id, number: r.number, name: nameOf(r), reason });
+        else send.push({ personId: r.person_id, memberId: null, email: r.email!, donationReceiptId: r.id });
+      }
+      const own = await tx.selectFrom('mail_template').select(['subject', 'body']).where('organization_id', '=', actor.organizationId).where('key', '=', 'donation_receipt').executeTakeFirst();
+      const text = own ?? SYSTEM_TEMPLATES.donation_receipt;
+      // One delivery per person and message: several receipts for one person go out as separate messages.
+      const batches: (typeof send)[] = [];
+      for (const x of send) {
+        const b = batches.find((bb) => !bb.some((y) => y.personId === x.personId));
+        if (b) b.push(x);
+        else batches.push([x]);
+      }
+      const messageIds: string[] = [];
       for (const b of batches) messageIds.push(await createMessage(tx, actor, { kind: 'donation_receipts', category: 'notice', subject: text.subject, body: text.body, filter: { receiptIds: b.map((x) => x.donationReceiptId) } }, b));
+      return { send, alreadySent, messageIds, toPrint };
     });
     reply.status(201);
     return { sent: send.length, alreadySent, messageIds, toPrint };

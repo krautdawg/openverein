@@ -107,9 +107,11 @@ describe('donations', () => {
     await admin.post('/donation-receipts/annual', { year: 2026 });
     const receipts = (await admin.get('/donation-receipts?year=2026')).body as { id: string; personId: string }[];
     expect(receipts).toHaveLength(2);
-    const sent = await admin.post('/donation-receipts/send', { receiptIds: receipts.map((r) => r.id) });
+    // Two sends at once (double click): each receipt goes out once.
+    const [sent, twin] = await Promise.all([admin.post('/donation-receipts/send', { receiptIds: receipts.map((r) => r.id) }), admin.post('/donation-receipts/send', { receiptIds: receipts.map((r) => r.id) })]);
     expect(sent.status, JSON.stringify(sent.body)).toBe(201);
-    expect(sent.body).toMatchObject({ sent: 1, alreadySent: 0, toPrint: [expect.objectContaining({ reason: 'keine E-Mail-Adresse' })] });
+    expect(sent.body.sent + twin.body.sent).toBe(1);
+    expect((sent.body.sent ? sent : twin).body).toMatchObject({ sent: 1, alreadySent: 0, toPrint: [expect.objectContaining({ reason: 'keine E-Mail-Adresse' })] });
     expect((await admin.post('/donation-receipts/send', { receiptIds: receipts.map((r) => r.id) })).body.alreadySent).toBe(1);
     await processQueue(ctx.db);
     const found = (await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent('to:spender@example.org')}`)).json()).messages as { Subject: string; Attachments: number }[];

@@ -66,29 +66,10 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     mandateReference: mandate?.reference ?? null,
     creditorId: org.creditor_id,
   };
-  // E-invoice for recipients that asked for one: created once at issue, refused with the missing fields named.
-  // A cancellation follows its original invoice (e-invoiced or not), not the recipient's current setting.
-  const wantsEinvoice = isCancellation
-    ? !!(inv.cancels_invoice_id && (await tx.selectFrom('invoice_einvoice').select('invoice_id').where('invoice_id', '=', inv.cancels_invoice_id).executeTakeFirst()))
-    : person.einvoice_format === 'xrechnung';
-  if (wantsEinvoice) {
-    const linesFull = await tx.selectFrom('invoice_line').leftJoin('assessment', 'assessment.id', 'invoice_line.assessment_id').select(['invoice_line.text', 'invoice_line.quantity', 'invoice_line.total_cents', 'invoice_line.tax_rate', 'assessment.period_start', 'assessment.period_end']).where('invoice_line.invoice_id', '=', inv.id).orderBy('invoice_line.position').execute();
-    const debit = snapshot.paymentMethod === 'direct_debit' && snapshot.mandateReference && org.creditor_id ? await tx.selectFrom('sepa_mandate').select('iban_encrypted').where('reference', '=', snapshot.mandateReference).where('person_id', '=', person.id).executeTakeFirst() : undefined;
-    const x: Omit<XInvoice, 'lines'> = {
-      number, typeCode: inv.kind === 'credit_note' || isCancellation ? '381' : '380', issueDate, dueDate: isCancellation ? null : (dueDate ?? inv.due_date ?? addDays(issueDate, org.payment_terms_days)), precedingNumber: cancels?.number ?? null, note: inv.cover_text,
-      seller: { name: org.name, street: org.street ?? '', postalCode: org.postal_code ?? '', city: org.city ?? '', country: 'DE', vatId: org.vat_id, taxNumber: org.tax_number, registerNumber: org.register_number, contactName: org.einvoice_contact_name ?? '', contactPhone: org.einvoice_contact_phone ?? '', contactEmail: org.email ?? '', smallBusiness: org.small_business },
-      buyer: { name: snapshot.recipient.name, street: person.street ?? '', postalCode: person.postal_code ?? '', city: person.city ?? '', country: person.country, reference: person.buyer_reference ?? '', address: person.einvoice_address ?? '', vatId: person.vat_id },
-      payment: debit && !isCancellation && inv.kind !== 'credit_note' ? { kind: 'direct_debit', mandateReference: snapshot.mandateReference!, creditorId: org.creditor_id!, debtorIban: decrypt(debit.iban_encrypted) } : { kind: 'transfer', iban: org.iban ?? '', bic: org.bic, accountName: org.name },
-    };
-    const missing = missingFields(x);
-    if (missing.length) throw new Problem(409, 'einvoice-missing', `Für die E-Rechnung (XRechnung) an ${snapshot.recipient.name} fehlen Angaben.`, `Es fehlt: ${missing.join('; ')}.`, { missing, recipient: snapshot.recipient.name });
-    const xml = Buffer.from(xrechnungCii({ ...x, lines: linesFull.map((l) => ({ text: l.text, quantity: Number(l.quantity), grossCents: Number(l.total_cents), ratePct: Number(l.tax_rate), periodStart: l.period_start, periodEnd: l.period_end })) }), 'utf8');
-    // Stored encrypted: a direct-debit XML holds the payer's full IBAN. The hash is of the plain XML.
-    await tx.insertInto('invoice_einvoice').values({ invoice_id: inv.id, organization_id: organizationId, format: 'xrechnung-cii', xml: encryptBytes(xml), sha256: createHash('sha256').update(xml).digest('hex') }).execute();
-  }
   const status = isCancellation ? 'issued' : total === 0 ? 'paid' : 'open';
   const dueOn = isCancellation ? null : (due ?? addDays(issueDate, org.payment_terms_days));
   // Cover and closing texts: the invoice's own, else the club's defaults (not on cancellations); placeholders are filled now and frozen.
+  // Filled before the e-invoice, so the XML carries the same text as the PDF.
   const values = {
     vorname: person.first_name ?? person.company_name ?? '',
     name: snapshot.recipient.name,
@@ -102,6 +83,28 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     const t = own ?? (isCancellation ? null : template);
     return t ? fillInvoiceText(t, values) : null;
   };
+  const coverText = textOf(inv.cover_text, org.invoice_cover_template);
+  const closingText = textOf(inv.closing_text, org.invoice_closing_template);
+  // E-invoice for recipients that asked for one: created once at issue, refused with the missing fields named.
+  // A cancellation follows its original invoice (e-invoiced or not), not the recipient's current setting.
+  const wantsEinvoice = isCancellation
+    ? !!(inv.cancels_invoice_id && (await tx.selectFrom('invoice_einvoice').select('invoice_id').where('invoice_id', '=', inv.cancels_invoice_id).executeTakeFirst()))
+    : person.einvoice_format === 'xrechnung';
+  if (wantsEinvoice) {
+    const linesFull = await tx.selectFrom('invoice_line').leftJoin('assessment', 'assessment.id', 'invoice_line.assessment_id').select(['invoice_line.text', 'invoice_line.quantity', 'invoice_line.total_cents', 'invoice_line.tax_rate', 'assessment.period_start', 'assessment.period_end']).where('invoice_line.invoice_id', '=', inv.id).orderBy('invoice_line.position').execute();
+    const debit = snapshot.paymentMethod === 'direct_debit' && snapshot.mandateReference && org.creditor_id ? await tx.selectFrom('sepa_mandate').select('iban_encrypted').where('reference', '=', snapshot.mandateReference).where('person_id', '=', person.id).executeTakeFirst() : undefined;
+    const x: Omit<XInvoice, 'lines'> = {
+      number, typeCode: inv.kind === 'credit_note' || isCancellation ? '381' : '380', issueDate, dueDate: isCancellation ? null : (dueDate ?? inv.due_date ?? addDays(issueDate, org.payment_terms_days)), precedingNumber: cancels?.number ?? null, note: coverText,
+      seller: { name: org.name, street: org.street ?? '', postalCode: org.postal_code ?? '', city: org.city ?? '', country: 'DE', vatId: org.vat_id, taxNumber: org.tax_number, registerNumber: org.register_number, contactName: org.einvoice_contact_name ?? '', contactPhone: org.einvoice_contact_phone ?? '', contactEmail: org.email ?? '', smallBusiness: org.small_business },
+      buyer: { name: snapshot.recipient.name, street: person.street ?? '', postalCode: person.postal_code ?? '', city: person.city ?? '', country: person.country, reference: person.buyer_reference ?? '', address: person.einvoice_address ?? '', vatId: person.vat_id },
+      payment: debit && !isCancellation && inv.kind !== 'credit_note' ? { kind: 'direct_debit', mandateReference: snapshot.mandateReference!, creditorId: org.creditor_id!, debtorIban: decrypt(debit.iban_encrypted) } : { kind: 'transfer', iban: org.iban ?? '', bic: org.bic, accountName: org.name },
+    };
+    const missing = missingFields(x);
+    if (missing.length) throw new Problem(409, 'einvoice-missing', `Für die E-Rechnung (XRechnung) an ${snapshot.recipient.name} fehlen Angaben.`, `Es fehlt: ${missing.join('; ')}.`, { missing, recipient: snapshot.recipient.name });
+    const xml = Buffer.from(xrechnungCii({ ...x, lines: linesFull.map((l) => ({ text: l.text, quantity: Number(l.quantity), grossCents: Number(l.total_cents), ratePct: Number(l.tax_rate), periodStart: l.period_start, periodEnd: l.period_end })) }), 'utf8');
+    // Stored encrypted: a direct-debit XML holds the payer's full IBAN. The hash is of the plain XML.
+    await tx.insertInto('invoice_einvoice').values({ invoice_id: inv.id, organization_id: organizationId, format: 'xrechnung-cii', xml: encryptBytes(xml), sha256: createHash('sha256').update(xml).digest('hex') }).execute();
+  }
   await tx
     .updateTable('invoice')
     .set({
@@ -111,8 +114,8 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
       issue_date: issueDate,
       due_date: dueOn,
       total_cents: total,
-      cover_text: textOf(inv.cover_text, org.invoice_cover_template),
-      closing_text: textOf(inv.closing_text, org.invoice_closing_template),
+      cover_text: coverText,
+      closing_text: closingText,
       issued_at: new Date(),
       updated_at: new Date(),
     })

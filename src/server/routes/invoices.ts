@@ -182,9 +182,11 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     const actor = requireActor(req);
     requirePermission(actor, 'invoices', 'read');
     const letters: { pdf: Buffer; sortKey: string; postalCode: string }[] = [];
+    const today = await orgToday(db, actor.organizationId);
     for (const id of new Set(req.body.invoiceIds)) {
       const inv = await detail(actor, id); // scope check
-      if (!['open', 'partially_paid'].includes(inv.status) || !inv.number) continue;
+      // Only what may be dunned by e-mail too: receivables (no credit notes), and none under a dunning pause.
+      if (!['open', 'partially_paid'].includes(inv.status) || !inv.number || !DUNNABLE_KINDS.includes(inv.kind) || (inv.dunningHoldUntil && inv.dunningHoldUntil >= today)) continue;
       const l = await dunningLetterPdf(db, actor.organizationId, id);
       letters.push({ pdf: l.pdf, sortKey: l.number, postalCode: l.postalCode });
     }
