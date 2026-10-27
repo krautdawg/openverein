@@ -83,6 +83,10 @@ describe('households', () => {
     const inv = (await ctx.db.selectFrom('invoice').select('recipient').where('kind', '=', 'membership').executeTakeFirstOrThrow()).recipient as { paymentMethod: string; mandateReference: string | null };
     expect(inv.paymentMethod).toBe('direct_debit');
     expect(inv.mandateReference).toBeTruthy();
+    // The payer pays her own fees by transfer, but the household invoice was announced as a debit from her mandate:
+    // the collection run takes it (candidates and the run's re-check follow the same rule).
+    const candidates = (await admin.get('/collection-runs/candidates')).body as { readiness: string; number: string }[];
+    expect(candidates.map((c) => c.readiness)).toEqual(['ok']);
   });
 
   it('puts the payer\'s own membership on the household invoice even when the payer is not billed, never a child\'s method', async () => {

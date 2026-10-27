@@ -8,12 +8,16 @@ test('bank booking: two fee movements booked to one expense account in one step'
   // Reuse the account on a retry (the IBAN is unique).
   const created = await page.request.post('/api/v1/bank-accounts', { headers: h(), data: { name: 'Sparkonto', iban: 'DE75512108001245126199', openingDate: '2026-01-01' } });
   const acc = created.ok() ? await created.json() : (await (await page.request.get('/api/v1/bank-accounts')).json()).find((a: { name: string }) => a.name === 'Sparkonto');
-  const csv = 'Buchungstag;Verwendungszweck;Beguenstigter/Zahlungspflichtiger;Kontonummer/IBAN;Betrag\n06.10.2026;Entgelt Okt;Sparkasse;;-3,50\n07.10.2026;Entgelt Okt II;Sparkasse;;-1,50';
+  // Amounts of their own per attempt: a retry imports and books fresh movements instead of ticking booked ones.
+  const cents = 100 + Math.floor(Math.random() * 800);
+  const euro = (c: number) => `${Math.floor(c / 100)},${String(c % 100).padStart(2, '0')}`;
+  const [one, two] = [euro(cents), euro(cents + 1)];
+  const csv = `Buchungstag;Verwendungszweck;Beguenstigter/Zahlungspflichtiger;Kontonummer/IBAN;Betrag\n06.10.2026;Entgelt ${cents};Sparkasse;;-${one}\n07.10.2026;Entgelt ${cents} II;Sparkasse;;-${two}`;
   const imported = await page.request.post(`/api/v1/bank-accounts/${acc.id}/imports`, { headers: h(), data: { format: 'csv', content: csv } });
-  expect([201, 409]).toContain(imported.status());
+  expect(imported.status(), await imported.text()).toBe(201);
   await page.goto('/bank/abgleich');
-  await page.getByRole('checkbox', { name: /Sparkasse -3,50/ }).check();
-  await page.getByRole('checkbox', { name: /Sparkasse -1,50/ }).check();
+  await page.getByRole('checkbox', { name: new RegExp(`Sparkasse -${one}`) }).check();
+  await page.getByRole('checkbox', { name: new RegExp(`Sparkasse -${two}`) }).check();
   const bar = page.getByRole('form', { name: 'Ohne Rechnung buchen' });
   await expect(bar).toContainText('2 ausgewählt');
   await bar.getByLabel('Ausgabenkonto').selectOption({ index: 1 });

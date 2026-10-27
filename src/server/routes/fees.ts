@@ -532,7 +532,7 @@ export const feeRoutes: FastifyPluginAsyncZod = async (app) => {
           const payerMandate = await tx.selectFrom('sepa_mandate').select('id').where('person_id', '=', h.payerPersonId).where('status', '=', 'active').executeTakeFirst();
           const ownMethod = h.anchorMemberId ? (await tx.selectFrom('member').select('payment_method').where('id', '=', h.anchorMemberId).executeTakeFirstOrThrow()).payment_method : null;
           const paymentMethod = payerMandate ? 'direct_debit' : ownMethod === 'direct_debit' || !ownMethod ? 'transfer' : ownMethod;
-          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date, { paymentMethod });
+          await issueInvoice(tx, actor.organizationId, invId, run.issue_date, run.due_date, { paymentMethod, household: true });
           invoices++;
         }
         await tx.updateTable('fee_run').set({ status: 'posted', posted_at: new Date() }).where('id', '=', run.id).execute();
