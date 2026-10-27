@@ -19,7 +19,8 @@ import { assertCashNotNegative, bookingLines, lockJournal, postEntry, reverseEnt
 import { orgToday } from '../members/query.ts';
 import { requireClubWide, restrictedFields, type Actor } from '../policy.ts';
 import { readEinvoice } from '../receipts/einvoice.ts';
-import { sendSystemMail } from '../mail/system.ts';
+import { fill, SYSTEM_TEMPLATES } from '../../shared/mail.ts';
+import { createMessage } from './messages.ts';
 import { decrypt } from '../crypto.ts';
 
 const tags = ['ledger'];
@@ -165,12 +166,21 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
   };
 
   /** Tells the member about the decision (best effort: a mail problem never undoes the decision). */
-  async function notifyClaim(organizationId: string, id: string, approved: boolean, reason?: string) {
-    const c = await db.selectFrom('expense_claim').innerJoin('person', 'person.id', 'expense_claim.person_id').select(['person.email', 'person.first_name', 'person.company_name', 'expense_claim.purpose', 'expense_claim.amount_cents']).where('expense_claim.id', '=', id).executeTakeFirst();
+  /**
+   * The member hears about the decision through the mail queue, written in the decision's own transaction: the worker
+   * retries a failed send, and the delivery shows in the member's mail log (no lost notice after a crash or an SMTP
+   * outage).
+   */
+  async function notifyClaim(tx: Db, actor: Actor, id: string, approved: boolean, reason?: string) {
+    const c = await tx.selectFrom('expense_claim').innerJoin('person', 'person.id', 'expense_claim.person_id').select(['person.id as person_id', 'expense_claim.member_id', 'person.email', 'person.first_name', 'person.company_name', 'expense_claim.purpose', 'expense_claim.amount_cents']).where('expense_claim.id', '=', id).executeTakeFirst();
     if (!c?.email) return;
+    const org = await tx.selectFrom('organization').select('name').where('id', '=', actor.organizationId).executeTakeFirstOrThrow();
+    const own = await tx.selectFrom('mail_template').select(['subject', 'body']).where('organization_id', '=', actor.organizationId).where('key', '=', 'expense_decided').executeTakeFirst();
+    const t = own ?? SYSTEM_TEMPLATES.expense_decided;
     const betrag = (Number(c.amount_cents) / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
     const entscheidung = approved ? `„${c.purpose}“ ist angenommen. Wir überweisen Dir den Betrag.` : `„${c.purpose}“ ist abgelehnt.${reason ? ` Begründung: ${reason}` : ''}`;
-    await sendSystemMail(db, organizationId, 'expense_decided', c.email, { vorname: c.first_name ?? c.company_name ?? '', betrag, entscheidung });
+    const v = { verein: org.name, vorname: c.first_name ?? c.company_name ?? '', betrag, entscheidung };
+    await createMessage(tx, actor, { kind: 'free', category: 'notice', subject: fill(t.subject, v), body: fill(t.body, v), filter: { expenseClaimId: id } }, [{ personId: c.person_id, memberId: c.member_id, email: c.email }]);
   }
 
   app.get('/expense-claims', { schema: { tags, summary: 'Eingereichte Auslagen von Mitgliedern (offene zuerst)', response: { 200: z.array(expenseClaim) } } }, async (req) => {
@@ -207,8 +217,8 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
       });
       await tx.updateTable('expense_claim').set({ status: 'approved', receipt_id: id, decided_by: actor.userId, decided_at: new Date() }).where('id', '=', c.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'expense_claim.approved', entityType: 'expense_claim', entityId: c.id, diff: { receiptId: [null, id] } });
+      await notifyClaim(tx, actor, c.id, true);
     });
-    await notifyClaim(actor.organizationId, req.params.id, true);
     return claimDto(actor, (await claimRows(actor.organizationId).where('expense_claim.id', '=', req.params.id).executeTakeFirstOrThrow()));
   });
 
@@ -219,8 +229,8 @@ export const receiptRoutes: FastifyPluginAsyncZod = async (app) => {
       const res = await tx.updateTable('expense_claim').set({ status: 'rejected', reject_reason: req.body.reason, decided_by: actor.userId, decided_at: new Date() }).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('status', '=', 'submitted').executeTakeFirst();
       if (Number(res.numUpdatedRows) === 0) throw new Problem(409, 'decided', 'Diese Auslage gibt es nicht oder es ist schon entschieden.');
       await audit(tx, actor.organizationId, actor, { action: 'expense_claim.rejected', entityType: 'expense_claim', entityId: req.params.id, diff: { reason: [null, req.body.reason] } });
+      await notifyClaim(tx, actor, req.params.id, false, req.body.reason);
     });
-    await notifyClaim(actor.organizationId, req.params.id, false, req.body.reason);
     return claimDto(actor, (await claimRows(actor.organizationId).where('expense_claim.id', '=', req.params.id).executeTakeFirstOrThrow()));
   });
 

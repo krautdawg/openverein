@@ -11,7 +11,7 @@ import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { loadMemberRow, orgToday, scopePredicate } from '../members/query.ts';
 import { type Actor, can, requirePermission, requireStepUp, restrictedFields, scopeOf } from '../policy.ts';
 import { isValidCreditorId } from '../../shared/iban.ts';
-import { addBusinessDays, isTargetDay, pain001, pain008, splitIntoFiles } from '../sepa/pain.ts';
+import { addBusinessDays, isTargetDay, pain001, pain008, sepaText, splitIntoFiles } from '../sepa/pain.ts';
 import { addDays, formatDate } from '../../shared/dates.ts';
 import { fillRemittance } from '../../shared/organization.ts';
 import { validateSepa } from '../sepa/validate.ts';
@@ -30,7 +30,11 @@ async function remittanceFor(tx: Db, org: { name: string; remittance_template: s
   const p = await tx.selectFrom('invoice_line').innerJoin('assessment', 'assessment.id', 'invoice_line.assessment_id').select([sql<string | null>`min(assessment.period_start)::text`.as('from'), sql<string | null>`max(assessment.period_end)::text`.as('to')]).where('invoice_line.invoice_id', '=', inv.id).executeTakeFirst();
   const zeitraum = p?.from && p.to ? `${formatDate(p.from)}–${formatDate(p.to)}` : '';
   // pain.008 needs at least one character: a template that fills to nothing falls back to the invoice number.
-  return fillRemittance(org.remittance_template, { rechnungsnummer: c.number, mitgliedsnummer: inv.membership_number ?? '', zeitraum, verein: org.name }).trim() || c.number;
+  const text = fillRemittance(org.remittance_template, { rechnungsnummer: c.number, mitgliedsnummer: inv.membership_number ?? '', zeitraum, verein: org.name }).trim() || c.number;
+  // The bank keeps 140 characters (after transliteration): if the filled text is longer, the invoice number goes
+  // first, so cutting the end never loses what matches the payment to the invoice.
+  if (sepaText(text, 1000).length <= 140 || sepaText(text, 140).includes(sepaText(c.number, 140))) return text;
+  return `${c.number} ${text}`;
 }
 
 export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {

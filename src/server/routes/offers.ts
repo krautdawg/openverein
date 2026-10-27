@@ -9,7 +9,7 @@ import { requireActor } from '../auth/session.ts';
 import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { renderInvoicePdf } from '../invoices/pdf.ts';
-import { createDraft, lineTotal, personLines } from '../invoices/service.ts';
+import { createDraft, lineTotal, personLines, assertNetLine } from '../invoices/service.ts';
 import { loadMemberRow, orgToday } from '../members/query.ts';
 import { nextNumber } from '../members/numbers.ts';
 import { requireClubWide, type Actor } from '../policy.ts';
@@ -46,6 +46,7 @@ export const offerRoutes: FastifyPluginAsyncZod = async (app) => {
     await tx.deleteFrom('offer_line').where('offer_id', '=', offerId).execute();
     let total = 0;
     for (const [i, l] of lines.entries()) {
+      assertNetLine(l, i);
       const unit = l.net ? grossFromNet(l.unitCents, l.taxRate) : l.unitCents;
       const t = lineTotal(l.quantity, unit);
       total += t;

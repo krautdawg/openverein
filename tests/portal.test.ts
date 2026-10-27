@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { decrypt } from '../src/server/crypto.ts';
 import { setMailer } from '../src/server/mail/transport.ts';
+import { processQueue } from '../src/server/mail/worker.ts';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 const ctx = await testApp();
@@ -221,7 +222,8 @@ describe('member portal', () => {
     const receipts = (await admin.get('/receipts')).body as { id: string; supplier: string; status: string; totalCents: number }[];
     expect(receipts.find((r) => r.id === ok.body.receiptId)).toMatchObject({ supplier: 'Auslage Auslage, Ali', status: 'open', totalCents: 4590 });
     expect((await admin.post(`/expense-claims/${list[0].id}/reject`, { reason: 'zu spät' })).status).toBe(409);
-    // The member hears about the decision.
+    // The member hears about the decision (queued with it, sent by the mail worker).
+    await processQueue(ctx.db);
     const mails = await mailTo('ali@example.org', 2);
     expect(mails.map((x) => x.Subject)).toContain('Deine Auslage bei TSV Musterstadt 1890 e.V.');
     expect((await get('/portal/expenses', cookie)).json()[0].status).toBe('approved');

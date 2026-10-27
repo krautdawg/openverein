@@ -12,11 +12,11 @@ const euro = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'currency
  * A printed reminder for an open invoice at its latest dunning level: address in the DIN 5008 window, the open
  * amount, the dunning fee invoice if any, and how to pay. Rendered on demand (the reminder itself is the event log).
  */
-export async function dunningLetterPdf(db: Db, organizationId: string, invoiceId: string): Promise<{ pdf: Buffer; postalCode: string; number: string }> {
+export async function dunningLetterPdf(db: Db, organizationId: string, invoiceId: string): Promise<{ pdf: Buffer; postalCode: string; number: string; feeCents: number }> {
   const today = await orgToday(db, organizationId);
   const inv = await db.selectFrom('invoice').selectAll().where('id', '=', invoiceId).where('organization_id', '=', organizationId).executeTakeFirstOrThrow();
   const org = await db.selectFrom('organization').selectAll().where('id', '=', organizationId).executeTakeFirstOrThrow();
-  const dun = await db.selectFrom('dunning_event').leftJoin('invoice as fee', 'fee.id', 'dunning_event.fee_invoice_id').select(['dunning_event.label', 'dunning_event.fee_cents', 'fee.number as fee_number']).where('dunning_event.invoice_id', '=', invoiceId).orderBy('dunning_event.level', 'desc').executeTakeFirst();
+  const dun = await db.selectFrom('dunning_event').leftJoin('invoice as fee', 'fee.id', 'dunning_event.fee_invoice_id').select(['dunning_event.label', 'dunning_event.fee_cents', 'fee.number as fee_number', 'fee.status as fee_status', 'fee.total_cents as fee_total', 'fee.paid_cents as fee_paid']).where('dunning_event.invoice_id', '=', invoiceId).orderBy('dunning_event.level', 'desc').executeTakeFirst();
   const snap = inv.recipient as IssueSnapshot;
   const open = Number(inv.total_cents) - Number(inv.paid_cents);
   const payBy = formatDate(new Date(Date.parse(`${today}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10));
@@ -38,7 +38,9 @@ export async function dunningLetterPdf(db: Db, organizationId: string, invoiceId
   const first = snap.recipient.name.split(' ')[0];
   doc.text(`Hallo ${first},`, { width });
   doc.moveDown(0.6).text(`unsere Rechnung ${inv.number} vom ${formatDate(inv.issue_date!)} über ${euro(Number(inv.total_cents))} war am ${inv.due_date ? formatDate(inv.due_date) : '…'} fällig. Bei uns sind davon noch ${euro(open)} offen.`, { width, lineGap: 2 });
-  if (dun && Number(dun.fee_cents) > 0) doc.moveDown(0.6).text(`Für diese Mahnung berechnen wir ${euro(Number(dun.fee_cents))}${dun.fee_number ? ` (Rechnung ${dun.fee_number})` : ''}.`, { width });
+  // The fee as it stands now: a cancelled fee invoice is not claimed, a partly paid one with what is still open.
+  const feeOpen = !dun || Number(dun.fee_cents) <= 0 ? 0 : dun.fee_number ? (dun.fee_status === 'cancelled' || dun.fee_status === 'written_off' ? 0 : Number(dun.fee_total) - Number(dun.fee_paid)) : Number(dun.fee_cents);
+  if (feeOpen > 0) doc.moveDown(0.6).text(`Für diese Mahnung berechnen wir ${euro(feeOpen)}${dun?.fee_number ? ` (Rechnung ${dun.fee_number})` : ''}.`, { width });
   doc.moveDown(0.6).text(org.iban ? `Bitte überweise den offenen Betrag bis zum ${payBy} auf unser Konto ${formatIban(org.iban)}${org.bic ? ` (BIC ${org.bic})` : ''}. Verwendungszweck: ${inv.number}.` : `Bitte zahle den offenen Betrag bis zum ${payBy}. Verwendungszweck: ${inv.number}.`, { width, lineGap: 2 });
   doc.moveDown(0.6).text('Falls Du inzwischen bezahlt hast, betrachte dieses Schreiben bitte als gegenstandslos.', { width });
   doc.moveDown(1.2).text('Viele Grüße', { width });
@@ -50,5 +52,5 @@ export async function dunningLetterPdf(db: Db, organizationId: string, invoiceId
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
   });
-  return { pdf, number: inv.number!, postalCode: snap.recipient.lines.join(' ').match(/\b\d{5}\b/)?.[0] ?? '99999z' };
+  return { pdf, number: inv.number!, postalCode: snap.recipient.lines.join(' ').match(/\b\d{5}\b/)?.[0] ?? '99999z', feeCents: feeOpen };
 }

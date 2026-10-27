@@ -43,3 +43,10 @@ Not covered by a test:
 | G6 | Donations are never deleted | `g6Second` "never deletes a donation" | yes (without 0072) |
 | G6 | Reversals need an idempotency key; DATEV exports append-only | `g6Second` "needs an idempotency key …" | yes |
 | G6 | Art. 15 covers every person-linked table and the stored files | `g6Second` "puts every person-linked table …" | yes |
+| G13 | Net price with a quantity that changes the line total is refused | `g13Second` "refuses a net price …" | yes |
+| G13 | Credit notes get no "please pay" default text | `g13Second` "gives a credit note …" | yes |
+| G13 | Cancelled dunning fee not claimed on a letter | `fees` "proposes and applies dunning …" (`feeCents`) | yes |
+| G13 | Long SEPA remittance keeps the invoice number | `g13Second` "keeps the invoice number …" | yes |
+| G13 | Closing text in the XRechnung | `g13Second` "puts the closing text …" | yes |
+| G13 | Non-member payer sees the household invoice (deny wins) | `portalVerify` "Codex review G13 …" | yes |
+| G13 | Expense decision mail queued in the decision's transaction | `g13Second` "queues the expense decision mail …" | yes |
