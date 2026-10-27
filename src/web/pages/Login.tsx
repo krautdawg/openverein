@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
 import { AuthLayout } from '../components/AuthLayout.tsx';
+import { takeReturn } from '../components/ConnectAgent.tsx';
 import { Field } from '../components/Field.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { useInstanceConfig, useSetMe } from '../lib/session.tsx';
@@ -32,7 +33,7 @@ export function Login() {
     try {
       if (ticket) {
         setMe(await api<Me>('/auth/login/totp', { method: 'POST', body: { ticket, code: String(form.get('code') ?? '').trim().toLowerCase() } }));
-        navigate('/');
+        navigate(takeReturn() ?? '/');
         return;
       }
       const r = await api<Me | { totpRequired: true; ticket: string }>('/auth/login', { method: 'POST', body: { email: form.get('email'), password: form.get('password') } });
@@ -41,7 +42,7 @@ export function Login() {
         return;
       }
       setMe(r);
-      navigate('/');
+      navigate(takeReturn() ?? '/');
     } catch (err) {
       // An expired ticket means: start again with the password.
       if (err instanceof ApiError && err.problem.type.endsWith('/ticket-expired')) setTicket(undefined);

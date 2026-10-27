@@ -24,7 +24,7 @@
 
 ## 4. OAuth 2.1 (slice 4)
 
-- [ ] 4.1 Metadata (RFC 9728 for `/mcp`, RFC 8414), `WWW-Authenticate` on every 401 from `/mcp`
-- [ ] 4.2 Stateless DCR (signed client_id), authorize with PKCE S256 and `resource`, token endpoint, nonce table for single use
-- [ ] 4.3 Consent pages in the web app and portal; replacing a grant from the same client
-- [ ] 4.4 Tests: tampering, redirect mismatch, PKCE, expiry, double redemption, audience, replacement; a flow script
+- [x] 4.1 Metadata (RFC 9728 for `/mcp`, RFC 8414), `WWW-Authenticate` on every 401 from `/mcp`
+- [x] 4.2 Stateless DCR (signed client_id), authorize with PKCE S256 and `resource`, token endpoint, nonce table for single use
+- [x] 4.3 Consent pages in the web app and portal; replacing a grant from the same client
+- [x] 4.4 Tests: tampering, redirect mismatch, PKCE, double and parallel redemption, audience, replacement, step-up (the full flow runs in tests/agentOAuth.test.ts)

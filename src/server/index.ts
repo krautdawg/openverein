@@ -6,6 +6,7 @@ import { createDb } from './db.ts';
 import { sweepFiles } from './files/store.ts';
 import { pruneSignIns } from './routes/portal.ts';
 import { pruneAgentCalls } from './agents/tokens.ts';
+import { pruneOAuthCodes } from './agents/oauth.ts';
 import { pruneApplications } from './routes/applications.ts';
 import { startMailWorker } from './mail/worker.ts';
 import { pruneJobs, startJobWorker } from './jobs/worker.ts';
@@ -64,6 +65,7 @@ const refresh = () =>
     sweepFiles(db).then((n) => n && app.log.info(`${n} unused files removed`)),
     pruneSignIns(db),
     pruneAgentCalls(db),
+    pruneOAuthCodes(db),
     pruneApplications(db),
     pruneIdempotencyKeys(db),
     pruneWebhookDeliveries(db),

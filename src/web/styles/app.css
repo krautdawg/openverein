@@ -761,3 +761,8 @@ td[data-over] { color: var(--danger); font-weight: 600; }
   .agents-log li { grid-template-columns: 1fr 3.5em 13em; }
   .agents-log-meta { grid-column: auto; text-align: right; }
 }
+.connect-choices { display: grid; gap: var(--s-3); margin-top: var(--s-5); }
+.connect-uri { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; overflow-wrap: anywhere; }
+/* Many tabs (settings): on wide screens they wrap instead of hiding behind the edge; on phones they scroll, and a fade at the edge says so. */
+@media (min-width: 768px) { .subnav-wrap { flex-wrap: wrap; overflow-x: visible; row-gap: 0; } }
+@media (max-width: 767px) { .subnav-wrap { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); padding-right: var(--s-6); } }

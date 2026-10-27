@@ -4,6 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListResourcesRequestSchema, ListToolsRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { actorFromRequest } from '../auth/session.ts';
+import { hostBase } from './oauth.ts';
 import type { Actor } from '../policy.ts';
 import { level, MODULES, type Module } from '../policy.ts';
 import { INTERNAL_HEADER, internalSecret, type PersonalToken } from './tokens.ts';
@@ -25,7 +26,7 @@ interface OpenApiOp { operationId?: string; summary?: string; tags?: string[]; s
 export interface Tool { name: string; method: string; path: string; description: string; tag: string | null; inputSchema: { type: 'object'; properties: Record<string, object>; required: string[] }; pathParams: string[]; queryParams: string[]; hasBody: boolean }
 
 // Not for agents: sign-in and token management (people only), the operator API, uploads of raw bytes.
-const EXCLUDED = /^\/(auth\/(?!me$)|setup$|operator\/|personal-tokens|portal\/(auth|tokens)|files(\/\{[^}]+\}\/versions)?$|receipts\/files$|portal\/expenses\/files$|unsubscribe\/|forms\/|applications\/public)/;
+const EXCLUDED = /^\/(auth\/(?!me$)|setup$|operator\/|personal-tokens|oauth\/|portal\/(auth|tokens|oauth)|files(\/\{[^}]+\}\/versions)?$|receipts\/files$|portal\/expenses\/files$|unsubscribe\/|forms\/|applications\/public)/;
 
 /** All operations of the OpenAPI document as tools (computed once). */
 export function toolsFrom(doc: { paths: Record<string, Record<string, OpenApiOp>> }): Tool[] {
@@ -170,16 +171,27 @@ export function registerMcp(app: FastifyInstance) {
   let all: Tool[] | undefined;
   const tools = () => (all ??= toolsFrom(app.swagger() as never));
 
-  const unauthorized = (reply: FastifyReply, detail: string) => {
-    reply.header('www-authenticate', 'Bearer realm="openverein"');
+  // On every 401 the way to OAuth (RFC 9728): clients read resource_metadata and start the flow.
+  const unauthorized = async (req: FastifyRequest, reply: FastifyReply, detail: string) => {
+    const { base } = await hostBase(app.db, req);
+    reply.header('www-authenticate', `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
     return reply.status(401).type('application/problem+json').send({ type: 'https://openverein.org/probleme/unauthenticated', title: 'Der MCP-Zugang braucht ein Token.', status: 401, detail });
   };
+
+  // Every 401 at /mcp carries the way to OAuth, also a revoked or expired token refused before the handler (RFC 9728).
+  app.addHook('onSend', async (req, reply, payload) => {
+    if (reply.statusCode === 401 && (req.routeOptions.config as { mcp?: boolean } | undefined)?.mcp && !reply.hasHeader('www-authenticate')) {
+      const { base } = await hostBase(app.db, req);
+      reply.header('www-authenticate', `Bearer error="invalid_token", resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
+    }
+    return payload;
+  });
 
   app.post(MCP_PATH, { config: { mcp: true }, bodyLimit: 64 * 1024, schema: { hide: true } }, async (req, reply) => {
     const t = req.agentToken;
     // One request, one message: a JSON-RPC batch (dropped in protocol 2025-06-18) would fan out many calls at once.
     if (Array.isArray(req.body)) return reply.status(400).send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Keine Stapel-Anfragen: bitte eine Nachricht pro Anfrage.' } });
-    if (!t) return unauthorized(reply, 'Authorization: Bearer ov_pat_… (Verwaltung) oder ov_mpt_… (Mitgliederportal); erstellen unter Einstellungen → Agenten bzw. im Portal unter Agenten.');
+    if (!t) return unauthorized(req, reply, 'Authorization: Bearer ov_pat_… (Verwaltung) oder ov_mpt_… (Mitgliederportal); erstellen unter Einstellungen → Agenten bzw. im Portal unter Agenten.');
     // /mcp is outside /api, where the actor hook runs: resolve it here, the same way.
     const actor = await actorFromRequest(app.db, req, reply);
     const visible = visibleTools(tools(), t, actor);

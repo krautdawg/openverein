@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { registerAgentTokens } from './agents/tokens.ts';
 import { registerMcp } from './agents/mcp.ts';
+import { registerOAuth } from './agents/oauth.ts';
 import { agentRoutes } from './routes/agents.ts';
 import { demoResetting } from './demo/reset.ts';
 import Fastify from 'fastify';
@@ -195,6 +196,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     { prefix: '/api/v1' },
   );
   registerMcp(app);
+  await registerOAuth(app, db);
 
   const serveWeb = opts.serveWeb ?? existsSync(config.webDist);
   if (serveWeb) {
