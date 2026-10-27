@@ -33,8 +33,9 @@ OpenVerein differs from it in three ways:
    - A new consent from the same client (same name and redirect URIs) replaces the old grant.
    - Errors before the redirect URI is validated are shown as a page, never redirected.
 
+9. **Many operations, few tools.** A full admin reaches about 300 operations, which comes to roughly 250 kB of schemas in `tools/list`, too much for an agent's context. Up to 60 visible operations (members always), every operation is its own tool. Above that, the token gets three tools: `operationen_suchen`, `operation_beschreiben` and `operation_aufrufen`. They work from the same operation list and permission filter and run the same route.
+
 ## Risks
 
 - Generated operation IDs change when a path changes. The snapshot test makes such a change explicit.
-- MCP tool count: more than 300 operations. `tools/list` is filtered by permission, and descriptions use the route `summary`. If clients choke on the size, a later step groups the tools by tag.
 - An in-memory limit is not shared across instances. It is acceptable at club scale and documented.

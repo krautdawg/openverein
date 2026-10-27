@@ -48,6 +48,7 @@ export function AgentTokens({ base, whoAmI, modules }: { base: '/personal-tokens
   const live = tokens.data?.filter((t) => !t.revoked && t.expiresAt > new Date().toISOString()) ?? [];
   const gone = tokens.data?.filter((t) => !live.includes(t)) ?? [];
   const curl = secret && `curl -H "Authorization: Bearer ${secret}" ${location.origin}/api/v1${whoAmI}`;
+  const claudeCode = secret && `claude mcp add --transport http openverein ${location.origin}/mcp --header "Authorization: Bearer ${secret}"`;
 
   return (
     <div className="agents">
@@ -58,7 +59,9 @@ export function AgentTokens({ base, whoAmI, modules }: { base: '/personal-tokens
           <div className="actions-row" style={{ marginTop: 'var(--s-2)' }}>
             <button className="btn" onClick={() => void navigator.clipboard?.writeText(secret)}>Token kopieren</button>
           </div>
-          <p className="agents-step">Probier es aus. Dein Agent oder ein Terminal fragt damit, wer Du bist:</p>
+          <p className="agents-step">Claude Code oder ein anderer MCP-Client verbindet sich so:</p>
+          <pre className="agents-code">{claudeCode}</pre>
+          <p className="agents-step">Oder probier es im Terminal. Damit fragst Du, wer Du bist:</p>
           <pre className="agents-code">{curl}</pre>
           <p className="agents-step">Alle Operationen stehen unter <a href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>.</p>
         </section>
