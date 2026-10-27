@@ -4,6 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListResourcesRequestSchema, ListToolsRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { actorFromRequest } from '../auth/session.ts';
+import { hostBase } from './oauth.ts';
 import type { Actor } from '../policy.ts';
 import { level, MODULES, type Module } from '../policy.ts';
 import { INTERNAL_HEADER, internalSecret, type PersonalToken } from './tokens.ts';
@@ -170,8 +171,10 @@ export function registerMcp(app: FastifyInstance) {
   let all: Tool[] | undefined;
   const tools = () => (all ??= toolsFrom(app.swagger() as never));
 
-  const unauthorized = (reply: FastifyReply, detail: string) => {
-    reply.header('www-authenticate', 'Bearer realm="openverein"');
+  // On every 401 the way to OAuth (RFC 9728): clients read resource_metadata and start the flow.
+  const unauthorized = async (req: FastifyRequest, reply: FastifyReply, detail: string) => {
+    const { base } = await hostBase(app.db, req);
+    reply.header('www-authenticate', `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
     return reply.status(401).type('application/problem+json').send({ type: 'https://openverein.org/probleme/unauthenticated', title: 'Der MCP-Zugang braucht ein Token.', status: 401, detail });
   };
 
@@ -179,7 +182,7 @@ export function registerMcp(app: FastifyInstance) {
     const t = req.agentToken;
     // One request, one message: a JSON-RPC batch (dropped in protocol 2025-06-18) would fan out many calls at once.
     if (Array.isArray(req.body)) return reply.status(400).send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Keine Stapel-Anfragen: bitte eine Nachricht pro Anfrage.' } });
-    if (!t) return unauthorized(reply, 'Authorization: Bearer ov_pat_… (Verwaltung) oder ov_mpt_… (Mitgliederportal); erstellen unter Einstellungen → Agenten bzw. im Portal unter Agenten.');
+    if (!t) return unauthorized(req, reply, 'Authorization: Bearer ov_pat_… (Verwaltung) oder ov_mpt_… (Mitgliederportal); erstellen unter Einstellungen → Agenten bzw. im Portal unter Agenten.');
     // /mcp is outside /api, where the actor hook runs: resolve it here, the same way.
     const actor = await actorFromRequest(app.db, req, reply);
     const visible = visibleTools(tools(), t, actor);

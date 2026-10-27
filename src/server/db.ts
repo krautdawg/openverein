@@ -1011,6 +1011,7 @@ export interface Database {
   oidc_identity: OidcIdentityTable;
   personal_token: PersonalTokenTable;
   agent_call: AgentCallTable;
+  oauth_code: { nonce: string; used_at: Generated<Date> };
   idempotency_key: IdempotencyKeyTable;
   invoice_einvoice: InvoiceEinvoiceTable;
   duplicate_dismissal: DuplicateDismissalTable;

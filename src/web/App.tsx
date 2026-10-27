@@ -51,6 +51,7 @@ import { Roles } from './pages/settings/Roles.tsx';
 import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
 import { Users } from './pages/settings/Users.tsx';
 import './lib/search.ts';
+import { ConnectChooser, ConnectConsent } from './components/ConnectAgent.tsx';
 
 /** The member portal is its own small app with its own sign-in; everything else is the admin app. */
 export function App() {
@@ -88,12 +89,14 @@ function AdminApp() {
         <Route path="/anmelden" element={<Login />} />
         <Route path="/einladung" element={<AcceptInvite />} />
         <Route path="/abmelden" element={<Unsubscribe />} />
+        <Route path="/verbinden" element={<ConnectChooser />} />
         <Route path="*" element={<Navigate to="/anmelden" replace />} />
       </Routes>
     );
   }
   return (
     <Routes>
+      <Route path="/verbinden" element={<ConnectConsent base="/oauth" who={`${me.data.name} (Vereinsverwaltung)`} other={{ label: 'Stattdessen als Mitglied verbinden', href: `/portal/verbinden${location.search}` }} />} />
       <Route element={<Shell me={me.data} demo={!!cfg.data?.demo || me.data.organization.isDemo} />}>
         <Route index element={<Overview me={me.data} />} />
         <Route path="/mitglieder" element={<Members me={me.data} />} />

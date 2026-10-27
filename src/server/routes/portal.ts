@@ -19,6 +19,7 @@ import { config } from '../config.ts';
 import { blindIndex, encrypt } from '../crypto.ts';
 import { memberTokenCreate, personalToken, tokenCreated } from '../../shared/agents.ts';
 import { assertRoom, newToken, tokenList } from '../agents/tokens.ts';
+import { checkRequest, consentInput, consentView, decide, hostBase } from '../agents/oauth.ts';
 import type { ChangeField, Db } from '../db.ts';
 import { getBlob, putBlob } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
@@ -245,6 +246,19 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const t = (await tokenList(db, owner)).find((x) => x.id === req.params.id);
     if (!t) throw notFound('Token');
     return t;
+  });
+
+  app.get('/portal/oauth/request', { schema: { tags, summary: 'Eine OAuth-Anfrage für die Zustimmungsseite prüfen', security: [], querystring: z.record(z.string(), z.string()) } }, async (req, reply) => {
+    await portalPerson(req, reply);
+    const c = checkRequest(req.query, (await hostBase(db, req)).resource);
+    if (!c.ok) throw new Problem(400, 'oauth-request', c.description);
+    reply.header('cache-control', 'private, no-store');
+    return consentView(c.request);
+  });
+
+  app.post('/portal/oauth/consent', { schema: { tags, summary: 'Einem MCP-Client erlauben (oder ablehnen), zu sehen, was Du im Portal siehst; gibt die Weiterleitung zurück', security: [], body: consentInput } }, async (req, reply) => {
+    const { owner } = await portalPerson(req, reply);
+    return decide(db, req, { org: owner.organizationId, kind: 'member', sub: owner.email, actor: null }, req.body);
   });
 
   app.get('/portal/me', { schema: { tags, summary: 'Meine Mitgliedschaften (alle unter meiner E-Mail-Adresse)', security: [] } }, async (req, reply) => {

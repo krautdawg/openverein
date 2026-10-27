@@ -4,6 +4,7 @@ import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from 'react-
 import { Bot, FileText, Home, LogOut, Receipt, Wallet } from 'lucide-react';
 import { EXPENSE_STATUS_LABEL } from '../../shared/expenses.ts';
 import { AgentTokens } from '../components/AgentTokens.tsx';
+import { ConnectConsent, rememberReturn, takeReturn } from '../components/ConnectAgent.tsx';
 import { MoneyField } from '../components/MoneyField.tsx';
 import { PollBars } from '../pages/Polls.tsx';
 import { formatDate } from '../../shared/dates.ts';
@@ -51,10 +52,13 @@ export function PortalApp() {
     return (
       <Routes>
         <Route path="/portal/anmelden" element={<PortalLogin />} />
+        <Route path="/portal/verbinden" element={<RememberAndSignIn />} />
         <Route path="*" element={<Navigate to="/portal/anmelden" replace />} />
       </Routes>
     );
   }
+  // The consent stands alone (like a sign-in page): no tabs that could lead away from the decision.
+  if (location.pathname === '/portal/verbinden') return <ConnectConsent base="/portal/oauth" who={`Mitglied (${me.data.email})`} />;
   return (
     <PortalShell me={me.data}>
       <Routes>
@@ -151,7 +155,7 @@ function PortalLogin() {
     setBusy(true);
     try {
       await api('/portal/auth/verify', { method: 'POST', body: { email, code } });
-      history.replaceState(null, '', '/portal');
+      history.replaceState(null, '', takeReturn() ?? '/portal');
       await qc.invalidateQueries({ queryKey: ['portal-me'] });
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);
@@ -545,4 +549,12 @@ function PortalAgents() {
       <AgentTokens base="/portal/tokens" whoAmI="/portal/me" />
     </>
   );
+}
+
+/** Opened from a KI client before signing in: keep the consent page for after the code. */
+function RememberAndSignIn() {
+  // Read now, before the redirect changes the address.
+  const [target] = useState(() => `/portal/verbinden${location.search}`);
+  useEffect(() => rememberReturn(target), [target]);
+  return <Navigate to="/portal/anmelden" replace />;
 }
