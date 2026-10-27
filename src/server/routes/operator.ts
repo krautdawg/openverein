@@ -27,7 +27,8 @@ export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
   const digest = (t: string) => createHash('sha256').update(t).digest();
 
   app.addHook('onRequest', async (req) => {
-    if (!req.url.startsWith('/api/v1/operator/')) return;
+    // The matched route pattern, never the raw URL: /api/v1/%6Fperator/… routes here too (Codex/claude review G16).
+    if (!(req.routeOptions.url ?? '').startsWith('/api/v1/operator/')) return;
     if (!config.multiTenant) throw notFound('Seite');
     const given = req.headers['x-operator-token'];
     if (typeof given !== 'string' || !timingSafeEqual(digest(given), digest(config.operatorToken))) throw new Problem(401, 'operator-token', 'Betreiber-Schlüssel fehlt oder stimmt nicht.');

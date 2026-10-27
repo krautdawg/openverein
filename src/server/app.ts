@@ -102,7 +102,8 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   };
 
   app.addHook('onRequest', async (req, reply) => {
-    if (!isApi(req.url)) return;
+    // The route pattern where there is one: a percent-encoded path (/%61pi/…) is routed like the plain one.
+    if (!isApi(req.routeOptions.url ?? req.url)) return;
     // CSRF: state-changing API calls must be JSON (a cross-site form cannot send that without a
     // CORS preflight we never answer) and, when the browser sends an Origin, come from this host.
     // One-click unsubscribe (RFC 8058) comes from mail programs as a form post; it carries its own token and no cookie matters.
