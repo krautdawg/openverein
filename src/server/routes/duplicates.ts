@@ -12,6 +12,8 @@ const side = z.object({ personId: z.uuid(), memberId: z.uuid().nullable(), name:
 const pair = z.object({ score: z.number(), matches: z.array(z.enum(['name', 'birthDate', 'email', 'iban', 'address'])), a: side, b: side });
 const ordered = (x: string, y: string) => (x < y ? [x, y] : [y, x]) as [string, string];
 CONSTRAINT_MESSAGES.person_archived = 'Diese Person ist als Dublette archiviert. Nimm die Person, die geblieben ist.';
+CONSTRAINT_MESSAGES.person_anonymised = 'Diese Person ist anonymisiert; neue Daten zu ihr werden nicht mehr erfasst.';
+CONSTRAINT_MESSAGES.donation_kept = 'Spenden werden ungültig gemacht, nicht gelöscht.';
 /** Scoring and even which pairs appear reveal these fields, so the search needs all of them visible. */
 const SCORING_FIELDS = ['birth_date', 'email', 'iban'];
 

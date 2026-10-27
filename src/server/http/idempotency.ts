@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { sql } from 'kysely';
 import type { Db } from '../db.ts';
+import { requirePermission, type Module } from '../policy.ts';
 import { Problem } from './problem.ts';
 
 /** POST routes that create money objects: they need an `Idempotency-Key` header. */
@@ -29,10 +30,24 @@ export const MONEY_ROUTES = new Set(
     '/expense-claims/:id/approve',
     '/bank-transactions/book',
     '/offers/:id/convert',
+    '/ledger/entries/:id/reverse',
+    '/donations/:id/void',
+    '/bank-transactions/:id/unmatch',
     '/allowances/payments',
   ].map((r) => `/api/v1${r}`),
 );
 const TTL_HOURS = 24;
+
+/** The module whose write right a money route needs (for replays, which skip the route's own checks). */
+function moduleOf(route: string): Module {
+  const path = route.replace('/api/v1/', '');
+  if (path.startsWith('fee-runs')) return 'fees';
+  if (path.startsWith('collection-runs')) return 'sepa';
+  if (path.startsWith('bank-transactions')) return 'banking';
+  if (path.startsWith('donation')) return 'donations';
+  if (path.startsWith('ledger') || path.startsWith('receipts') || path.startsWith('expense-claims') || path.startsWith('allowances')) return 'ledger';
+  return 'invoices';
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -61,6 +76,8 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
       if (prior.status_code === null) throw new Problem(409, 'idempotency-in-progress', 'Diese Anfrage wird gerade bearbeitet oder ihr Ergebnis ist unklar.', 'Prüfe, ob die Buchung angekommen ist, bevor Du es noch einmal versuchst; eine neue Anfrage braucht dann einen neuen Schlüssel.');
       // The stored answer was dropped by an anonymisation: the request ran, but its response is gone.
       if (prior.response === null) throw new Problem(409, 'idempotency-already-done', 'Diese Anfrage wurde schon ausgeführt.', 'Lade die Seite neu, um das Ergebnis zu sehen.');
+      // A replay answers without running the route: the right it needs is checked here, as it stands today.
+      requirePermission(req.actor, moduleOf(req.routeOptions.url ?? ''), 'write');
       reply.header('idempotent-replayed', 'true');
       return reply.status(prior.status_code).type(prior.content_type ?? 'application/json').send(prior.response);
     }

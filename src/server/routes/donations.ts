@@ -96,7 +96,8 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
         const person = await tx.selectFrom('person').select(['kind', 'first_name', 'last_name', 'company_name']).where('id', '=', personId).executeTakeFirstOrThrow();
         entryId = (await postEntry(tx, actor.organizationId, {
           date: b.date, text: `Spende ${nameOf(person)}`, source: 'donation', createdBy: actor.userId,
-          lines: [{ accountId: money.id, debitCents: b.amountCents, sphere: 'ideell' }, { accountId: income.id, creditCents: b.amountCents, sphere: 'ideell' }],
+          // The income account's sphere (a donation is usually ideell; the account says what it is).
+          lines: [{ accountId: money.id, debitCents: b.amountCents, sphere: income.default_sphere }, { accountId: income.id, creditCents: b.amountCents, sphere: income.default_sphere }],
         })).id;
       }
       const d = await tx.insertInto('donation').values({ organization_id: actor.organizationId, person_id: personId, donated_on: b.date, amount_cents: b.amountCents, waiver: b.waiver, note: b.note ?? null, journal_entry_id: entryId, created_by: actor.userId, ...(b.inKind && { kind: 'in_kind' as const, in_kind_description: b.inKind.description, in_kind_source: b.inKind.source, in_kind_valuation_docs: b.inKind.valuationDocs }) }).returning('id').executeTakeFirstOrThrow();
@@ -171,6 +172,9 @@ export const donationRoutes: FastifyPluginAsyncZod = async (app) => {
     const items = await tx.selectFrom('donation').selectAll().where('id', 'in', donationIds).where('person_id', '=', personId).where('organization_id', '=', actor.organizationId).where('voided_at', 'is', null).orderBy('id').forUpdate().execute();
     if (items.length !== donationIds.length || !items.length) throw invalid('donationIds', 'Spenden nicht gefunden oder von einer anderen Person.');
     if (new Set(items.map((i) => i.donated_on.slice(0, 4))).size > 1) throw invalid('donationIds', 'Eine Sammelbestätigung gilt für ein Kalenderjahr.');
+    // Income booked to the economic business (e.g. sponsoring) is no donation and gets no receipt.
+    const entryIds = items.map((i) => i.journal_entry_id).filter((x): x is string => !!x);
+    if (entryIds.length && (await tx.selectFrom('journal_line').select('id').where('entry_id', 'in', entryIds).where('sphere', '=', 'wirtschaft').executeTakeFirst())) throw invalid('donationIds', 'Eine Zahlung ist im wirtschaftlichen Geschäftsbetrieb gebucht (z. B. Sponsoring); dafür gibt es keine Zuwendungsbestätigung.');
     // Sachzuwendungen have their own template and are never part of a collective receipt.
     const inKind = items.length === 1 && items[0]!.kind === 'in_kind' ? items[0]! : null;
     // Older records: refuse what the template would print incompletely or the law requires evidence for.

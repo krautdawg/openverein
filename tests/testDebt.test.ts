@@ -196,8 +196,6 @@ describe('G12 guards', () => {
 });
 
 describe('G17 guards', () => {
-  // Passes on the old trigger (0064) too: PostgreSQL waits for the archiving transaction and re-checks the row
-  // either way (see docs/test-debt.md). Kept as the behaviour check for the lock-first form of 0071.
   it('archived person: an insert waits for a running archive even without a foreign key to wait on', async () => {
     const m = (await admin.post('/members', { firstName: 'Rita', lastName: 'Race', joinDate: '2020-01-01' })).body;
     // A table with the guard but no foreign key: nothing else makes the insert wait for the archiving transaction.

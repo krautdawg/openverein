@@ -7,6 +7,7 @@ import { CONSENT_PURPOSE_LABEL, consent, consentInput, privacyState, reviewItem 
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { zip } from '../exports/zip.ts';
+import { getBlob } from '../files/store.ts';
 import { customText } from '../../shared/customFields.ts';
 import { anonymise, anonymiseBlockers, recordErasureFile } from '../gdpr/service.ts';
 import { notFound, Problem } from '../http/problem.ts';
@@ -56,6 +57,10 @@ export const PERSON_EXPORT: Record<string, string> = {
   einvoice_address: 'E-Rechnungsadresse', vat_id: 'USt-IdNr.', legal_hold_reason: 'Löschsperre',
 };
 /** Technical columns; `custom` goes out as its own section (Weitere Angaben). */
+/** Tables that link to a person or member: each is in the Art. 15 export, or listed here with the reason (a test checks it). */
+export const ART15_TABLES = ['person', 'member', 'group_membership', 'consent', 'invoice', 'sepa_mandate', 'donation', 'donation_receipt', 'participation', 'delivery', 'change_request', 'application', 'file', 'contact_log', 'offer', 'task', 'honour', 'fee_assignment', 'assessment', 'collection_item', 'allowance_payment', 'allowance_declaration', 'expense_claim', 'work_hour_entry', 'work_hour_settlement', 'inventory_loan', 'assembly_attendance', 'poll_vote', 'greeting_sent', 'household'];
+export const ART15_NOT_EXPORTED: Record<string, string> = { erasure_log: 'records only that an erasure happened (ids), kept to repeat it after a restore' };
+
 export const PERSON_NOT_EXPORTED = ['id', 'organization_id', 'updated_at', 'import_run_id', 'anonymised_at', 'custom'];
 
 export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -87,6 +92,10 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     if (b.purpose === 'other' && !b.label) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'label', message: 'Bitte beschreiben, wofür die Einwilligung gilt.' }] });
     const c = await db.transaction().execute(async (tx) => {
       const c = await tx.insertInto('consent').values({ organization_id: actor.organizationId, person_id: p.id, purpose: b.purpose, label: b.purpose === 'other' ? b.label! : null, source: b.source, text_version: b.textVersion ?? null, created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();
+      // A fresh newsletter consent ends an earlier unsubscribe (bounces and manual blocks stay), unless the address is
+      // shared with someone else in the club, whose unsubscribe it may be.
+      const shared = p.email ? await tx.selectFrom('person').select('id').where('organization_id', '=', actor.organizationId).where('id', '<>', p.id).where(sql<boolean>`lower(email) = lower(${p.email})`).executeTakeFirst() : undefined;
+      if (b.purpose === 'newsletter' && p.email && !shared) await tx.deleteFrom('suppression').where('organization_id', '=', actor.organizationId).where('email_hash', '=', emailHash(p.email)).where('reason', '=', 'unsubscribe').execute();
       await audit(tx, actor.organizationId, actor, { action: 'consent.granted', entityType: 'person', entityId: p.id, diff: { purpose: [null, b.purpose], source: [null, b.source] } });
       return c;
     });
@@ -115,9 +124,12 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
   app.put('/persons/:id/legal-hold', { schema: { tags, summary: 'Löschsperre setzen oder aufheben (blockiert Anonymisierung)', params: idParam, body: z.object({ reason: z.string().trim().min(3).max(300).nullable() }), response: { 200: z.object({ legalHoldReason: z.string().nullable() }) } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'members', 'write');
-    const p = await personOf(actor.organizationId, req.params.id);
-    if (p.anonymised_at) throw new Problem(409, 'anonymised', 'Diese Person ist anonymisiert.');
+    const found = await personOf(actor.organizationId, req.params.id);
     await db.transaction().execute(async (tx) => {
+      // Locked and checked here: an anonymisation running at the same time finishes first, and a hold is not
+      // reported as set on someone already erased.
+      const p = await tx.selectFrom('person').select(['id', 'anonymised_at', 'legal_hold_reason']).where('id', '=', found.id).forUpdate().executeTakeFirstOrThrow();
+      if (p.anonymised_at) throw new Problem(409, 'anonymised', 'Diese Person ist anonymisiert.');
       await tx.updateTable('person').set({ legal_hold_reason: req.body.reason, updated_at: new Date() }).where('id', '=', p.id).execute();
       await audit(tx, actor.organizationId, actor, { action: req.body.reason ? 'person.legal_hold' : 'person.legal_hold_released', entityType: 'person', entityId: p.id, diff: { reason: [p.legal_hold_reason, req.body.reason] } });
     });
@@ -150,7 +162,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const members = await db.selectFrom('member').selectAll().where('person_id', '=', p.id).execute();
     const memberIds = members.map((m) => m.id).concat(['00000000-0000-0000-0000-000000000000']);
     const q = <T>(rows: Promise<T[]>) => rows;
-    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours] = await Promise.all([
+    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours, fees, assessments, collections, allowances, declarations, claims, hours, settlements, loans, attendance, votes, greetings, households] = await Promise.all([
       q(db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['club_group.name as Gruppe', 'group_membership.member_id']).where('group_membership.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('consent').selectAll().where('person_id', '=', p.id).execute()),
       q(db.selectFrom('invoice').select(['number as Nummer', 'kind as Art', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'paid_cents as Bezahlt_Cent', 'status as Status']).where('recipient_person_id', '=', p.id).where('status', '<>', 'draft').execute()),
@@ -167,6 +179,19 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('offer').select(['number as Nummer', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).where('status', '<>', 'draft').execute()),
       q(db.selectFrom('task').select(['title as Aufgabe', 'note as Notiz', 'due_on as Fällig', 'done_at as Erledigt', 'created_at as Angelegt']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('honour').select(['title as Ehrung', 'awarded_on as Verliehen', 'decision as Beschluss']).where('member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('fee_assignment').innerJoin('fee_plan', 'fee_plan.id', 'fee_assignment.fee_plan_id').select(['fee_plan.name as Beitrag', 'fee_assignment.valid_from as Ab', 'fee_assignment.valid_to as Bis', 'fee_assignment.override_cents as Abweichend_Cent']).where('fee_assignment.member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('assessment').select(['period_start as Von', 'period_end as Bis', 'amount_cents as Betrag_Cent', 'status as Status']).where('member_id', 'in', memberIds).orderBy('period_start').execute()),
+      q(db.selectFrom('collection_item').select(['end_to_end_id as Referenz', 'amount_cents as Betrag_Cent', 'sequence_type as Art', 'status as Status', 'created_at as Erstellt']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('allowance_payment').select(['kind as Art', 'paid_on as Gezahlt', 'amount_cents as Betrag_Cent', 'text as Wofür', 'voided_at as Ungültig']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('allowance_declaration').select(['kind as Art', 'year as Jahr', 'other_cents as Anderweitig_Cent', 'declared_on as Erklärt']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('expense_claim').select(['purpose as Wofür', 'spent_on as Bezahlt', 'amount_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('work_hour_entry').select(['worked_on as Datum', 'hours as Stunden', 'text as Wofür']).where('member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('work_hour_settlement').select(['year as Jahr', 'required as Soll', 'done as Geleistet', 'missing as Fehlend']).where('member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('inventory_loan').innerJoin('inventory_item', 'inventory_item.id', 'inventory_loan.item_id').select(['inventory_item.name as Gegenstand', 'inventory_loan.lent_on as Ausgeliehen', 'inventory_loan.returned_on as Zurück']).where('inventory_loan.member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('assembly_attendance').innerJoin('assembly', 'assembly.id', 'assembly_attendance.assembly_id').select(['assembly.title as Versammlung', 'assembly.held_on as Am']).where('assembly_attendance.member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('poll_vote').innerJoin('poll', 'poll.id', 'poll_vote.poll_id').select(['poll.question as Umfrage', 'poll_vote.choices as Antwort', 'poll_vote.voted_at as Am']).where('poll_vote.member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('greeting_sent').select(['kind as Art', 'year as Jahr', 'sent_at as Gesendet']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('household').select(['name as Haushalt', 'created_at as Seit']).where('payer_person_id', '=', p.id).execute()),
     ]);
     const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
@@ -180,6 +205,19 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Angebote', offers as Row[]],
       ['Aufgaben', tasks as Row[]],
       ['Ehrungen', honours as Row[]],
+      ['Beiträge', fees as Row[]],
+      ['Beitragsabrechnungen', assessments as Row[]],
+      ['Lastschriften', collections as Row[]],
+      ['Pauschalen', allowances as Row[]],
+      ['Pauschalen-Erklärungen', declarations as Row[]],
+      ['Auslagen', claims as Row[]],
+      ['Arbeitsstunden', hours as Row[]],
+      ['Arbeitsstunden-Abrechnungen', settlements as Row[]],
+      ['Ausleihen', loans as Row[]],
+      ['Versammlungen', attendance as Row[]],
+      ['Umfrage-Antworten', votes as Row[]],
+      ['Glückwünsche', greetings as Row[]],
+      ['Haushalte (als zahlende Person)', households as Row[]],
       ['SEPA-Mandate', mandates as Row[]],
       ['Spenden', donations as Row[]],
       ['Zuwendungsbestätigungen', receipts as Row[]],
@@ -193,7 +231,17 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     ];
     const title = `Auskunft über gespeicherte Daten: ${p.company_name ?? [p.first_name, p.last_name].filter(Boolean).join(' ')}`;
     const json = Buffer.from(JSON.stringify(Object.fromEntries(sections), null, 2), 'utf8');
-    const file = zip([{ name: 'daten.json', data: json }, { name: 'auskunft.pdf', data: await exportPdf(title, sections) }]);
+    // The stored documents themselves, not only their names (a copy of the data, Art. 15 (3)).
+    const docs = await db.selectFrom('file').select(['name', 'sha256']).where('member_id', 'in', memberIds).where('superseded_at', 'is', null).execute();
+    const used = new Set<string>();
+    const attachments = [];
+    for (const d of docs) {
+      let name = d.name.replace(/[\\/]/g, '_');
+      for (let k = 2; used.has(name); k++) name = `${k}-${d.name.replace(/[\\/]/g, '_')}`;
+      used.add(name);
+      attachments.push({ name: `dateien/${name}`, data: await getBlob(d.sha256) });
+    }
+    const file = zip([{ name: 'daten.json', data: json }, { name: 'auskunft.pdf', data: await exportPdf(title, sections) }, ...attachments]);
     await audit(db, actor.organizationId, actor, { action: 'person.exported', entityType: 'person', entityId: p.id });
     return reply.header('content-type', 'application/zip').header('content-disposition', `attachment; filename="Auskunft-${p.id.slice(0, 8)}.zip"`).send(file);
   });
