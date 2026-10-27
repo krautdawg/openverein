@@ -115,6 +115,13 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       .where('member.status', 'in', [...CURRENT])
       .orderBy('person.first_name')
       .execute();
+    // No current membership under this address any more (resigned, address changed, erased): the sign-in ends, and
+    // the address's tokens go, so they cannot pass to whoever gets the address next.
+    if (!members.length) {
+      if (s.viaToken) await db.deleteFrom('personal_token').where('organization_id', '=', s.organization_id).where('kind', '=', 'member').where('email', '=', s.email.toLowerCase()).execute();
+      else await db.deleteFrom('portal_session').where('token_hash', '=', s.token_hash).execute();
+      throw new Problem(401, 'unauthenticated', 'Unter dieser Adresse gibt es keine aktuelle Mitgliedschaft mehr.');
+    }
     // What each membership may do here: the club's switches, overridden by the member's current groups.
     const club = (await db.selectFrom('organization').select('portal_features').where('id', '=', s.organization_id).executeTakeFirstOrThrow()).portal_features as Record<string, boolean>;
     const today = await orgToday(db, s.organization_id);
@@ -234,7 +241,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       return t.id;
     });
     reply.status(201);
-    return { token, personalToken: (await tokenList(db, owner)).find((t) => t.id === id)! };
+    return { token, personalToken: (await tokenList(db, owner, id))[0]! };
   });
 
   app.post('/portal/tokens/:id/revoke', { schema: { tags, summary: 'Agenten-Token widerrufen', security: [], params: z.object({ id: z.uuid() }), body: z.object({}).optional(), response: { 200: personalToken } } }, async (req, reply) => {
@@ -243,7 +250,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       const r = await tx.updateTable('personal_token').set({ revoked_at: new Date() }).where('id', '=', req.params.id).where('organization_id', '=', owner.organizationId).where('email', '=', owner.email).where('revoked_at', 'is', null).executeTakeFirst();
       if (Number(r.numUpdatedRows)) await audit(tx, owner.organizationId, null, { action: 'personal_token.revoked', entityType: 'personal_token', entityId: req.params.id });
     });
-    const t = (await tokenList(db, owner)).find((x) => x.id === req.params.id);
+    const t = (await tokenList(db, owner, req.params.id))[0];
     if (!t) throw notFound('Token');
     return t;
   });

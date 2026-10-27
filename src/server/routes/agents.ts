@@ -38,7 +38,7 @@ export const agentRoutes: FastifyPluginAsyncZod = async (app) => {
       return t.id;
     });
     reply.status(201);
-    return { token, personalToken: (await tokenList(db, { organizationId: actor.organizationId, userId: actor.userId! })).find((t) => t.id === id)! };
+    return { token, personalToken: (await tokenList(db, { organizationId: actor.organizationId, userId: actor.userId! }, id))[0]! };
   });
 
   // ---------- OAuth consent (an MCP client asks to act for this access) ----------
@@ -69,7 +69,7 @@ export const agentRoutes: FastifyPluginAsyncZod = async (app) => {
       const r = await tx.updateTable('personal_token').set({ revoked_at: new Date() }).where('id', '=', req.params.id).where('user_id', '=', actor.userId!).where('revoked_at', 'is', null).executeTakeFirst();
       if (Number(r.numUpdatedRows)) await audit(tx, actor.organizationId, actor, { action: 'personal_token.revoked', entityType: 'personal_token', entityId: req.params.id });
     });
-    const t = (await tokenList(db, { organizationId: actor.organizationId, userId: actor.userId! })).find((x) => x.id === req.params.id);
+    const t = (await tokenList(db, { organizationId: actor.organizationId, userId: actor.userId! }, req.params.id))[0];
     if (!t) throw notFound('Token');
     return t;
   });

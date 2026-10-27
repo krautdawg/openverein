@@ -81,7 +81,9 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
       // scope, restricted fields). The stored answer goes only to unchanged rights; otherwise the caller hears that
       // the request ran, without its content, and reads the result with its rights today.
       requirePermission(req.actor, moduleOf(req.routeOptions.url ?? ''), 'write');
-      if (prior.grants_hash !== grants) throw new Problem(409, 'idempotency-already-done', 'Diese Anfrage wurde schon ausgeführt.', 'Deine Rechte haben sich seitdem geändert; lade die Seite neu, um das Ergebnis zu sehen.');
+      // A grant limited to groups decides per object (the member may have left the group): no stored answer then.
+      const scoped = req.actor.grants.some((g) => g.scope !== null && g.permissions[moduleOf(req.routeOptions.url ?? '')] === 'write');
+      if (prior.grants_hash !== grants || scoped) throw new Problem(409, 'idempotency-already-done', 'Diese Anfrage wurde schon ausgeführt.', 'Deine Rechte haben sich seitdem geändert; lade die Seite neu, um das Ergebnis zu sehen.');
       reply.header('idempotent-replayed', 'true');
       return reply.status(prior.status_code).type(prior.content_type ?? 'application/json').send(prior.response);
     }

@@ -36,7 +36,7 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
     return dto(actor);
   });
 
-  app.post('/custom-fields', { schema: { tags, summary: 'Eigenes Feld anlegen', body: customFieldInput, response: { 201: customField } } }, async (req, reply) => {
+  app.post('/custom-fields', { config: { agent: { modules: ['settings'] } }, schema: { tags, summary: 'Eigenes Feld anlegen', body: customFieldInput, response: { 201: customField } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
     const b = req.body;
@@ -54,7 +54,7 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
     return (await dto(actor, f.id))[0]!;
   });
 
-  app.patch('/custom-fields/:id', { schema: { tags, summary: 'Eigenes Feld ändern (der Typ ist fest, sobald Werte existieren)', params: idParam, body: customFieldPatch, response: { 200: customField } } }, async (req) => {
+  app.patch('/custom-fields/:id', { config: { agent: { modules: ['settings'] } }, schema: { tags, summary: 'Eigenes Feld ändern (der Typ ist fest, sobald Werte existieren)', params: idParam, body: customFieldPatch, response: { 200: customField } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
     const b = req.body;
@@ -81,7 +81,7 @@ export const customFieldRoutes: FastifyPluginAsyncZod = async (app) => {
     return (await dto(actor, req.params.id))[0]!;
   });
 
-  app.delete('/custom-fields/:id', { schema: { tags, summary: 'Eigenes Feld löschen; mit Werten nur, wenn der Name zur Bestätigung eingegeben wird', params: idParam, body: z.object({ confirm: z.string().optional() }).optional() } }, async (req, reply) => {
+  app.delete('/custom-fields/:id', { config: { agent: { modules: ['settings'] } }, schema: { tags, summary: 'Eigenes Feld löschen; mit Werten nur, wenn der Name zur Bestätigung eingegeben wird', params: idParam, body: z.object({ confirm: z.string().optional() }).optional() } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
     await db.transaction().execute(async (tx) => {

@@ -20,13 +20,15 @@ const STALE_MINUTES = 30;
 const MAX_ATTEMPTS = 2;
 
 /** The starting user as they are now: a deactivated account or a removed role stops the job. */
-async function currentActor(db: Db, job: Job): Promise<Actor> {
+async function currentActor(db: Db, job: Job, lock = false): Promise<Actor> {
   const user = job.created_by ? await db.selectFrom('app_user').select(['id', 'name', 'status', 'organization_id']).where('id', '=', job.created_by).executeTakeFirst() : undefined;
   if (!user || user.status !== 'active' || user.organization_id !== job.organization_id) throw new JobError('Das Konto, das die Aufgabe gestartet hat, ist nicht mehr aktiv.');
   const grants = await loadGrants(db, user.id);
   if (!job.token_id) return { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: job.organization_id, grants };
   // Started by an agent: its token's narrowed rights, and a revoked or expired token stops the job.
-  const t = await db.selectFrom('personal_token').selectAll().where('id', '=', job.token_id).where('revoked_at', 'is', null).where('expires_at', '>', new Date()).executeTakeFirst();
+  const q = db.selectFrom('personal_token').selectAll().where('id', '=', job.token_id).where('revoked_at', 'is', null).where('expires_at', '>', new Date());
+  // In the mutation's transaction the token row is locked: a revocation either lands before (the job stops) or after.
+  const t = await (lock ? q.forShare() : q).executeTakeFirst();
   if (!t) throw new JobError('Das Agenten-Token, das die Aufgabe gestartet hat, gilt nicht mehr.');
   return { kind: 'user', via: 'token', tokenId: t.id, id: user.id, userId: user.id, name: `${user.name} (Agent: ${t.name})`, organizationId: job.organization_id, grants: capGrants(grants, t) };
 }
@@ -60,6 +62,9 @@ export async function processJobs(db: Db) {
       const owned = async (tx: Db) => {
         const row = await tx.selectFrom('job').select('id').where('id', '=', job.id).where('attempts', '=', job.attempts).where('status', '=', 'running').forUpdate().executeTakeFirst();
         if (!row) throw new JobError('Die Aufgabe wurde inzwischen neu gestartet.');
+        // The rights as they are now, in this transaction: a revoked token or changed role stops the job before it writes.
+        const now = await currentActor(tx, job, true);
+        if (JSON.stringify(now.grants) !== JSON.stringify(actor.grants)) throw new JobError('Die Rechte haben sich geändert, seit die Aufgabe begann. Bitte neu starten.');
       };
       const result = await HANDLERS[job.kind]({ db, job, actor, progress, owned });
       await finish({ status: 'done', result_file_id: result.fileId ?? null, result: result.result === undefined ? null : JSON.stringify(result.result) });

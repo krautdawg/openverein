@@ -67,7 +67,7 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     return loadSettings(actor.organizationId, req.query.year ?? (await yearOf(actor.organizationId)));
   });
 
-  app.put('/work-hours/settings', { schema: { tags, summary: 'Regel für Arbeitsstunden ab einem Jahr festlegen (gilt bis zur nächsten Regel; abgerechnete Jahre behalten ihre Werte)', body: settings.extend({ fromYear: z.number().int().min(2000).max(2100).optional() }), response: { 200: settings } } }, async (req) => {
+  app.put('/work-hours/settings', { config: { agent: { modules: ['settings'] } }, schema: { tags, summary: 'Regel für Arbeitsstunden ab einem Jahr festlegen (gilt bis zur nächsten Regel; abgerechnete Jahre behalten ihre Werte)', body: settings.extend({ fromYear: z.number().int().min(2000).max(2100).optional() }), response: { 200: settings } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'settings', 'write');
     const b = req.body;
@@ -129,7 +129,7 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     return reply.status(204).send();
   });
 
-  app.post('/work-hours/settle', { schema: { tags, summary: 'Ersatzgeld abrechnen: je Mitglied mit fehlenden Stunden ein Rechnungsentwurf (einmal je Jahr)', body: z.object({ year: z.number().int().min(2000).max(2100) }), response: { 200: z.object({ drafted: z.number(), alreadySettled: z.number() }) } } }, async (req) => {
+  app.post('/work-hours/settle', { config: { agent: { modules: ['members', 'invoices'] } }, schema: { tags, summary: 'Ersatzgeld abrechnen: je Mitglied mit fehlenden Stunden ein Rechnungsentwurf (einmal je Jahr)', body: z.object({ year: z.number().int().min(2000).max(2100) }), response: { 200: z.object({ drafted: z.number(), alreadySettled: z.number() }) } } }, async (req) => {
     const actor = requireActor(req);
     requireClubWide(actor, 'invoices', 'write');
     const { year } = req.body;

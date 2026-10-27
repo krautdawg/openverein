@@ -180,7 +180,13 @@ export async function main(argv, env = process.env) {
   const type = answer.headers.get('content-type') ?? '';
   if (answer.ok && flags.ausgabe) {
     const bytes = Buffer.from(await answer.arrayBuffer());
-    await writeFile(flags.ausgabe, bytes);
+    // Only for the user (0600), and never over an existing file: invoices and member data stay private.
+    try {
+      await writeFile(flags.ausgabe, bytes, { mode: 0o600, flag: 'wx' });
+    } catch (err) {
+      if (err?.code === 'EEXIST') throw new Error(`${flags.ausgabe} gibt es schon. Bitte einen neuen Namen wählen.`, { cause: err });
+      throw err;
+    }
     console.error(`${bytes.length} Bytes → ${flags.ausgabe}`);
     return 0;
   }

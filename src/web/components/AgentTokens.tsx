@@ -48,8 +48,9 @@ export function AgentTokens({ base, whoAmI, modules }: { base: '/personal-tokens
   const live = tokens.data?.filter((t) => !t.revoked && t.expiresAt > new Date().toISOString()) ?? [];
   const gone = tokens.data?.filter((t) => !live.includes(t)) ?? [];
   const op = whoAmI === '/auth/me' ? 'getAuthMe' : 'getPortalMe';
-  const cli = secret && `curl -fsSLO ${location.origin}/ov.mjs\nexport OV_URL=${location.origin} OV_TOKEN=${secret}\nnode ov.mjs ${op}`;
-  const claudeCode = secret && `claude mcp add --transport http openverein ${location.origin}/mcp --header "Authorization: Bearer ${secret}"`;
+  // The token never goes into a command (shell history, process list): it is pasted at a hidden prompt.
+  const cli = `curl -fsSLO ${location.origin}/ov.mjs\nread -rsp 'Token: ' OV_TOKEN && export OV_TOKEN OV_URL=${location.origin}\nnode ov.mjs ${op}`;
+  const claudeCode = `claude mcp add --transport http openverein ${location.origin}/mcp`;
 
   return (
     <div className="agents">
@@ -60,9 +61,9 @@ export function AgentTokens({ base, whoAmI, modules }: { base: '/personal-tokens
           <div className="actions-row" style={{ marginTop: 'var(--s-2)' }}>
             <button className="btn" onClick={() => void navigator.clipboard?.writeText(secret)}>Token kopieren</button>
           </div>
-          <p className="agents-step">Claude Code oder ein anderer MCP-Client verbindet sich so:</p>
+          <p className="agents-step">Claude Code, claude.ai und ChatGPT brauchen kein Token: Sie verbinden sich mit dieser Adresse und Du meldest Dich einmal an. In Claude Code:</p>
           <pre className="agents-code">{claudeCode}</pre>
-          <p className="agents-step">Oder im Terminal, mit der Kommandozeile <code>ov</code>. Damit fragst Du, wer Du bist:</p>
+          <p className="agents-step">Das Token ist für Skripte und die Kommandozeile <code>ov</code>. Füg es bei der Abfrage ein (es landet so nicht im Verlauf). Damit fragst Du, wer Du bist:</p>
           <pre className="agents-code">{cli}</pre>
           <p className="agents-step">Alle Operationen stehen unter <a href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>.</p>
         </section>
