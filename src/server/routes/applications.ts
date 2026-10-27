@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
-import { baseUrlFor } from '../tenant.ts';
+import { config } from '../config.ts';
+import { baseUrlFor, tenantForRequest } from '../tenant.ts';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -71,8 +72,11 @@ const applicationDto = z.object({
 export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
-  async function loadForm(slug: string) {
-    const f = await db.selectFrom('application_form').selectAll().where('slug', '=', slug).where('active', '=', true).executeTakeFirst();
+  /** With several clubs, a form exists only on its own club's host name (it collects data for that club). */
+  async function loadForm(slug: string, req: { hostname: string }) {
+    const club = config.multiTenant ? await tenantForRequest(db, req) : null;
+    if (config.multiTenant && !club) throw notFound('Formular');
+    const f = await db.selectFrom('application_form').selectAll().where('slug', '=', slug).where('active', '=', true).$if(!!club, (q) => q.where('organization_id', '=', club!.id)).executeTakeFirst();
     if (!f) throw notFound('Formular');
     return f;
   }
@@ -100,7 +104,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
   // ---------- Public ----------
 
   app.get('/public/forms/:slug', { schema: { tags, summary: 'Aufnahmeformular (öffentlich)', security: [], params: z.object({ slug: z.string().max(60) }), response: { 200: publicForm } } }, async (req) => {
-    const f = await loadForm(req.params.slug);
+    const f = await loadForm(req.params.slug, req);
     const org = await db.selectFrom('organization').select(['name', 'creditor_id', 'is_demo']).where('id', '=', f.organization_id).executeTakeFirstOrThrow();
     const { groups, feePlans } = await formChoices(f.organization_id, f.group_ids, f.fee_plan_ids);
     return { title: f.title, intro: f.intro, clubName: org.name, isDemo: org.is_demo, groups, feePlans, askMandate: f.ask_mandate && !!org.creditor_id, creditorId: org.creditor_id, consentText: f.consent_text, privacyUrl: f.privacy_url, token: formToken(f.slug) };
@@ -110,7 +114,7 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
     '/public/forms/:slug/submit',
     { config: { rateLimit: { max: 10, timeWindow: '10 minutes', keyGenerator: (req) => ipKey(req.ip) } }, schema: { tags, summary: 'Aufnahmeantrag abschicken (öffentlich; Honeypot, einmaliger Formular-Token mit Mindest-Ausfüllzeit, Rate-Limits)', security: [], params: z.object({ slug: z.string().max(60) }), body: submission, response: { 201: z.object({ ok: z.boolean() }) } } },
     async (req, reply) => {
-      const f = await loadForm(req.params.slug);
+      const f = await loadForm(req.params.slug, req);
       const { data } = req.body;
       const token = tokenAge(f.slug, req.body.token);
       // A genuine token that is too old means a person left the tab open: ask for a reload instead of filing it as spam.

@@ -26,5 +26,8 @@ export interface Sender {
 
 export function senderOf(org: { name: string; mail_from_name: string | null; mail_from_address: string | null; mail_reply_to: string | null }): Sender {
   const fallback = config.mailFrom.match(/<([^>]+)>/)?.[1] ?? config.mailFrom;
+  // Managed hosting: all clubs share the operator's mail server, so no club may send as an address of its choice
+  // (it would pass SPF/DKIM for another club's domain). The operator's address sends, the club's address answers.
+  if (config.multiTenant) return { name: org.mail_from_name ?? org.name, address: fallback, replyTo: org.mail_reply_to ?? org.mail_from_address };
   return { name: org.mail_from_name ?? org.name, address: org.mail_from_address ?? fallback, replyTo: org.mail_reply_to };
 }

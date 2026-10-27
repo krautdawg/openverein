@@ -168,4 +168,32 @@ describe('managed hosting (several clubs)', () => {
     await replayErasures(ctx.db, { warn: () => undefined });
     expect(await ctx.db.selectFrom('organization').select('id').where('id', '=', a.id).executeTakeFirst()).toBeUndefined();
   });
+
+  it('keeps public forms and calendars on their own host, sends from the operator address, and refuses private OIDC issuers', async () => {
+    const a = await club('TSV A', 'verein-a.example.org', 'admin-a@example.org');
+    await enrollTotp(ctx.app, a.cookie);
+    const form = await a.admin.post('/application-forms', { slug: 'mitmachen-a', title: 'Mitglied werden', groupIds: [], consentText: 'Satzung', askMandate: false });
+    expect(form.status, JSON.stringify(form.body)).toBe(201);
+    const get = (host: string) => ctx.app.inject({ url: '/api/v1/public/forms/mitmachen-a', headers: { host } });
+    expect((await get('verein-a.example.org')).statusCode).toBe(200);
+    expect((await get('verein-b.example.org')).statusCode).toBe(404);
+    const cal = (await a.admin.post('/calendars', { name: 'Spielplan', public: true, publicOrigins: [] })).body;
+    const events = (host: string) => ctx.app.inject({ url: `/api/v1/public/calendars/${cal.id}/events`, headers: { host } });
+    expect((await events('verein-a.example.org')).statusCode).toBe(200);
+    expect((await events('verein-b.example.org')).statusCode).toBe(404);
+
+    const { senderOf } = await import('../src/server/mail/transport.ts');
+    const sender = senderOf({ name: 'TSV A', mail_from_name: null, mail_from_address: 'vorstand@verein-b.de', mail_reply_to: null });
+    expect(sender.address).not.toBe('vorstand@verein-b.de');
+    expect(sender.replyTo).toBe('vorstand@verein-b.de');
+
+    const before = config.oidcAllowHttp;
+    config.oidcAllowHttp = false;
+    try {
+      const r = await a.admin.put('/settings/oidc', { enabled: true, issuer: 'https://127.0.0.1/realm', clientId: 'x', clientSecret: 'y', label: null });
+      expect(r.status).toBe(400);
+    } finally {
+      config.oidcAllowHttp = before;
+    }
+  });
 });

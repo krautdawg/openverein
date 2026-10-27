@@ -13,7 +13,7 @@ import { PageHead } from '../components/PageHead.tsx';
 import { Sheet } from '../components/Sheet.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { courtVar, todayLocal, useGroups } from '../lib/hooks.ts';
-import { discardMark, enqueueMark, usePendingMarks } from '../lib/offlineAttendance.ts';
+import { discardMark, enqueueMark, pathOf, usePendingMarks } from '../lib/offlineAttendance.ts';
 import { useTitle } from '../lib/useTitle.ts';
 
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -249,6 +249,8 @@ function OccurrenceSheet({ id, date, canWrite, onClose }: { id: string | null; d
     setError(undefined);
     try {
       qc.setQueryData(['occurrence', id, date], await api<OccurrenceDetail>(`/events/${id}/occurrences/${date}/participants/${memberId}`, { method: 'PUT', body: { status } }));
+      // A mark from offline for the same member is older than this one: it must not overwrite it later.
+      if (id && date) discardMark(pathOf(id, date, memberId));
       void qc.invalidateQueries({ queryKey: ['events'] });
       setTerm('');
     } catch (e) {

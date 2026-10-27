@@ -11,6 +11,9 @@ import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { isClubAdmin, requireStepUp } from '../policy.ts';
 import { baseUrlOf, tenantForRequest } from '../tenant.ts';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import { isPrivateAddress } from '../webhooks/worker.ts';
 import { ticketFor, userActor } from './auth.ts';
 
 const tags = ['auth'];
@@ -31,9 +34,22 @@ function unpackFlow(raw: string | undefined) {
   return v.exp > Date.now() ? v : null;
 }
 
+/**
+ * The issuer is fetched by the server: it must be a public address, else a club admin could probe the operator's
+ * internal network (same rule as webhooks). Checked when saved and before every fetch.
+ * shortcut: the fetch itself resolves the name again (no pinning as for webhooks); pin it if issuers become a risk.
+ */
+async function assertPublicIssuer(issuer: string) {
+  if (config.oidcAllowHttp) return;
+  const host = new URL(issuer).hostname.replace(/^\[|\]$/g, '');
+  const addrs = isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
+  if (!addrs.length || addrs.some(isPrivateAddress)) throw new Error('Der Issuer liegt in einem privaten Netz.');
+}
+
 async function clientConfig(db: Db, orgId: string) {
   const o = await db.selectFrom('organization').select(['oidc_enabled', 'oidc_issuer', 'oidc_client_id', 'oidc_client_secret_encrypted', 'hostname']).where('id', '=', orgId).executeTakeFirst();
   if (!o?.oidc_enabled || !o.oidc_issuer || !o.oidc_client_id || !o.oidc_client_secret_encrypted) return null;
+  await assertPublicIssuer(o.oidc_issuer);
   const insecure = config.oidcAllowHttp && o.oidc_issuer.startsWith('http://');
   const cfg = await client.discovery(new URL(o.oidc_issuer), o.oidc_client_id, decrypt(o.oidc_client_secret_encrypted), undefined, insecure ? { execute: [client.allowInsecureRequests] } : undefined);
   return { cfg, redirectUri: `${baseUrlOf(o)}/api/v1/auth/oidc/callback` };
@@ -123,6 +139,7 @@ export const oidcRoutes: FastifyPluginAsyncZod = async (app) => {
     // Check the provider before switching on: a wrong issuer must not lock anyone out silently.
     if (b.enabled && b.issuer) {
       try {
+        await assertPublicIssuer(b.issuer);
         const insecure = config.oidcAllowHttp && b.issuer.startsWith('http://');
         await client.discovery(new URL(b.issuer), b.clientId!, b.clientSecret ?? 'x', undefined, insecure ? { execute: [client.allowInsecureRequests] } : undefined);
       } catch {

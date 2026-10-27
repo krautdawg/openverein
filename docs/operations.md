@@ -68,6 +68,8 @@ For clubs without a technical volunteer, one operator can host several clubs on 
 
    The admin gets an invitation mail with a link on the club's host name (the answer also contains the link, valid for seven days). `GET /api/v1/operator/tenants` lists the clubs; `PATCH /api/v1/operator/tenants/<id>` changes a host name or name.
 
+Under managed hosting, mail goes out from the operator's address (`MAIL_FROM`) with the club's name; the club's own address becomes the Reply-To, so no club can send as another club's domain through the shared server. `MAIL_PER_MINUTE_MAX` (default 60) caps each club's sending rate. Application forms and public calendars answer only on their own club's host name. Switching an existing single-club installation to `MULTI_TENANT=true`: set the club's host name first (`PATCH /api/v1/operator/tenants/<id>`), otherwise nobody can sign in.
+
 What a club sees and does stays inside its club: members, mails, files, the portal (the portal signs members in for the club whose host name they use) and the full export under Einstellungen → Gesamtexport. One e-mail address can be an admin access in one club only. Mail goes out per club, each with its own rate and pause switch.
 
 As operator you process the clubs' data on their behalf: conclude a data-processing agreement (Art. 28 GDPR) with each club. `docs/avv-vorlage.md` is a German template with the technical and organisational measures OpenVerein brings and a part for your own operations.
