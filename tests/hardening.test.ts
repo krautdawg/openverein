@@ -156,4 +156,32 @@ describe('review G8', () => {
     const res = await ctx.app.inject({ method: 'POST', url: '/api/v1/invoices/dunning-letters.pdf', headers: { cookie, 'content-type': 'application/json' }, payload: { invoiceIds: [credit.id] } });
     expect(res.statusCode).toBe(409);
   });
+
+  // ---------- review G14 ----------
+
+  it('deletes a file a contact entry points to, and removes tasks about an erased person', async () => {
+    const m = (await admin.post('/members', { firstName: 'Erna', lastName: 'Erase', joinDate: '2015-01-01' })).body;
+    const upload = await ctx.app.inject({ method: 'POST', url: `/api/v1/files?memberId=${m.id}`, headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-type': 'application/pdf', 'x-file-name': 'brief.pdf' }, payload: Buffer.from('%PDF-1.4 x') });
+    expect(upload.statusCode, upload.body).toBe(201);
+    const fileId = upload.json().id;
+    expect((await admin.post(`/members/${m.id}/contacts`, { kind: 'letter', occurredOn: '2026-10-01', text: 'Brief geschickt', fileId, private: true })).status).toBe(201);
+    const del = await admin.del(`/files/${fileId}`);
+    expect(del.status, JSON.stringify(del.body)).toBe(204);
+
+    const me = (await admin.get('/auth/me')).body;
+    await admin.post('/tasks', { title: 'Erase wegen Rückstand anrufen', memberId: m.id, assigneeUserId: me.id });
+    await admin.post(`/members/${m.id}/resign`, { noticeDate: '2020-09-01', exitDate: '2020-12-31' });
+    const done = await admin.post(`/persons/${m.personId}/anonymise`, {});
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(await ctx.db.selectFrom('task').select('id').where('member_id', '=', m.id).execute()).toHaveLength(0);
+  });
+
+  it('refuses income with VAT on a rate without output-tax account', async () => {
+    const accounts = (await admin.get('/ledger/accounts')).body as { id: string; number: string }[];
+    const acc = (n: string) => accounts.find((a) => a.number === n)!.id;
+    const rate = await admin.post('/ledger/tax-rates', { label: 'Nur Vorsteuer 19 %', rateBp: 1900, validFrom: '2020-01-01', inputAccountId: acc('1570') });
+    expect(rate.status, JSON.stringify(rate.body)).toBe(201);
+    const r = await admin.post('/ledger/bookings', { kind: 'income', date: '2026-03-01', text: 'Verkauf', moneyAccountId: acc('1000'), lines: [{ grossCents: 11900, accountId: acc('4400'), taxRateId: rate.body.id }] });
+    expect(r.status).toBe(400);
+  });
 });

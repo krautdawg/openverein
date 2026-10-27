@@ -62,6 +62,10 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   await tx.updateTable('expense_claim').set({ account_holder: ANONYMOUS, iban_encrypted: encrypt('') }).where('person_id', '=', personId).execute();
   const members = (await tx.selectFrom('member').select('id').where('person_id', '=', personId).execute()).map((m) => m.id);
   const fileIds: string[] = [];
+  // Tasks about the person ("Müller wegen Rückstand anrufen") go with their audit trail; honours go too.
+  // Issued offers stay, like invoices: they are business letters to keep (§ 147 AO), frozen by trigger.
+  const taskIds = members.length ? (await tx.deleteFrom('task').where('member_id', 'in', members).returning('id').execute()).map((t) => t.id) : [];
+  if (members.length) await tx.deleteFrom('honour').where('member_id', 'in', members).execute();
   if (members.length) {
     await tx.updateTable('member').set({ exit_reason: null }).where('id', 'in', members).execute();
     // Deletable member files go; vouchers in retention and files on hold stay.
@@ -92,7 +96,7 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   }
   // Audit entries keep what happened and when, not the values (the trigger allows exactly this inside the scrub).
   await sql`select set_config('ov.scrub', 'on', true)`.execute(tx);
-  await tx.updateTable('audit_event').set({ diff: null }).where('organization_id', '=', organizationId).where('entity_id', 'in', [personId, ...members, ...fileIds]).where('diff', 'is not', null).execute();
+  await tx.updateTable('audit_event').set({ diff: null }).where('organization_id', '=', organizationId).where('entity_id', 'in', [personId, ...members, ...fileIds, ...taskIds]).where('diff', 'is not', null).execute();
   await sql`select set_config('ov.scrub', 'off', true)`.execute(tx);
   // Full exports contain the person; they are recreated on demand, never kept past an erasure.
   await tx.deleteFrom('file').where('organization_id', '=', organizationId).where('purpose', '=', 'export').execute();

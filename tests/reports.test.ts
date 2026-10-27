@@ -85,6 +85,10 @@ describe('member lists', () => {
     const year = Number(today.slice(0, 4));
     // Joined exactly 25 years ago today, born 30 years ago today.
     const m = (await admin.post('/members', { firstName: 'Greta', lastName: 'Glückwunsch', email: 'greta@example.org', birthDate: `${year - 30}${today.slice(4)}`, joinDate: `${year - 25}${today.slice(4)}` })).body.id;
+    // Same dates, but unsubscribed (newsletter link): no greetings for her.
+    await admin.post('/members', { firstName: 'Olga', lastName: 'Ohne', email: 'olga@example.org', birthDate: `${year - 30}${today.slice(4)}`, joinDate: `${year - 25}${today.slice(4)}` });
+    const { emailHash } = await import('../src/server/mail/worker.ts');
+    await ctx.db.insertInto('suppression').values({ organization_id: org, email_hash: emailHash('olga@example.org'), reason: 'unsubscribe', created_at: new Date() }).execute();
     expect(await runGreetings(ctx.db)).toBe(0);
     await admin.patch('/organization', { birthdayGreetings: 'round', anniversaryGreetings: true });
     expect(await runGreetings(ctx.db)).toBe(2);

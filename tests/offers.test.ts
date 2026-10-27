@@ -35,6 +35,10 @@ describe('offers', () => {
     expect(inv.lines.reduce((t: number, l: { totalCents: number }) => t + l.totalCents, 0)).toBe(20000);
     expect(inv.coverText).toContain('A-2026-0001');
     expect((await admin.post(`/offers/${o.body.id}/convert`, {})).status).toBe(409);
+    // A wrong draft can be deleted; the offer is accepted again and converts anew.
+    expect((await admin.del(`/invoices/${conv.body.invoiceId}`)).status).toBe(204);
+    expect((await admin.get(`/offers/${o.body.id}`)).body.status).toBe('accepted');
+    expect((await admin.post(`/offers/${o.body.id}/convert`, {})).status).toBe(201);
     // Offers are no receivables: they do not show up as invoices.
     expect(((await admin.get('/invoices?status=all')).body.items as unknown[]).length).toBe(1);
   });

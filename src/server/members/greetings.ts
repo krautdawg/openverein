@@ -18,8 +18,9 @@ export async function runGreetings(db: Db) {
     const year = Number(today.slice(0, 4));
     const rows = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id')
       .select(['person.id as person_id', 'person.kind', 'person.first_name', 'person.last_name', 'person.email', 'person.birth_date', 'member.join_date', 'member.membership_number'])
-      .where('member.organization_id', '=', o.id).where('member.status', '=', 'active').where('person.email', 'is not', null).execute();
-    const blocked = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', o.id).where('reason', 'in', ['bounce', 'manual']).execute()).map((s) => s.email_hash));
+      .where('member.organization_id', '=', o.id).where('member.status', '=', 'active').where('person.email', 'is not', null).where('person.preferred_channel', '<>', 'none').execute();
+    // Greetings are not club business: an unsubscribe (like from newsletters) stops them too.
+    const blocked = new Set((await db.selectFrom('suppression').select('email_hash').where('organization_id', '=', o.id).where('reason', 'in', ['bounce', 'manual', 'unsubscribe']).execute()).map((s) => s.email_hash));
     for (const r of rows) {
       if (blocked.has(emailHash(r.email!))) continue;
       const due: { kind: 'birthday' | 'anniversary'; years: number }[] = [];

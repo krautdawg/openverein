@@ -205,6 +205,8 @@ export async function bookingLines(tx: Db, organizationId: string, b: { kind: 'i
     const rate = l.taxRateId ? rates.find((r) => r.id === l.taxRateId) : null;
     if (l.costCenterId && !centres.has(l.costCenterId)) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.costCenterId`, message: 'Kostenstelle nicht gefunden.' }] });
     if (l.taxRateId && (!rate || rate.valid_from > rateDate || (rate.valid_to && rate.valid_to < rateDate))) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.taxRateId`, message: 'Dieser Steuersatz galt an dem Tag nicht.' }] });
+    // Income with VAT but a rate without output-tax account would book the whole gross as revenue.
+    if (b.kind === 'income' && rate && rate.rate_bp > 0 && !rate.output_account_id) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${i}.taxRateId`, message: `Der Steuersatz ${rate.label} hat kein Konto für die Umsatzsteuer.` }] });
     const sph = l.sphere ?? acc.default_sphere;
     const { net, tax } = splitGross(l.grossCents, rate?.rate_bp ?? 0);
     // Input tax is only refundable in the taxable spheres; elsewhere the gross amount is the expense.
