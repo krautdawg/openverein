@@ -20,6 +20,14 @@ export function setQueueOwner(userId: string) {
   if (owner === userId) return;
   owner = userId;
   cache = null;
+  // Marks queued before the queue was per user (one shared key): they belong to whoever signs in first.
+  try {
+    const legacy = localStorage.getItem('ov-attendance-queue');
+    if (legacy && !localStorage.getItem(key())) localStorage.setItem(key(), legacy);
+    if (legacy) localStorage.removeItem('ov-attendance-queue');
+  } catch {
+    // storage blocked: nothing to move
+  }
   listeners.forEach((l) => l());
 }
 

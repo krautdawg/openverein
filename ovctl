@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY="$ROOT/deploy"
 ENV_FILE="$DEPLOY/.env"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
+# One canonical spelling (no trailing slash, relative part or symlink), so retention can tell which backup to keep.
+mkdir -p "$BACKUP_DIR" && BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd -P)"
 BACKUP_KEEP="${BACKUP_KEEP:-14}"
 
 say() { printf '%s\n' "$*"; }
@@ -99,7 +101,7 @@ cmd_restore() {
   need_env
   local dir="${1:-}"
   [ -n "$dir" ] && [ -d "$dir" ] || die "Gib den Sicherungsordner an, z. B. ./ovctl restore backups/openverein-20261024-0300"
-  dir="$(cd "$dir" && pwd)"
+  dir="$(cd "$dir" && pwd -P)"
   (cd "$dir" && sha256sum -c --quiet SHA256SUMS) || die "Die Sicherung ist beschädigt (Prüfsummen stimmen nicht)."
   if [ "${OVCTL_YES:-}" != "1" ]; then
     read -rp "Der jetzige Stand wird durch die Sicherung ersetzt. Zum Fortfahren 'zurückspielen' tippen: " answer
@@ -119,6 +121,8 @@ cmd_restore() {
 # Works without a healthy app, so it also serves the rollback of a failed update.
 restore_data() {
   local dir="$1" erasures
+  # Never drop the database without the backup to put back (whatever happened to the folder meanwhile).
+  [ -f "$dir/db.dump" ] && [ -f "$dir/files.tar.gz" ] || die "Die Sicherung $dir ist nicht vollständig; nichts wurde verändert."
   # Erasures made after the backup must survive the restore: keep the current erasure log and merge it back.
   erasures="$(mktemp)"
   dc stop app

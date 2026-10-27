@@ -11,7 +11,7 @@ const USER_CHILDREN = ['session', 'totp_recovery_code'];
 /** Global records about the club that must outlive it. */
 const KEEP = new Set(['operator_event']);
 
-/** Export and purge of one club never run at the same time. */
+/** Two purges of one club never run at the same time (an export checks its snapshot instead). */
 export const lockClub = (tx: Db, organizationId: string) => sql`select pg_advisory_xact_lock(hashtext(${`openverein:club:${organizationId}`}))`.execute(tx);
 
 /**
