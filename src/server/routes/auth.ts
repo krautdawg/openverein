@@ -10,7 +10,7 @@ import { destroySession, insertSession, requireActor, setSessionCookie, sha256 }
 import type { AppUser, Db } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import { blindIndex, decrypt, encrypt } from '../crypto.ts';
-import { level, loadGrants, mfaRequired, MODULES, requireStepUp, type Grant, restrictedFields } from '../policy.ts';
+import { level, loadGrants, mfaRequired, MODULES, requireStepUp, type Grant, restrictedFields, requirePerson } from '../policy.ts';
 import { newSecret, otpauthUri, recoveryCodes, verifyCode } from '../auth/totp.ts';
 
 const MAX_FAILS = 5;
@@ -176,7 +176,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/auth/totp/setup', { ...limited, schema: { tags: ['auth'], summary: 'Zweiten Faktor einrichten: neues Geheimnis für die Authenticator-App (noch nicht aktiv). Beim ersten Mal mit Passwort.', body: z.object({ password: z.string().max(128).optional() }).optional(), response: { 200: z.object({ secret: z.string(), uri: z.string() }) } } }, async (req) => {
     const actor = requireActor(req);
-    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    requirePerson(actor);
     // Replacing an active factor needs a fresh confirmation with the old one; a first setup needs the password,
     // so a stolen session alone cannot attach the attacker's phone.
     if (actor.mfa?.enrolled) requireStepUp(actor);
@@ -193,7 +193,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/auth/totp/enable', { schema: { tags: ['auth'], summary: 'Zweiten Faktor mit einem Code bestätigen; gibt zehn Wiederherstellungscodes einmalig aus', body: z.object({ code: z.string().trim().regex(/^\d{6}$/, 'Sechs Ziffern aus der App.') }), response: { 200: z.object({ recoveryCodes: z.array(z.string()) }) } } }, async (req) => {
     const actor = requireActor(req);
-    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    requirePerson(actor);
     const codes = recoveryCodes();
     await db.transaction().execute(async (tx) => {
       const user = await tx.selectFrom('app_user').selectAll().where('id', '=', actor.id).forUpdate().executeTakeFirstOrThrow();
@@ -214,7 +214,7 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/auth/step-up', { ...limited, schema: { tags: ['auth'], summary: 'Kritische Aktion mit Code bestätigen (gilt zehn Minuten)', body: z.object({ code: totpCode }), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => {
     const actor = requireActor(req);
-    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    requirePerson(actor);
     const ok = await db.transaction().execute(async (tx) => {
       const user = await tx.selectFrom('app_user').selectAll().where('id', '=', actor.id).forUpdate().executeTakeFirstOrThrow();
       const used = await checkSecondFactor(tx, user, req.body.code);
@@ -241,14 +241,14 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/auth/sessions', { schema: { tags: ['auth'], summary: 'Meine aktiven Anmeldungen', response: { 200: z.array(z.object({ id: z.string(), current: z.boolean(), userAgent: z.string().nullable(), createdAt: z.string(), lastSeenAt: z.string() })) } } }, async (req) => {
     const actor = requireActor(req);
-    if (actor.kind !== 'user') return [];
+    if (actor.kind !== 'user' || actor.via) return [];
     const rows = await db.selectFrom('session').select(['token_hash', 'user_agent', 'created_at', 'last_seen_at']).where('user_id', '=', actor.id).where('expires_at', '>', new Date()).orderBy('last_seen_at', 'desc').execute();
     return rows.map((r) => ({ id: r.token_hash.slice(0, 12), current: r.token_hash === currentSession(req), userAgent: r.user_agent, createdAt: r.created_at.toISOString(), lastSeenAt: r.last_seen_at.toISOString() }));
   });
 
   app.post('/auth/sessions/revoke-others', { schema: { tags: ['auth'], summary: 'Alle anderen Anmeldungen beenden', body: z.object({}).optional(), response: { 200: z.object({ revoked: z.number() }) } } }, async (req) => {
     const actor = requireActor(req);
-    if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+    requirePerson(actor);
     const revoked = await db.transaction().execute(async (tx) => {
       const r = await tx.deleteFrom('session').where('user_id', '=', actor.id).where('token_hash', '!=', currentSession(req)).executeTakeFirst();
       await audit(tx, actor.organizationId, actor, { action: 'auth.sessions_revoked', entityType: 'app_user', entityId: actor.id });

@@ -62,6 +62,11 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
     .set({ kind: 'natural', first_name: null, last_name: ANONYMOUS, company_name: null, birth_date: null, email: null, phone: null, street: null, postal_code: null, city: null, note: null, custom: sql`'{}'::jsonb`, einvoice_format: 'none', buyer_reference: null, gender: null, einvoice_address: null, vat_id: null, preferred_channel: 'none', anonymised_at: new Date(), updated_at: new Date() })
     .where('id', '=', personId)
     .execute();
+  // The person's agent tokens (keyed by the address) go with their call log, unless someone else still uses the address.
+  if (p.email) {
+    const shared = await tx.selectFrom('person').select('id').where('organization_id', '=', organizationId).where('id', '<>', personId).where(sql<boolean>`lower(email) = lower(${p.email})`).executeTakeFirst();
+    if (!shared) await tx.deleteFrom('personal_token').where('organization_id', '=', organizationId).where('email', '=', p.email.toLowerCase()).execute();
+  }
   // Notes about the person go entirely (before member files, which an entry may point to).
   await tx.deleteFrom('contact_log').where('person_id', '=', personId).execute();
   // Expense claims stay as vouchers, but the payout details are no longer needed.

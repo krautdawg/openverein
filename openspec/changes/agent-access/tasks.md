@@ -1,13 +1,13 @@
 ## 1. Personal tokens, call log, limit (slice 1)
 
-- [ ] 1.1 Migration: `personal_token`, `agent_call`
-- [ ] 1.2 Stable `operationId` for every route (onRoute hook), uniqueness and snapshot test
-- [ ] 1.3 Admin personal tokens: create (step-up), list with recent calls, revoke; actor = user grants capped by token
-- [ ] 1.4 Member tokens: create, list, revoke in the portal; `portalUser` accepts them; read-only tokens are GET-only
-- [ ] 1.5 Call log (best effort, on response) and per-token limit (120/min, 2000/h, 429 with Retry-After)
-- [ ] 1.6 Pruning (90 days) in the hourly job; erasure removes member tokens
-- [ ] 1.7 Web: "Agenten" page in settings and in the portal, with the one-time token display, connected agents, last calls and revoke; screenshots at 390/768/1280
-- [ ] 1.8 Tests: narrowing (cap, read-only, locked user, lost role, step-up closed), member token portal parity, limit at its edge, log entries, revoked/expired
+- [x] 1.1 Migration: `personal_token`, `agent_call`
+- [x] 1.2 Stable `operationId` for every route (onRoute hook), uniqueness and snapshot test
+- [x] 1.3 Admin personal tokens: create (step-up), list with recent calls, revoke; actor = user grants capped by token
+- [x] 1.4 Member tokens: create, list, revoke in the portal; `portalUser` accepts them; read-only tokens are GET-only
+- [x] 1.5 Call log (best effort, on response) and per-token limit (120/min, 2000/h, 429 with Retry-After)
+- [x] 1.6 Pruning (90 days) in the hourly job; erasure removes member tokens
+- [x] 1.7 Web: "Agenten" page in settings and in the portal, with the one-time token display, connected agents, last calls and revoke; screenshots at 390/768/1280
+- [x] 1.8 Tests: narrowing (cap, read-only, locked user, lost role, step-up closed), member token portal parity, limit at its edge, log entries, revoked/expired
 
 ## 2. MCP (slice 2)
 

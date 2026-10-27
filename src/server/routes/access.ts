@@ -24,7 +24,7 @@ import type { Db, Level } from '../db.ts';
 import { CONSTRAINT_MESSAGES, forbidden, notFound, Problem } from '../http/problem.ts';
 import { visibleDiffKeys } from '../members/custom.ts';
 import { maskCustom, maskDiff } from '../members/query.ts';
-import { type Actor, level, loadGrants, MODULES, requirePermission, requireStepUp, RESTRICTABLE_FIELDS, restrictedFields, scopeOf } from '../policy.ts';
+import { type Actor, level, loadGrants, MODULES, requirePermission, requireStepUp, RESTRICTABLE_FIELDS, restrictedFields, scopeOf, requirePerson } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.role_organization_id_name_key = 'Eine Rolle mit diesem Namen gibt es schon.';
 
@@ -73,7 +73,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /** People and role definitions are managed by people: a leaked API key must not create accounts or roles. */
   function assertHuman(actor: Actor) {
-    if (actor.kind === 'token') throw forbidden('settings:write (nur angemeldete Zugänge, keine API-Schlüssel)');
+    requirePerson(actor);
   }
 
   /** Acting on another user (role change, lock, invite) needs at least that user's current rights. */
@@ -355,7 +355,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       requireStepUp(actor);
       requirePermission(actor, 'settings', 'write');
       // Tokens cannot create tokens: a leaked key must not be able to mint more keys.
-      if (actor.kind === 'token') throw forbidden('api:write (nur angemeldete Zugänge)');
+      requirePerson(actor);
       await checkGrants(actor, [{ roleId: req.body.roleId, scopeGroupIds: req.body.scopeGroupIds }]);
       const prefix = randomBytes(4).toString('hex');
       const token = `ov_${prefix}_${randomBytes(32).toString('base64url')}`;

@@ -43,6 +43,7 @@ import { Applications } from './pages/Applications.tsx';
 import { BankAccounts, CollectionRunDetail, Collections, Reconciliation } from './pages/Bank.tsx';
 import { Members } from './pages/Members.tsx';
 import { CalendarWidget } from './pages/CalendarWidget.tsx';
+import { Agents } from './pages/settings/Agents.tsx';
 import { ApiTokens } from './pages/settings/ApiTokens.tsx';
 import { AuditLog } from './pages/settings/AuditLog.tsx';
 import { ClubSettings } from './pages/settings/ClubSettings.tsx';
@@ -158,6 +159,7 @@ function AdminApp() {
           <Route path="zugaenge" element={<Users me={me.data} />} />
           <Route path="rollen" element={<Roles me={me.data} />} />
           <Route path="api" element={<ApiTokens me={me.data} />} />
+          <Route path="agenten" element={<Agents me={me.data} />} />
           <Route path="protokoll" element={<AuditLog />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

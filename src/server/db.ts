@@ -1009,6 +1009,8 @@ export interface Database {
   erasure_log: ErasureLogTable;
   operator_event: OperatorEventTable;
   oidc_identity: OidcIdentityTable;
+  personal_token: PersonalTokenTable;
+  agent_call: AgentCallTable;
   idempotency_key: IdempotencyKeyTable;
   invoice_einvoice: InvoiceEinvoiceTable;
   duplicate_dismissal: DuplicateDismissalTable;
@@ -1471,3 +1473,31 @@ export function createDb(connectionString: string) {
 }
 
 export type Db = Kysely<Database>;
+
+export interface PersonalTokenTable {
+  id: Generated<string>;
+  organization_id: string;
+  kind: 'admin' | 'member';
+  user_id: string | null;
+  email: string | null;
+  name: string;
+  prefix: string;
+  token_hash: string;
+  access: 'read' | 'write';
+  cap: Record<string, 'read' | 'write'> | null;
+  audience: 'mcp' | null;
+  oauth_client: string | null;
+  expires_at: Date;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+  created_at: Generated<Date>;
+}
+
+export interface AgentCallTable {
+  id: Generated<string>;
+  token_id: string;
+  at: Generated<Date>;
+  operation: string;
+  channel: 'rest' | 'mcp' | 'cli';
+  status: number;
+}

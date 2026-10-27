@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from 'react-router';
-import { FileText, Home, LogOut, Receipt, Wallet } from 'lucide-react';
+import { Bot, FileText, Home, LogOut, Receipt, Wallet } from 'lucide-react';
 import { EXPENSE_STATUS_LABEL } from '../../shared/expenses.ts';
+import { AgentTokens } from '../components/AgentTokens.tsx';
 import { MoneyField } from '../components/MoneyField.tsx';
 import { PollBars } from '../pages/Polls.tsx';
 import { formatDate } from '../../shared/dates.ts';
@@ -62,6 +63,7 @@ export function PortalApp() {
         <Route path="/portal/rechnungen" element={<PortalInvoices />} />
         <Route path="/portal/dokumente" element={<PortalDocuments />} />
         <Route path="/portal/auslagen" element={<PortalExpenses me={me.data} />} />
+        <Route path="/portal/agenten" element={<PortalAgents />} />
         <Route path="*" element={<Navigate to="/portal" replace />} />
       </Routes>
     </PortalShell>
@@ -110,6 +112,7 @@ function PortalShell({ me, children }: { me: PortalMe; children: ReactNode }) {
         {me.members.some((m) => m.features.invoices) && <NavLink to="/portal/rechnungen"><Receipt size={20} aria-hidden /><span>Rechnungen</span></NavLink>}
         <NavLink to="/portal/dokumente"><FileText size={20} aria-hidden /><span>Dokumente</span></NavLink>
         <NavLink to="/portal/auslagen"><Wallet size={20} aria-hidden /><span>Auslagen</span></NavLink>
+        <NavLink to="/portal/agenten"><Bot size={20} aria-hidden /><span>Agenten</span></NavLink>
       </nav>
     </div>
   );
@@ -530,5 +533,16 @@ function PollAnswer({ poll, memberId, current, label }: { poll: PortalPoll; memb
       {error && <p className="error" role="alert">{error}</p>}
       <div className="actions-row" style={{ marginTop: 'var(--s-2)' }}><button className="btn">{current ? 'Antwort ändern' : 'Antworten'}</button>{current && <span className="meta">Du hast geantwortet.</span>}</div>
     </form>
+  );
+}
+
+function PortalAgents() {
+  useTitle('Agenten');
+  return (
+    <>
+      <h1 className="portal-h1">Agenten</h1>
+      <p className="muted" style={{ marginBottom: 'var(--s-5)' }}>Lass Claude, ChatGPT oder ein Skript für Dich nachsehen: Rechnungen, Termine, Deine Daten. Der Agent sieht genau, was Du hier siehst, nicht mehr.</p>
+      <AgentTokens base="/portal/tokens" whoAmI="/portal/me" />
+    </>
   );
 }

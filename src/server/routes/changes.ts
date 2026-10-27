@@ -9,7 +9,7 @@ import type { ChangeField } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
-import { type Actor, isClubAdmin, requirePermission, requireStepUp, restrictedFields } from '../policy.ts';
+import { type Actor, isClubAdmin, requirePermission, requireStepUp, restrictedFields, requirePerson } from '../policy.ts';
 import { issueLoginCode } from './portal.ts';
 
 const tags = ['members'];
@@ -156,7 +156,7 @@ export const changeRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       requirePermission(actor, 'members', 'write');
-      if (actor.kind !== 'user') throw new Problem(403, 'forbidden', 'Nur für angemeldete Zugänge.');
+      requirePerson(actor);
       // The code opens every membership under the address (and the portal shows invoices, mandates, documents):
       // only administrators, with a fresh second factor (Codex review of #9).
       if (!isClubAdmin(actor)) throw new Problem(403, 'forbidden', 'Portal-Codes geben nur Admins aus.', undefined, { permission: 'admin' });

@@ -730,3 +730,34 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 
 /* Sign-in: the alternative below the password form. */
 .auth-or { text-align: center; margin: var(--s-4) 0 var(--s-3); }
+
+/* Agents: personal tokens and their call log (admin settings and portal) */
+.agents { display: grid; gap: var(--s-6); max-width: 760px; }
+.agents-once h3 { font-size: var(--text-md); margin: 0 0 var(--s-2); }
+.agents-step { margin: var(--s-4) 0 var(--s-2); color: var(--ink); }
+.agents-code { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: var(--text-xs); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s-3); margin: 0; white-space: pre-wrap; word-break: break-all; }
+.agents-form { margin: 0; }
+.agents-access { border: 0; padding: 0; margin: 0 0 var(--s-4); display: grid; gap: 0; }
+.agents-access legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--s-2); padding: 0; }
+.radio-row { display: flex; gap: var(--s-2); align-items: flex-start; min-height: 32px; padding: var(--s-1) 0; cursor: pointer; }
+@media (pointer: coarse) { .radio-row { min-height: 44px; } }
+.radio-row input { margin-top: 4px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.agents-modules { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0 var(--s-4); padding-left: var(--s-5); }
+.agents-h { font-family: var(--font-display); font-size: var(--text-xl); font-weight: 600; margin: 0 0 var(--s-3); }
+.agents-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-3); }
+.agents-row { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s-3) var(--s-4); }
+.agents-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-3); }
+.agents-row-head .name { font-weight: 600; }
+.agents-row-head .pill { margin-left: var(--s-1); }
+/* The call log reads like a terminal tail: what the agent did, in the API's own words. */
+.agents-log { list-style: none; margin: var(--s-3) 0 0; padding: var(--s-2) 0 0; border-top: 1px solid var(--line); font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: var(--text-xs); max-height: 220px; overflow: auto; }
+.agents-log li { display: grid; grid-template-columns: 1fr auto; gap: 0 var(--s-3); padding: 2px 0; border-left: 2px solid var(--ok); padding-left: var(--s-2); margin-bottom: 2px; }
+.agents-log li[data-ok='false'] { border-left-color: var(--danger); }
+.agents-log-op { overflow-wrap: anywhere; color: var(--ink); }
+.agents-log-status { color: var(--ink-2); text-align: right; }
+.agents-log-meta { grid-column: 1 / -1; color: var(--ink-3); font-family: var(--font-text); }
+.agents-gone summary { cursor: pointer; color: var(--ink-2); margin: var(--s-4) 0 var(--s-3); min-height: 32px; }
+@media (min-width: 640px) {
+  .agents-log li { grid-template-columns: 1fr 3.5em 13em; }
+  .agents-log-meta { grid-column: auto; text-align: right; }
+}
