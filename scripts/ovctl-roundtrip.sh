@@ -18,6 +18,9 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 # A clean clone with its own bare "origin", so `ovctl update` can pull a broken commit.
 git clone --quiet --bare "$REPO" "$WORK/origin.git"
+# A branch of its own (CI checks out a detached commit): the install tracks it, the broken release is pushed to it.
+git -C "$WORK/origin.git" update-ref refs/heads/roundtrip "$(git -C "$REPO" rev-parse HEAD)"
+git -C "$WORK/origin.git" symbolic-ref HEAD refs/heads/roundtrip
 git clone --quiet "$WORK/origin.git" "$WORK/install"
 cd "$WORK/install"
 # OVCTL_REF=<commit>: run an older ovctl against the same scenarios (to show a scenario fails without a fix).
@@ -67,7 +70,7 @@ git clone --quiet "$WORK/origin.git" "$WORK/broken"
   cd "$WORK/broken"
   printf "throw new Error('roundtrip: broken release');\n" | cat - src/server/index.ts > /tmp/ovctl-roundtrip-index.$$ && mv /tmp/ovctl-roundtrip-index.$$ src/server/index.ts
   git -c user.name=roundtrip -c user.email=roundtrip@example.org commit --quiet -am "broken release"
-  git push --quiet origin HEAD
+  git push --quiet origin HEAD:roundtrip
 )
 if ./ovctl update; then fail "update of a broken release reported success"; fi
 [ "$(git rev-parse HEAD)" = "$before" ] || fail "code not rolled back (HEAD $(git rev-parse HEAD), expected $before)"
