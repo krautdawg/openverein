@@ -83,3 +83,12 @@ Not covered by a test:
 | G16 | Offline attendance mark refused after a newer correction (409) | `g16Second` "refuses an offline attendance mark …" | yes |
 | G16 | Overview arrangement: one save at a time | none | Not tested: the race is two clicks within one save round trip in the browser; the controls are disabled while a save runs, which a unit test would only restate. |
 | G16 | Operator audit with real before-values | `g16Second` "records the real before-values …" | yes |
+| Agent access (#122-#124) | Portal sign-ins and member tokens end with the address (0092) | `agentSecond` "P1: ends portal sign-ins …" | yes |
+| Agent access | Module-limited tokens closed outside modules; API keys need a person | `agentSecond` "keeps a module-limited token …" | yes |
+| Agent access | No stored answer for group-limited grants | `agentSecond` "does not replay …" | yes |
+| Agent access | MCP tool list from route metadata; bodyless DELETE | `agentSecond` "lists tools by what the route needs …" | yes |
+| Agent access | /mcp requests counted once each | `agentMcp` "takes one message per request …" | yes |
+| Agent access | Every live token listed | `agentSecond` "always lists every live token …" | yes |
+| Agent access | CLI files 0600, no overwrite | `agentSecond` "saves CLI downloads …" | yes |
+| Agent access | Jobs re-check token and rights in the mutation transaction | none | Not tested: the revocation or role change would have to land between the job's start and its write, and the worker has no pause point for a test. The check runs in `owned()`, under the job and token row locks. |
+| Agent access | No token in the setup commands | none | UI text only (AgentTokens.tsx); no secret is interpolated any more, which review of the file shows. |

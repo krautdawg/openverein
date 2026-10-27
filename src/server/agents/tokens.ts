@@ -91,6 +91,9 @@ export function createLimiter(maxKeys = 5000) {
   };
 }
 
+/** Routes outside the modules that a module-limited token may still use: who am I. */
+const CAPPED_OPEN = new Set(['GET /api/v1/auth/me']);
+
 /** Marks in-process calls of the MCP server: only they may carry an MCP-only token, and they log as channel mcp. */
 export const INTERNAL_HEADER = 'x-ov-internal';
 export const internalSecret = randomUUID();
@@ -103,7 +106,7 @@ export function registerAgentTokens(app: FastifyInstance, db: Db) {
   const limit = createLimiter();
   app.addHook('onRequest', async (req, reply) => {
     // The route marks the outer MCP request (a path comparison would miss /mcp/ and friends).
-    if ((req.routeOptions.config as { mcp?: boolean } | undefined)?.mcp) req.agentChannel = 'mcp';
+    if (req.routeOptions.config?.mcp) req.agentChannel = 'mcp';
     const auth = req.headers.authorization;
     if (!auth?.startsWith('Bearer ')) return;
     const raw = auth.slice(7).trim();
@@ -116,17 +119,23 @@ export function registerAgentTokens(app: FastifyInstance, db: Db) {
     // Managed hosting: a token works only at its own club's host (RFC 8707 audience), never as another club's.
     if (config.multiTenant && !inner && (await tenantForRequest(db, req))?.id !== t.organization_id) throw new Problem(401, 'invalid-token', 'Das Token gehört zu einem anderen Verein.');
     req.agentToken = t;
-    // Counted per API call: an MCP tool call is its inner call; the outer /mcp envelope (initialize, tools/list) is not.
-    if (!outerMcp) {
+    // Counted per request that comes from outside, the /mcp envelope included (one message per envelope, batches are
+    // refused); the in-process call behind a tool call is not counted again.
+    if (!inner) {
       const wait = limit(t.id);
       if (wait !== null) {
         reply.header('retry-after', String(wait));
         req.agentLimited = true;
-        logCall(db, req, t, 429);
+        if (!outerMcp) logCall(db, req, t, 429);
         throw new Problem(429, 'rate-limited', 'Zu viele Anfragen mit diesem Token.', `Wieder möglich in ${wait} Sekunden.`);
       }
     }
     if (t.access === 'read' && !['GET', 'HEAD'].includes(req.method) && !outerMcp) throw new Problem(403, 'read-only-token', 'Dieses Token darf nur lesen.');
+    // A token limited to modules reaches nothing outside them: routes without a module (tasks, jobs, views) stay closed.
+    if (t.kind === 'admin' && t.cap && !outerMcp && (req.routeOptions.url ?? '').startsWith('/api/v1/') && !CAPPED_OPEN.has(`${req.method} ${req.routeOptions.url}`)) {
+      const tag = (req.routeOptions.schema as { tags?: string[] } | undefined)?.tags?.[0];
+      if (!MODULES.includes(tag as Module)) throw new Problem(403, 'forbidden', 'Dieses Token ist auf bestimmte Bereiche beschränkt.');
+    }
     if (!t.last_used_at || Date.now() - t.last_used_at.getTime() > 5 * 60_000) {
       await db.updateTable('personal_token').set({ last_used_at: new Date() }).where('id', '=', t.id).execute();
     }
@@ -152,10 +161,14 @@ export async function pruneAgentCalls(db: Db) {
 }
 
 /** The owner's view: tokens with their last calls (the call log is the owner's, not the club's). */
-export async function tokenList(db: Db, owner: { organizationId: string; userId?: string; email?: string }) {
+export async function tokenList(db: Db, owner: { organizationId: string; userId?: string; email?: string }, only?: string) {
   let q = db.selectFrom('personal_token').selectAll().where('organization_id', '=', owner.organizationId);
+  if (only) q = q.where('id', '=', only);
   q = owner.userId ? q.where('user_id', '=', owner.userId) : q.where('email', '=', owner.email!.toLowerCase());
-  const tokens = await q.orderBy('created_at', 'desc').limit(50).execute();
+  // Every live token (at most ten) always shows, so it can be revoked; of the history only the last twenty.
+  const live = await q.where('revoked_at', 'is', null).where('expires_at', '>', new Date()).orderBy('created_at', 'desc').execute();
+  const past = await q.where((eb) => eb.or([eb('revoked_at', 'is not', null), eb('expires_at', '<=', new Date())])).orderBy('created_at', 'desc').limit(20).execute();
+  const tokens = [...live, ...past];
   const ids = tokens.map((t) => t.id);
   // The last 20 calls per token and the 24-hour count, per token in SQL (a busy token must not hide the others).
   const calls = ids.length

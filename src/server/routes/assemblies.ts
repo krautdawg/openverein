@@ -98,7 +98,7 @@ export const assemblyRoutes: FastifyPluginAsyncZod = async (app) => {
     return detail(actor.organizationId, a.id);
   });
 
-  app.post('/assemblies/:id/invite', { schema: { tags, summary: 'Einladung mit Tagesordnung per E-Mail an alle aktuellen Mitglieder, bei Vorstandssitzungen an die Gruppe (prüft die Einladungsfrist); wer keine E-Mail hat, wird für den Brief gelistet', params: idParam, body: z.object({}).optional(), response: { 200: z.object({ sent: z.number(), letters: z.array(z.object({ memberId: z.uuid(), name: z.string(), reason: z.string() })) }) } } }, async (req) => {
+  app.post('/assemblies/:id/invite', { config: { agent: { modules: ['members', 'communication'] } }, schema: { tags, summary: 'Einladung mit Tagesordnung per E-Mail an alle aktuellen Mitglieder, bei Vorstandssitzungen an die Gruppe (prüft die Einladungsfrist); wer keine E-Mail hat, wird für den Brief gelistet', params: idParam, body: z.object({}).optional(), response: { 200: z.object({ sent: z.number(), letters: z.array(z.object({ memberId: z.uuid(), name: z.string(), reason: z.string() })) }) } } }, async (req) => {
     const actor = requireActor(req);
     board(actor);
     requireClubWide(actor, 'communication', 'write');

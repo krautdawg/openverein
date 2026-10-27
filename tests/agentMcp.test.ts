@@ -136,11 +136,13 @@ describe('MCP', () => {
     const again = await call(token, 'postInvoices', invoice);
     expect(first.isError, first.content[0]!.text).toBeFalsy();
     expect(JSON.parse(again.content[0]!.text!).id).toBe(JSON.parse(first.content[0]!.text!).id);
-    // Listing is free; tool calls count: the limit stops the 121st call within a minute.
+    // Every request to /mcp counts once (the call behind a tool is not counted again): the 121st within a minute gets 429.
     const reader = await adminToken({ access: 'read' });
-    let last: Result | undefined;
-    for (let i = 0; i <= 120; i++) last = await call(reader, 'getAuthMe');
-    expect(last!.isError).toBe(true);
-    expect(last!.content[0]!.text).toMatch(/^HTTP 429/);
+    let last: Awaited<ReturnType<typeof rpc>> | undefined;
+    for (let i = 0; i <= 120; i++) last = await rpc(reader, 'tools/call', { name: 'operation_aufrufen', arguments: { operation: 'getAuthMe' } });
+    expect(last!.status).toBe(429);
+    expect(Number(last!.headers['retry-after'])).toBeGreaterThan(0);
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await ctx.db.selectFrom('agent_call').select('id').where('operation', '=', 'GET /auth/me').execute()).length).toBe(120);
   });
 });

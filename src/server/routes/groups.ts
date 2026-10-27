@@ -157,7 +157,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     });
   }
 
-  app.get('/groups/:id/age-moves', { schema: { tags, summary: 'Anstehende Wechsel nach Alter (Vorschau, mit überfälligen)', params: idParam, querystring: z.object({ until: z.iso.date().optional() }), response: { 200: z.array(z.object({ memberId: z.uuid(), name: z.string(), moveOn: z.string(), toGroupId: z.uuid() })) } } }, async (req) => {
+  app.get('/groups/:id/age-moves', { config: { agent: { modules: ['groups', 'members'] } }, schema: { tags, summary: 'Anstehende Wechsel nach Alter (Vorschau, mit überfälligen)', params: idParam, querystring: z.object({ until: z.iso.date().optional() }), response: { 200: z.array(z.object({ memberId: z.uuid(), name: z.string(), moveOn: z.string(), toGroupId: z.uuid() })) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'read');
     // The move date gives the birthday away.
@@ -177,7 +177,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/groups/:id/members',
-    { schema: { tags, summary: 'Mitglieder einer Gruppe an einem Stichtag', params: idParam, querystring: z.object({ at: z.iso.date().optional() }), response: { 200: z.array(memberListItem) } } },
+    { config: { agent: { modules: ['groups', 'members'] } }, schema: { tags, summary: 'Mitglieder einer Gruppe an einem Stichtag', params: idParam, querystring: z.object({ at: z.iso.date().optional() }), response: { 200: z.array(memberListItem) } } },
     async (req) => {
       const actor = requireActor(req);
       requirePermission(actor, 'members', 'read');
@@ -205,7 +205,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
 
   const membershipDto = z.object({ id: z.uuid(), memberId: z.uuid(), groupId: z.uuid(), validFrom: z.string(), validTo: z.string().nullable() });
 
-  app.post('/group-memberships', { schema: { tags, summary: 'Mitglied ab einem Datum in eine Gruppe aufnehmen', body: membershipCreate, response: { 201: membershipDto } } }, async (req, reply) => {
+  app.post('/group-memberships', { config: { agent: { modules: ['members'] } }, schema: { tags, summary: 'Mitglied ab einem Datum in eine Gruppe aufnehmen', body: membershipCreate, response: { 201: membershipDto } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'write');
     await loadMemberRow(db, actor, req.body.memberId, 'write');
@@ -232,7 +232,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     return m;
   }
 
-  app.patch('/group-memberships/:id', { schema: { tags, summary: 'Gruppenzugehörigkeit beenden oder Ende ändern', params: idParam, body: membershipPatch, response: { 200: membershipDto } } }, async (req) => {
+  app.patch('/group-memberships/:id', { config: { agent: { modules: ['members'] } }, schema: { tags, summary: 'Gruppenzugehörigkeit beenden oder Ende ändern', params: idParam, body: membershipPatch, response: { 200: membershipDto } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'write');
     const before = await loadMembership(actor, req.params.id);
@@ -245,7 +245,7 @@ export const groupRoutes: FastifyPluginAsyncZod = async (app) => {
     return { id: m.id, memberId: m.member_id, groupId: m.group_id, validFrom: m.valid_from, validTo: m.valid_to };
   });
 
-  app.delete('/group-memberships/:id', { schema: { tags, summary: 'Falsch erfasste Gruppenzugehörigkeit löschen (wird protokolliert)', params: idParam, body: z.object({}).optional(), response: { 204: z.null() } } }, async (req, reply) => {
+  app.delete('/group-memberships/:id', { config: { agent: { modules: ['members'] } }, schema: { tags, summary: 'Falsch erfasste Gruppenzugehörigkeit löschen (wird protokolliert)', params: idParam, body: z.object({}).optional(), response: { 204: z.null() } } }, async (req, reply) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'write');
     const m = await loadMembership(actor, req.params.id);

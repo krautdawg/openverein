@@ -400,7 +400,7 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
     return rows.map((r) => ({ messageId: r.id, subject: r.subject, status: r.status, at: r.created_at.toISOString() }));
   });
 
-  app.post('/mail/test', { schema: { tags, summary: 'Test-E-Mail an Dich selbst schicken (prüft die SMTP-Einstellungen, mit SPF- und DMARC-Hinweisen)', body: z.object({}).optional(), response: { 200: z.object({ to: z.string(), messageId: z.string().nullable(), hints: z.array(z.string()) }) } } }, async (req) => {
+  app.post('/mail/test', { config: { agent: { modules: ['settings'] } }, schema: { tags, summary: 'Test-E-Mail an Dich selbst schicken (prüft die SMTP-Einstellungen, mit SPF- und DMARC-Hinweisen)', body: z.object({}).optional(), response: { 200: z.object({ to: z.string(), messageId: z.string().nullable(), hints: z.array(z.string()) }) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
     if (actor.kind !== 'user') throw new Problem(400, 'not-a-user', 'Nur für angemeldete Zugänge.');
@@ -432,7 +432,7 @@ export const messageRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 1024 }, (_req, body, done) => done(null, body));
   app.post('/unsubscribe/:token', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } }, schema: { tags, summary: 'Ein-Klick-Abmeldung (RFC 8058, für Mailprogramme)', security: [], params: z.object({ token: z.string().max(200) }), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => unsubscribe(req.params.token));
 
-  app.post('/mail/resume', { schema: { tags, summary: 'Angehaltenen Versand fortsetzen (nachdem die SMTP-Einstellungen stimmen)', body: z.object({}).optional(), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => {
+  app.post('/mail/resume', { config: { agent: { modules: ['settings'] } }, schema: { tags, summary: 'Angehaltenen Versand fortsetzen (nachdem die SMTP-Einstellungen stimmen)', body: z.object({}).optional(), response: { 200: z.object({ ok: z.boolean() }) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'settings', 'write');
     await db.transaction().execute(async (tx) => {

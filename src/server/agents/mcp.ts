@@ -16,6 +16,17 @@ import { INTERNAL_HEADER, internalSecret, type PersonalToken } from './tokens.ts
  * requests go. A tool can never do more than the API.
  */
 export const MCP_PATH = '/mcp';
+
+/** What an agent needs for a route when its tag does not say it (route config `agent`), by operationId. */
+export interface AgentRouteMeta { modules: Module[]; write?: boolean }
+export const routeAgentMeta = new Map<string, AgentRouteMeta>();
+
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    mcp?: boolean;
+    agent?: AgentRouteMeta;
+  }
+}
 const PDF_MAX = 5 * 1024 * 1024;
 /** Above this many operations (a full admin has ~300, about 250 kB of schemas) the list would swamp the agent's
  *  context: it gets three tools instead, to search, describe and call the same operations. */
@@ -78,15 +89,19 @@ export function toolsFrom(doc: { paths: Record<string, Record<string, OpenApiOp>
 
 /** What this token may see in tools/list: member tokens the portal, admin tokens what their (capped) rights reach. */
 export function visibleTools(tools: Tool[], t: PersonalToken, actor: Actor | null) {
+  // The modules come from the route's `agent` config where the tag would mislead, else from the tag. The route still
+  // decides every call; this list only spares the agent tools it cannot use.
   return tools.filter((tool) => {
-    if (t.access === 'read' && tool.method !== 'GET') return false;
+    const meta = routeAgentMeta.get(tool.name);
+    const writes = tool.method !== 'GET' || !!meta?.write;
+    if (t.access === 'read' && writes) return false;
     const portal = tool.path.startsWith('/portal/');
     if (t.kind === 'member') return portal;
     if (portal || !actor) return false;
-    const mod = MODULES.includes(tool.tag as Module) ? (tool.tag as Module) : null;
-    if (!mod) return true;
-    const have = level(actor, mod);
-    return tool.method === 'GET' ? have !== 'none' : have === 'write';
+    const modules = meta?.modules ?? (MODULES.includes(tool.tag as Module) ? [tool.tag as Module] : []);
+    // Routes outside the modules (tasks, jobs, views) are closed to a module-limited token.
+    if (!modules.length) return !t.cap || tool.name === 'getAuthMe';
+    return modules.every((m) => (writes ? level(actor, m) === 'write' : level(actor, m) !== 'none'));
   });
 }
 
@@ -148,9 +163,10 @@ async function callTool(app: FastifyInstance, req: FastifyRequest, tool: Tool, a
       ...(tool.method === 'POST' ? { 'idempotency-key': typeof args.idempotencyKey === 'string' && args.idempotencyKey ? args.idempotencyKey : randomUUID() } : {}),
       // No default: without a version the API answers 428 with the current one, so a stale agent cannot overwrite a person's edit.
       ...(tool.method === 'PATCH' && typeof args.ifMatch === 'string' ? { 'if-match': args.ifMatch } : {}),
-      ...(tool.hasBody || (tool.method !== 'GET' && tool.method !== 'DELETE') ? { 'content-type': 'application/json' } : {}),
+      // Every write is JSON (the API refuses anything else), a DELETE without body too.
+      ...(tool.method !== 'GET' ? { 'content-type': 'application/json' } : {}),
     },
-    ...(tool.hasBody || (tool.method !== 'GET' && tool.method !== 'DELETE') ? { payload: JSON.stringify(args.body ?? {}) } : {}),
+    ...(tool.method !== 'GET' ? { payload: JSON.stringify(args.body ?? {}) } : {}),
   });
   const type = String(res.headers['content-type'] ?? '');
   if (res.statusCode >= 400) {
@@ -180,7 +196,7 @@ export function registerMcp(app: FastifyInstance) {
 
   // Every 401 at /mcp carries the way to OAuth, also a revoked or expired token refused before the handler (RFC 9728).
   app.addHook('onSend', async (req, reply, payload) => {
-    if (reply.statusCode === 401 && (req.routeOptions.config as { mcp?: boolean } | undefined)?.mcp && !reply.hasHeader('www-authenticate')) {
+    if (reply.statusCode === 401 && req.routeOptions.config?.mcp && !reply.hasHeader('www-authenticate')) {
       const { base } = await hostBase(app.db, req);
       reply.header('www-authenticate', `Bearer error="invalid_token", resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
     }

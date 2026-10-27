@@ -348,6 +348,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/api-tokens', { schema: { tags: ['access'], summary: 'API-Schlüssel', response: { 200: z.array(apiToken) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'api', 'read');
+    requirePerson(actor);
     return tokenDto(actor);
   });
 
@@ -390,6 +391,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/api-tokens/:id/revoke', { schema: { tags: ['access'], summary: 'API-Schlüssel widerrufen', params: idParam, body: z.object({}).optional(), response: { 200: apiToken } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'api', 'write');
+    requirePerson(actor);
     const res = await db.transaction().execute(async (tx) => {
       const r = await tx.updateTable('api_token').set({ revoked_at: new Date() }).where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).where('revoked_at', 'is', null).executeTakeFirst();
       if (Number(r.numUpdatedRows) > 0) await audit(tx, actor.organizationId, actor, { action: 'api_token.revoked', entityType: 'api_token', entityId: req.params.id });

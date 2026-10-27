@@ -579,7 +579,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // ---------- Birthdays ----------
 
-  app.get('/birthdays', { schema: { tags, summary: 'Geburtstage im Zeitraum (nur mit Recht auf das Geburtsdatum)', querystring: z.object({ from: z.iso.date(), to: z.iso.date() }), response: { 200: z.array(birthday) } } }, async (req) => {
+  app.get('/birthdays', { config: { agent: { modules: ['members'] } }, schema: { tags, summary: 'Geburtstage im Zeitraum (nur mit Recht auf das Geburtsdatum)', querystring: z.object({ from: z.iso.date(), to: z.iso.date() }), response: { 200: z.array(birthday) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'members', 'read');
     if (restrictedFields(actor).has('birth_date')) return [];

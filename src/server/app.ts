@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { registerAgentTokens } from './agents/tokens.ts';
-import { registerMcp } from './agents/mcp.ts';
+import { registerMcp, routeAgentMeta } from './agents/mcp.ts';
 import { registerOAuth } from './agents/oauth.ts';
 import { agentRoutes } from './routes/agents.ts';
 import { demoResetting } from './demo/reset.ts';
@@ -114,6 +114,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
   // Every operation gets a stable id (method + route pattern) unless it names one: MCP tools and the CLI call it.
   app.addHook('onRoute', (route) => {
     if (route.schema && !route.schema.operationId) route.schema.operationId = operationIdOf(String(route.method), route.url);
+    if (route.config?.agent && route.schema?.operationId) routeAgentMeta.set(String(route.schema.operationId), route.config.agent);
   });
   registerAgentTokens(app, db);
 
