@@ -59,3 +59,11 @@ Not covered by a test:
 | G14 | Greetings only for preferred channel e-mail | `g14Second` "sends no greeting mail …" | yes |
 | G14 | Scheduled preview retried after a passing fault | `g14Second` "gives the month back …" | yes |
 | G14 | Tax-rate end date under the journal lock | none | Not tested: a booking would have to stop between its rate check and its insert, and the code has no hook for that. The fix is the same `lockJournal` that every booking takes first. |
+| G15 | Temp-file sweep rechecks the locked row | `g15Second` "does not expire a temporary file …" | yes |
+| G15 | RSVP validates and charges from the locked event | `g15Second` "charges the price the event has …" | yes |
+| G15 | Child price needs a regular price and is not above it (0073) | `g15Second` "refuses a child price …" | yes (migration moved out) |
+| G15 | Released run does not re-arm an amendment carried by a later submitted run | `g15Second` "does not re-arm an amendment …" | yes |
+| G15 | Import locks matched rows before the plan check | `g15Second` "does not overwrite a member edit …" | yes |
+| G15 | Portal codes, failures and lock per club | `g15Second` "accepts a portal code only at the club …" | yes |
+| G15 | ICS entry with unreadable DTEND/DURATION skipped | `g15Second` "skips a calendar entry …" | yes |
+| G15 | Demo reset visible to every instance (advisory lock as lease) | `g15Second` "tells every instance …" | yes |

@@ -408,8 +408,12 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
             last_collected_on = (select max(cr.collection_date) from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released'),
             first_collected = exists (select 1 from collection_item ci join collection_run cr on cr.id = ci.run_id where ci.mandate_id = m.id and cr.kind = 'debit' and cr.status <> 'released')
           where m.id in (select mandate_id from collection_item where run_id = ${r.id} and mandate_id is not null)`.execute(tx);
+        // The amendment goes back to pending, unless a run submitted after this one was made already told the bank.
         await sql`update sepa_mandate m set amendment_pending = true, amended_from_iban_encrypted = ci.amended_from_iban_encrypted
-          from collection_item ci where ci.run_id = ${r.id} and ci.mandate_id = m.id and ci.amended_from_iban_encrypted is not null`.execute(tx);
+          from collection_item ci where ci.run_id = ${r.id} and ci.mandate_id = m.id and ci.amended_from_iban_encrypted is not null
+            and not exists (select 1 from collection_item o join collection_run orun on orun.id = o.run_id
+              where o.mandate_id = m.id and o.run_id <> ${r.id} and o.amended_from_iban_encrypted is not null
+                and orun.status in ('submitted', 'settled') and orun.submitted_at >= ${r.created_at})`.execute(tx);
         await audit(tx, actor.organizationId, actor, { action: 'collection_run.released', entityType: 'collection_run', entityId: r.id, diff: { status: [r.status, 'released'], reason: [null, req.body.reason], confirmedNotSubmitted: [null, req.body.confirmNotSubmitted] } });
       });
       return runDto(actor, req.params.id);

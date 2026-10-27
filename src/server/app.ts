@@ -120,7 +120,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     // The public demo stays usable for everyone: nobody may lock others out, mint keys, or host files there.
     // Matched against the route pattern, not the raw URL, so percent-encoded paths cannot slip past.
     // While the demo is rebuilt, visitors wait (they would collide with the seed); health checks stay up.
-    if (config.demoMode && !opts.demoSeed && demoResetting() && !req.url.startsWith('/api/v1/health')) throw new Problem(503, 'demo-resetting', 'Die Demo wird gerade zurückgesetzt.', 'Versuch es in einer Minute noch einmal.');
+    if (config.demoMode && !opts.demoSeed && !req.url.startsWith('/api/v1/health') && (await demoResetting(db))) throw new Problem(503, 'demo-resetting', 'Die Demo wird gerade zurückgesetzt.', 'Versuch es in einer Minute noch einmal.');
     // Any raw byte upload is locked too, whatever its route (default deny for new upload routes: Codex review of #11).
     const upload = String(req.headers['content-type'] ?? '').startsWith('application/octet-stream');
     if (config.demoMode && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (upload || DEMO_LOCKED.test(req.routeOptions.url ?? req.url))) {

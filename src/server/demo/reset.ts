@@ -3,8 +3,20 @@ import type { Db } from '../db.ts';
 import { seedDemo } from './seed.ts';
 
 let resetting = false;
-/** True while this instance rebuilds the demo: the API answers 503 meanwhile (a visitor cannot collide with the seed). */
-export const demoResetting = () => resetting;
+let seen = { at: 0, held: false };
+/**
+ * True while any instance rebuilds the demo: the API answers 503 meanwhile (a visitor cannot collide with the seed).
+ * Other instances see the reset by its advisory lock, which the database drops if the resetting process dies (the
+ * lease). Asked at most once a second per instance.
+ */
+export async function demoResetting(db: Db) {
+  if (resetting) return true;
+  if (Date.now() - seen.at > 1000) {
+    const r = await sql<{ held: boolean }>`select exists (select 1 from pg_locks where locktype = 'advisory' and granted and objid = hashtext('openverein:demo-reset')::oid) as held`.execute(db);
+    seen = { at: Date.now(), held: !!r.rows[0]?.held };
+  }
+  return seen.held;
+}
 
 /**
  * Resets the demo when the last reset is older than `hours` (also right at start-up, so restarts cannot postpone it

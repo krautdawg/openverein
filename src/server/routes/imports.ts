@@ -193,6 +193,13 @@ export const importRoutes: FastifyPluginAsyncZod = async (app) => {
     const result = await db.transaction().execute(async (tx) => {
       // One import at a time per club; the plan is recomputed under the lock and must match the dry run.
       await sql`select pg_advisory_xact_lock(hashtext(${`import:${actor.organizationId}`}))`.execute(tx);
+      // Lock the matched members and persons (in id order) before the plan is checked: an edit between the check and
+      // the row's write would otherwise be overwritten with the file's older value.
+      const matched = (await plan(tx, actor, req.body)).planned.filter((r) => r.action === 'update');
+      const memberIds = matched.map((r) => r.memberId).filter((x): x is string => !!x).sort();
+      const personIds = matched.map((r) => r.personId).filter((x): x is string => !!x).sort();
+      if (memberIds.length) await tx.selectFrom('member').select('id').where('id', 'in', memberIds).orderBy('id').forUpdate().execute();
+      if (personIds.length) await tx.selectFrom('person').select('id').where('id', 'in', personIds).orderBy('id').forUpdate().execute();
       const p = await plan(tx, actor, req.body);
       if (p.planHash !== req.body.planHash) throw new Problem(409, 'plan-changed', 'Datei oder Einstellungen haben sich seit dem Probelauf geändert.', 'Starte den Probelauf neu.');
       const run = await tx.insertInto('import_run').values({ organization_id: actor.organizationId, file_name: req.body.fileName ?? null, file_sha256: createHash('sha256').update(req.body.content).digest('hex'), preset: req.body.preset, created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();

@@ -110,6 +110,10 @@ export function parseIcs(text: string, clubZone: string): { events: ImportedEven
       if (!start) skipped.push({ title, reason: 'ohne gültigen Beginn' });
       else if (one('STATUS')?.value.toUpperCase() === 'CANCELLED') skipped.push({ title, reason: 'abgesagt' });
       else if (one('RECURRENCE-ID')) skipped.push({ title, reason: 'Einzeländerung einer Serie' });
+      // A given but unreadable end is not "no end" (that would make a zero-length event); both at once is invalid too.
+      else if (one('DTEND') && one('DURATION')) skipped.push({ title, reason: 'Ende und Dauer zugleich angegeben' });
+      else if (one('DTEND') && !parseDate(one('DTEND')!, clubZone)) skipped.push({ title, reason: 'ohne gültiges Ende' });
+      else if (one('DURATION') && durationMs(one('DURATION')!.value) === null) skipped.push({ title, reason: 'ohne gültige Dauer' });
       else {
         const endProp = one('DTEND') && parseDate(one('DTEND')!, clubZone);
         const dur = one('DURATION') ? durationMs(one('DURATION')!.value) : null;
