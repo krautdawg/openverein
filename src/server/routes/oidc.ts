@@ -11,9 +11,7 @@ import type { Db } from '../db.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { isClubAdmin, requireStepUp } from '../policy.ts';
 import { baseUrlOf, tenantForRequest } from '../tenant.ts';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
-import { isPrivateAddress } from '../webhooks/worker.ts';
+import { guardedFetch } from '../http/guardedFetch.ts';
 import { ticketFor, userActor } from './auth.ts';
 
 const tags = ['auth'];
@@ -35,23 +33,22 @@ function unpackFlow(raw: string | undefined) {
 }
 
 /**
- * The issuer is fetched by the server: it must be a public address, else a club admin could probe the operator's
- * internal network (same rule as webhooks). Checked when saved and before every fetch.
- * shortcut: the fetch itself resolves the name again (no pinning as for webhooks); pin it if issuers become a risk.
+ * The issuer and every endpoint its metadata names (token, keys, user info) are fetched by the server: each request
+ * goes through a fetch that checks the address in the connection's own lookup (no private networks, no DNS
+ * rebinding, no redirects), else a club admin could probe the operator's internal network (same rule as webhooks).
  */
-async function assertPublicIssuer(issuer: string) {
-  if (config.oidcAllowHttp) return;
-  const host = new URL(issuer).hostname.replace(/^\[|\]$/g, '');
-  const addrs = isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
-  if (!addrs.length || addrs.some(isPrivateAddress)) throw new Error('Der Issuer liegt in einem privaten Netz.');
+const oidcFetch = guardedFetch(() => config.oidcAllowPrivate);
+async function discover(issuer: string, clientId: string, secret: string) {
+  const insecure = config.oidcAllowHttp && issuer.startsWith('http://');
+  const cfg = await client.discovery(new URL(issuer), clientId, secret, undefined, { [client.customFetch]: oidcFetch, ...(insecure ? { execute: [client.allowInsecureRequests] } : {}) });
+  cfg[client.customFetch] = oidcFetch;
+  return cfg;
 }
 
 async function clientConfig(db: Db, orgId: string) {
   const o = await db.selectFrom('organization').select(['oidc_enabled', 'oidc_issuer', 'oidc_client_id', 'oidc_client_secret_encrypted', 'hostname']).where('id', '=', orgId).executeTakeFirst();
   if (!o?.oidc_enabled || !o.oidc_issuer || !o.oidc_client_id || !o.oidc_client_secret_encrypted) return null;
-  await assertPublicIssuer(o.oidc_issuer);
-  const insecure = config.oidcAllowHttp && o.oidc_issuer.startsWith('http://');
-  const cfg = await client.discovery(new URL(o.oidc_issuer), o.oidc_client_id, decrypt(o.oidc_client_secret_encrypted), undefined, insecure ? { execute: [client.allowInsecureRequests] } : undefined);
+  const cfg = await discover(o.oidc_issuer, o.oidc_client_id, decrypt(o.oidc_client_secret_encrypted));
   return { cfg, redirectUri: `${baseUrlOf(o)}/api/v1/auth/oidc/callback` };
 }
 
@@ -96,9 +93,23 @@ export const oidcRoutes: FastifyPluginAsyncZod = async (app) => {
       req.log.warn({ err }, 'OIDC sign-in failed');
       return back('anbieter');
     }
-    // Only a verified address may map to an access of this club.
+    // The provider's stable identity (issuer, subject) decides; an e-mail address can be handed to someone else later.
+    // Only the first sign-in of an access links by its verified address, and only if it has no identity there yet.
+    const iss = String(claims?.iss ?? '');
+    const sub = String(claims?.sub ?? '');
     const email = typeof claims?.email === 'string' && claims.email_verified === true ? claims.email.toLowerCase() : null;
-    const user = email ? await db.selectFrom('app_user').selectAll().where('organization_id', '=', flow.org).where(sql<boolean>`lower(email) = ${email}`).where('status', '=', 'active').executeTakeFirst() : undefined;
+    const user = !iss || !sub ? undefined : await db.transaction().execute(async (tx) => {
+      const linked = await tx.selectFrom('oidc_identity').select('user_id').where('organization_id', '=', flow.org).where('issuer', '=', iss).where('subject', '=', sub).executeTakeFirst();
+      if (linked) return tx.selectFrom('app_user').selectAll().where('id', '=', linked.user_id).where('status', '=', 'active').executeTakeFirst();
+      if (!email) return undefined;
+      const candidate = await tx.selectFrom('app_user').selectAll().where('organization_id', '=', flow.org).where(sql<boolean>`lower(email) = ${email}`).where('status', '=', 'active').forUpdate().executeTakeFirst();
+      if (!candidate) return undefined;
+      const other = await tx.selectFrom('oidc_identity').select('id').where('organization_id', '=', flow.org).where('issuer', '=', iss).where('user_id', '=', candidate.id).executeTakeFirst();
+      if (other) return undefined;
+      await tx.insertInto('oidc_identity').values({ organization_id: flow.org, issuer: iss, subject: sub, user_id: candidate.id }).execute();
+      await audit(tx, flow.org, userActor(candidate), { action: 'auth.oidc_linked', entityType: 'app_user', entityId: candidate.id, diff: { issuer: [null, iss] } });
+      return candidate;
+    });
     if (!user) {
       await audit(db, flow.org, null, { action: 'auth.oidc_refused', entityType: 'organization', entityId: flow.org });
       return back('unbekannt');
@@ -139,9 +150,7 @@ export const oidcRoutes: FastifyPluginAsyncZod = async (app) => {
     // Check the provider before switching on: a wrong issuer must not lock anyone out silently.
     if (b.enabled && b.issuer) {
       try {
-        await assertPublicIssuer(b.issuer);
-        const insecure = config.oidcAllowHttp && b.issuer.startsWith('http://');
-        await client.discovery(new URL(b.issuer), b.clientId!, b.clientSecret ?? 'x', undefined, insecure ? { execute: [client.allowInsecureRequests] } : undefined);
+        await discover(b.issuer, b.clientId!, b.clientSecret ?? 'x');
       } catch {
         throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'issuer', message: 'Unter diesem Issuer ist keine OpenID-Konfiguration erreichbar.' }] });
       }

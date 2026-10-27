@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { joinDateFor } from '../src/server/routes/applications.ts';
 import { setMailer } from '../src/server/mail/transport.ts';
+import { emailHash } from '../src/server/mail/worker.ts';
 import { client, reset, setupClub, testApp } from './helpers.ts';
 
 const ctx = await testApp();
@@ -111,5 +112,14 @@ describe('applications', () => {
     const r = await submit({ ...person, ...withPlan(), guardian: null });
     expect(r.statusCode).toBe(400);
     expect(r.json().errors[0].field).toBe('data.guardian');
+  });
+
+  it('Codex review G16: another club\'s application to the same address does not silence the confirmation', async () => {
+    const form = await ctx.db.selectFrom('application_form').select('id').executeTakeFirstOrThrow();
+    const other = await ctx.db.insertInto('organization').values({ name: 'SV Anderswo' }).returning('id').executeTakeFirstOrThrow();
+    await ctx.db.insertInto('application').values({ organization_id: other.id, form_id: form.id, payload: JSON.stringify({}), consent: JSON.stringify({}), application_date: '2026-10-01', email_hash: emailHash(person.email) }).execute();
+    const r = await submit({ ...person, birthDate: '1990-05-02', ...withPlan() });
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await inbox(person.email)).toHaveLength(1);
   });
 });

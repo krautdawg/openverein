@@ -144,8 +144,10 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
     if (!line.trim()) return;
     try {
       const { o, p, purge } = JSON.parse(line) as { o: unknown; p: unknown; purge?: unknown };
-      if (purge === true && typeof o === 'string' && UUID.test(o)) {
-        purged.add(o);
+      // A purge intent, or its withdrawal after a rollback (the later line wins).
+      if (typeof purge === 'boolean' && typeof o === 'string' && UUID.test(o)) {
+        if (purge) purged.add(o);
+        else purged.delete(o);
         return;
       }
       if (typeof o !== 'string' || typeof p !== 'string' || !UUID.test(o) || !UUID.test(p)) throw new Error('shape');

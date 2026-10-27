@@ -165,8 +165,9 @@ export const applicationRoutes: FastifyPluginAsyncZod = async (app) => {
         await audit(tx, f.organization_id, null, { action: spam ? 'application.spam' : 'application.received', entityType: 'application', entityId: a.id });
       });
       if (!spam) {
-        // One confirmation per address and day, never to blocked addresses: the form cannot be used to flood strangers.
-        const earlier = await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('email_hash', '=', emailHash(to)).where('status', '!=', 'spam').where('created_at', '>', new Date(Date.now() - 86_400_000)).executeTakeFirstOrThrow();
+        // One confirmation per address, club and day, never to blocked addresses: the form cannot be used to flood
+        // strangers, and one club's applications do not silence another's.
+        const earlier = await db.selectFrom('application').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', f.organization_id).where('email_hash', '=', emailHash(to)).where('status', '!=', 'spam').where('created_at', '>', new Date(Date.now() - 86_400_000)).executeTakeFirstOrThrow();
         const blocked = await db.selectFrom('suppression').select('id').where('organization_id', '=', f.organization_id).where('email_hash', '=', emailHash(to)).where('reason', 'in', ['bounce', 'manual']).executeTakeFirst();
         if (earlier.n <= 1 && !blocked) {
           const { groups, feePlans } = await formChoices(f.organization_id, data.groupIds, data.feePlanId ? [data.feePlanId] : []);

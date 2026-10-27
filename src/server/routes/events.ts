@@ -533,6 +533,10 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
         // Serialise changes per occurrence so two last places cannot both be taken.
         await sql`select pg_advisory_xact_lock(hashtext(${`${e.id}|${req.params.date}`}))`.execute(tx);
         const current = await tx.selectFrom('participation').selectAll().where('event_id', '=', e.id).where('occurrence_date', '=', req.params.date).where('member_id', '=', member.id).executeTakeFirst();
+        // A late mark from offline must not overwrite a newer correction; the same status again is fine (a lost answer).
+        if (req.body.baseUpdatedAt !== undefined && current?.status !== wanted && (current?.updated_at.toISOString() ?? null) !== req.body.baseUpdatedAt) {
+          throw new Problem(409, 'changed-meanwhile', 'Jemand hat das inzwischen anders eingetragen.', 'Prüfe die Anwesenheit und trag sie neu ein.');
+        }
         let status: ParticipationStatus = wanted;
         if (wanted === 'yes' && current?.status !== 'yes' && e.max_participants !== null) {
           const taken = await tx.selectFrom('participation').select(sql<number>`count(*)::int`.as('n')).where('event_id', '=', e.id).where('occurrence_date', '=', req.params.date).where('status', 'in', ['yes', 'attended']).executeTakeFirstOrThrow();

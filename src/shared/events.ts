@@ -77,5 +77,9 @@ export const occurrenceDetail = occurrence.extend({
 });
 export type OccurrenceDetail = z.infer<typeof occurrenceDetail>;
 
-export const rsvpInput = z.object({ status: participationStatus });
+export const rsvpInput = z.object({
+  status: participationStatus,
+  /** The participation's updatedAt the client saw (null: none yet); a mark taken offline is refused if it changed since. */
+  baseUpdatedAt: z.string().max(40).nullish(),
+});
 export const birthday = z.object({ memberId: z.uuid(), name: z.string(), date: z.iso.date(), age: z.number() });

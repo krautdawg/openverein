@@ -29,6 +29,8 @@ export const config = {
   operatorToken: env.OPERATOR_TOKEN ?? '',
   /** OIDC issuers over plain http: only for development and tests. */
   oidcAllowHttp: env.OIDC_ALLOW_HTTP === 'true',
+  /** OIDC issuers (and the endpoints they name) in private networks: only for development and tests. */
+  oidcAllowPrivate: env.OIDC_ALLOW_PRIVATE === 'true',
   /** Managed hosting: the most mails per minute any one club may send through the shared server. */
   mailPerMinuteMax: Number(env.MAIL_PER_MINUTE_MAX ?? 60),
 };
