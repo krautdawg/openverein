@@ -22,7 +22,7 @@ export function SettingsLayout({ me }: { me: Me }) {
   return (
     <div className="page">
       <PageHead title="Einstellungen" />
-      <nav className="subnav" aria-label="Einstellungen">
+      <nav className="subnav subnav-wrap" aria-label="Einstellungen">
         {tabs.filter((t) => t.show).map((t) => <NavLink key={t.to} to={t.to} end>{t.label}</NavLink>)}
       </nav>
       <Outlet />
