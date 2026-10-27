@@ -65,9 +65,14 @@ export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
   app.patch('/operator/tenants/:id', { schema: { tags, summary: 'Hostname oder Namen eines Vereins ändern (Betreiber)', security: [], params: z.object({ id: z.uuid() }), body: z.object({ hostname: hostname.optional(), clubName: z.string().trim().min(1).max(200).optional() }), response: { 200: tenant.pick({ id: true, name: true, hostname: true }) } } }, async (req) => {
     const b = req.body;
     const r = await db.transaction().execute(async (tx) => {
-      const r = await tx.updateTable('organization').set({ ...(b.hostname ? { hostname: b.hostname } : {}), ...(b.clubName ? { name: b.clubName } : {}), updated_at: new Date() }).where('id', '=', req.params.id).returning(['id', 'name', 'hostname']).executeTakeFirst();
-      if (!r) throw notFound('Verein');
-      await audit(tx, r.id, null, { action: 'organization.operator_updated', entityType: 'organization', entityId: r.id, diff: { hostname: [null, b.hostname ?? null], name: [null, b.clubName ?? null] } });
+      const before = await tx.selectFrom('organization').select(['hostname', 'name']).where('id', '=', req.params.id).forUpdate().executeTakeFirst();
+      if (!before) throw notFound('Verein');
+      const r = await tx.updateTable('organization').set({ ...(b.hostname ? { hostname: b.hostname } : {}), ...(b.clubName ? { name: b.clubName } : {}), updated_at: new Date() }).where('id', '=', req.params.id).returning(['id', 'name', 'hostname']).executeTakeFirstOrThrow();
+      // The real before-values, and only fields that changed: the log must tell where a host name pointed before.
+      const diff: Record<string, [string | null, string | null]> = {};
+      if (before.hostname !== r.hostname) diff.hostname = [before.hostname, r.hostname];
+      if (before.name !== r.name) diff.name = [before.name, r.name];
+      await audit(tx, r.id, null, { action: 'organization.operator_updated', entityType: 'organization', entityId: r.id, diff });
       return r;
     });
     return r;

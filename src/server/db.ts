@@ -1008,6 +1008,7 @@ export interface Database {
   consent: ConsentTable;
   erasure_log: ErasureLogTable;
   operator_event: OperatorEventTable;
+  oidc_identity: OidcIdentityTable;
   idempotency_key: IdempotencyKeyTable;
   invoice_einvoice: InvoiceEinvoiceTable;
   duplicate_dismissal: DuplicateDismissalTable;
@@ -1351,6 +1352,15 @@ export interface ConsentTable {
   withdrawn_at: Date | null;
   withdrawn_source: ConsentSource | null;
   created_by: string | null;
+}
+
+export interface OidcIdentityTable {
+  id: Generated<string>;
+  organization_id: string;
+  issuer: string;
+  subject: string;
+  user_id: string;
+  created_at: Generated<Date>;
 }
 
 export interface OperatorEventTable {

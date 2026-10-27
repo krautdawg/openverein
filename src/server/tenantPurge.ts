@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sql } from 'kysely';
 import { config } from './config.ts';
@@ -19,11 +19,13 @@ export const lockClub = (tx: Db, organizationId: string) => sql`select pg_adviso
  * journal and receipts are immutable by trigger, so this runs with triggers off (session_replication_role = replica,
  * which needs a database superuser). With foreign keys unchecked, a final scan of every foreign key in every schema
  * proves that no row anywhere still points into the deleted club; otherwise the whole deletion rolls back.
- * The deletion is recorded in operator_event and in the erasure log file, so restoring an older backup deletes the
- * club again at start-up (replayErasures). Files go with the next sweep (sweepFiles removes unreferenced blobs).
+ * The deletion is written to the erasure log file (and synced) before anything is deleted, then to operator_event,
+ * so restoring an older backup deletes the club again at start-up (replayErasures); a deletion that fails after the
+ * intent is written stays pending and is repeated at the next start. Files go with the next sweep (sweepFiles removes unreferenced blobs).
  * With `confirmHostname`, the club's host name is checked inside the transaction, on the locked row.
  */
 export async function purgeTenant(db: Db, organizationId: string, confirmHostname?: string) {
+  let intent = false;
   const counts = await db.transaction().execute(async (tx) => {
     const su = await sql<{ ok: boolean }>`select rolsuper as ok from pg_roles where rolname = current_user`.execute(tx);
     if (!su.rows[0]?.ok) throw new Problem(409, 'purge-needs-superuser', 'Zum Löschen eines Vereins braucht die Datenbankverbindung Superuser-Rechte (wie in der mitgelieferten Docker-Installation).');
@@ -31,6 +33,9 @@ export async function purgeTenant(db: Db, organizationId: string, confirmHostnam
     const o = await tx.selectFrom('organization').select(['id', 'hostname']).where('id', '=', organizationId).forUpdate().executeTakeFirst();
     if (!o) throw notFound('Verein');
     if (confirmHostname !== undefined && (!o.hostname || confirmHostname !== o.hostname)) throw new Problem(400, 'validation', 'Zur Bestätigung den Hostnamen des Vereins angeben.', undefined, { errors: [{ field: 'confirmHostname', message: 'Stimmt nicht mit dem Hostnamen überein.' }] });
+    // The intent first: a crash or a full disk after the commit must not leave a deletion that a restore undoes.
+    await recordPurgeFile(organizationId);
+    intent = true;
     await sql`set local session_replication_role = replica`.execute(tx);
     const counts: Record<string, number> = {};
     const del = async (table: string, q: Promise<{ numAffectedRows?: bigint }>) => {
@@ -48,15 +53,24 @@ export async function purgeTenant(db: Db, organizationId: string, confirmHostnam
     await sql`set local session_replication_role = origin`.execute(tx);
     await tx.insertInto('operator_event').values({ action: 'tenant.purged', organization_id: organizationId, hostname: o.hostname, detail: JSON.stringify({ deleted: counts }) }).execute();
     return counts;
+  }).catch(async (err: unknown) => {
+    // Rolled back (the club is still there): the intent is withdrawn, so a restart does not try again.
+    if (intent && (await db.selectFrom('organization').select('id').where('id', '=', organizationId).executeTakeFirst())) await recordPurgeFile(organizationId, false);
+    throw err;
   });
-  await recordPurgeFile(organizationId);
   return counts;
 }
 
 /** The same file as person erasures: `ovctl restore` keeps it, and start-up replays it. */
-export async function recordPurgeFile(organizationId: string) {
+export async function recordPurgeFile(organizationId: string, purge = true) {
   await mkdir(config.filesDir, { recursive: true });
-  await appendFile(join(config.filesDir, 'erasure-log.jsonl'), JSON.stringify({ o: organizationId, purge: true, at: new Date().toISOString() }) + '\n', { mode: 0o600 });
+  const f = await open(join(config.filesDir, 'erasure-log.jsonl'), 'a', 0o600);
+  try {
+    await f.appendFile(JSON.stringify({ o: organizationId, purge, at: new Date().toISOString() }) + '\n');
+    await f.sync();
+  } finally {
+    await f.close();
+  }
 }
 
 /** Every foreign key in every user schema, checked by hand because they were not enforced during the purge. */

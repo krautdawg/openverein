@@ -9,10 +9,11 @@ import { client, enrollTotp, reset, setupClub, testApp } from './helpers.ts';
  * the test asks next (subject, e-mail, verification, nonce).
  */
 config.oidcAllowHttp = true;
+config.oidcAllowPrivate = true;
 const ctx = await testApp();
 let issuer = '';
 let server: Server;
-let next: { email: string; verified: boolean; nonce: string } = { email: '', verified: true, nonce: '' };
+let next: { email: string; verified: boolean; nonce: string; sub: string } = { email: '', verified: true, nonce: '', sub: 'sub-1' };
 const keys = await generateKeyPair('RS256');
 const jwk = { ...(await exportJWK(keys.publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
 
@@ -22,7 +23,7 @@ beforeAll(async () => {
     if (req.url === '/.well-known/openid-configuration') return json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, jwks_uri: `${issuer}/jwks`, response_types_supported: ['code'], subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'], code_challenge_methods_supported: ['S256'] });
     if (req.url === '/jwks') return json({ keys: [jwk] });
     if (req.url === '/token' && req.method === 'POST') {
-      const idToken = await new SignJWT({ email: next.email, email_verified: next.verified, nonce: next.nonce }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(issuer).setAudience('openverein').setSubject('sub-1').setIssuedAt().setExpirationTime('5m').sign(keys.privateKey);
+      const idToken = await new SignJWT({ email: next.email, email_verified: next.verified, nonce: next.nonce }).setProtectedHeader({ alg: 'RS256', kid: 'k1' }).setIssuer(issuer).setAudience('openverein').setSubject(next.sub).setIssuedAt().setExpirationTime('5m').sign(keys.privateKey);
       return json({ access_token: 'at', token_type: 'Bearer', expires_in: 300, id_token: idToken });
     }
     res.statusCode = 404;
@@ -45,12 +46,12 @@ beforeEach(async () => {
 });
 
 /** Starts the flow like a browser, then returns from the provider with a code for `email`. */
-async function signInVia(email: string, verified = true, tamperState = false) {
+async function signInVia(email: string, verified = true, tamperState = false, sub = 'sub-1') {
   const start = await ctx.app.inject({ url: '/api/v1/auth/oidc/start' });
   expect(start.statusCode, start.body).toBe(302);
   const to = new URL(String(start.headers.location));
   const flow = [start.headers['set-cookie']].flat().map(String).find((c) => c.startsWith('ov_oidc='))!.split(';')[0]!;
-  next = { email, verified, nonce: to.searchParams.get('nonce')! };
+  next = { email, verified, nonce: to.searchParams.get('nonce')!, sub };
   const state = tamperState ? 'falsch' : to.searchParams.get('state')!;
   return ctx.app.inject({ url: `/api/v1/auth/oidc/callback?code=abc&state=${state}`, headers: { cookie: flow } });
 }
@@ -75,8 +76,8 @@ describe('sign-in through the club identity provider (OIDC)', () => {
     expect((await ctx.app.inject({ url: '/api/v1/auth/me', headers: { cookie: session } })).json().email).toBe('olli@example.org');
 
     // Unknown or unverified addresses and a tampered state get nowhere.
-    expect((await signInVia('fremd@example.org')).headers.location).toBe('/anmelden#fehler=unbekannt');
-    expect((await signInVia('olli@example.org', false)).headers.location).toBe('/anmelden#fehler=unbekannt');
+    expect((await signInVia('fremd@example.org', true, false, 'sub-fremd')).headers.location).toBe('/anmelden#fehler=unbekannt');
+    expect((await signInVia('olli@example.org', false, false, 'sub-fremd')).headers.location).toBe('/anmelden#fehler=unbekannt');
     expect((await signInVia('olli@example.org', true, true)).headers.location).toBe('/anmelden#fehler=anbieter');
 
     // With a second factor, the provider replaces only the password: a ticket for the code step.
@@ -87,5 +88,25 @@ describe('sign-in through the club identity provider (OIDC)', () => {
   it('is off and invisible until an admin sets it up', async () => {
     expect((await ctx.app.inject({ url: '/api/v1/auth/oidc' })).json().enabled).toBe(false);
     expect((await ctx.app.inject({ url: '/api/v1/auth/oidc/start' })).statusCode).toBe(404);
+  });
+
+  it('Codex review G16: follows the provider identity, not a reassigned e-mail address', async () => {
+    expect((await admin.put('/settings/oidc', { enabled: true, issuer, clientId: 'openverein', clientSecret: 'geheim', label: 'Vereins-Google' })).status).toBe(200);
+    const invited = await admin.post('/users', { name: 'Olli Oidc', email: 'olli@example.org', grants: [{ roleId: (await admin.get('/roles')).body.find((r: { name: string }) => r.name === 'Trainer:in').id, scopeGroupIds: null }] });
+    await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: invited.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
+    expect((await signInVia('olli@example.org', true, false, 'sub-olli')).headers.location).toBe('/');
+    // The provider gives the address to a new person (another subject): no access to Olli's account.
+    expect((await signInVia('olli@example.org', true, false, 'sub-neu')).headers.location).toBe('/anmelden#fehler=unbekannt');
+    // Olli's own identity still signs in after the provider changed the address.
+    expect((await signInVia('olli.neu@example.org', true, false, 'sub-olli')).headers.location).toBe('/');
+  });
+
+  it('Codex review G16/G17: fetches no issuer in a private network', async () => {
+    config.oidcAllowPrivate = false;
+    try {
+      expect((await admin.put('/settings/oidc', { enabled: true, issuer, clientId: 'openverein', clientSecret: 'geheim', label: 'x' })).status).toBe(400);
+    } finally {
+      config.oidcAllowPrivate = true;
+    }
   });
 });

@@ -76,3 +76,10 @@ Not covered by a test:
 | G18 | Operator export checked and recorded under club and erasure locks | `g18Second` "records an operator export before an erasure …" | yes |
 | G18 | Ownerless legacy attendance marks stay unclaimed until someone takes them over (merged, conflicts kept) | `offlineQueue` "leaves old ownerless marks unclaimed …" | yes |
 | G18 | Flushing is bound to the user who started it and stops when someone else signs in | `offlineQueue` "stops sending when another person signs in …" | yes |
+| G16 | OIDC requests (discovery, token, keys) only to public addresses, pinned | `oidc` "fetches no issuer in a private network" | yes. The token and keys endpoints use the same guarded fetch (set on the configuration). A public issuer naming a private token endpoint cannot be set up in a test (it needs a public address). |
+| G16 | OIDC sign-in by (issuer, subject); e-mail only for the first link (0074) | `oidc` "follows the provider identity …" | yes |
+| G16 | Club deletion intent written (fsync) before deleting; withdrawn on rollback | `g16Second` "writes the deletion intent …", "withdraws the intent …" | yes |
+| G16 | Application confirmation counted per club | `applications` "Codex review G16 …" | yes |
+| G16 | Offline attendance mark refused after a newer correction (409) | `g16Second` "refuses an offline attendance mark …" | yes |
+| G16 | Overview arrangement: one save at a time | none | Not tested: the race is two clicks within one save round trip in the browser; the controls are disabled while a save runs, which a unit test would only restate. |
+| G16 | Operator audit with real before-values | `g16Second` "records the real before-values …" | yes |

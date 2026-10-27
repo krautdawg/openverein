@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Check } from 'lucide-react';
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { OVERVIEW_SECTIONS, type Me, type OverviewSection } from '../../shared/auth.ts';
@@ -93,8 +93,19 @@ function arrange(layout: { order: string[] }): OverviewSection[] {
 function ArrangeOverview({ layout, onDone }: { layout: { order: string[]; hidden: string[] }; onDone: () => void }) {
   const qc = useQueryClient();
   const order = arrange(layout);
+  // One save at a time, each from the layout the last one returned: quick clicks cannot undo each other.
+  const busy = useRef(false);
+  const [saving, setSaving] = useState(false);
   async function save(next: { order: string[]; hidden: string[] }) {
-    qc.setQueryData(['me'], await api<Me>('/auth/me/overview', { method: 'PUT', body: next }));
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    try {
+      qc.setQueryData(['me'], await api<Me>('/auth/me/overview', { method: 'PUT', body: next }));
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
   }
   const move = (i: number, d: -1 | 1) => {
     const next = [...order];
@@ -107,10 +118,10 @@ function ArrangeOverview({ layout, onDone }: { layout: { order: string[]; hidden
       <ol className="arrange-list">
         {order.map((k, i) => (
           <li key={k}>
-            <label className="check"><input type="checkbox" checked={!layout.hidden.includes(k)} onChange={(e) => void save({ order, hidden: e.target.checked ? layout.hidden.filter((h) => h !== k) : [...layout.hidden, k] })} /> {OVERVIEW_SECTIONS[k]}</label>
+            <label className="check"><input type="checkbox" disabled={saving} checked={!layout.hidden.includes(k)} onChange={(e) => void save({ order, hidden: e.target.checked ? layout.hidden.filter((h) => h !== k) : [...layout.hidden, k] })} /> {OVERVIEW_SECTIONS[k]}</label>
             <span className="actions-inline">
-              <button className="btn btn-ghost" aria-label={`${OVERVIEW_SECTIONS[k]} nach oben`} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} aria-hidden /></button>
-              <button className="btn btn-ghost" aria-label={`${OVERVIEW_SECTIONS[k]} nach unten`} disabled={i === order.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} aria-hidden /></button>
+              <button className="btn btn-ghost" aria-label={`${OVERVIEW_SECTIONS[k]} nach oben`} disabled={saving || i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} aria-hidden /></button>
+              <button className="btn btn-ghost" aria-label={`${OVERVIEW_SECTIONS[k]} nach unten`} disabled={saving || i === order.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} aria-hidden /></button>
             </span>
           </li>
         ))}

@@ -256,7 +256,7 @@ function OccurrenceSheet({ id, date, canWrite, onClose }: { id: string | null; d
     } catch (e) {
       // No signal in the hall: attendance waits on this device and goes out when the connection is back.
       if (e instanceof ApiError && e.problem.type === 'network' && (status === 'attended' || status === 'not_attended') && id && date) {
-        enqueueMark({ eventId: id, date, memberId, name, status });
+        enqueueMark({ eventId: id, date, memberId, name, status, baseUpdatedAt: o?.participants.find((p) => p.memberId === memberId)?.updatedAt ?? null });
         setTerm('');
         return;
       }

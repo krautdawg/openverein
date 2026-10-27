@@ -7,7 +7,7 @@ import { api, ApiError } from './api.ts';
  * status is idempotent, so sending a mark twice does no harm. A mark the server refuses stays with its reason until
  * someone discards it, so nothing is lost silently.
  */
-export interface PendingMark { path: string; eventId: string; date: string; memberId: string; name: string; status: 'attended' | 'not_attended'; error?: string }
+export interface PendingMark { path: string; eventId: string; date: string; memberId: string; name: string; status: 'attended' | 'not_attended'; baseUpdatedAt?: string | null; error?: string }
 
 // Per user: on a shared club tablet, trainer A's marks never go out under trainer B's session.
 let owner = '';
@@ -111,7 +111,7 @@ export function flushMarks() {
         for (const m of read(user).filter((x) => !x.error)) {
           if (owner !== user) break;
           try {
-            await api(m.path, { method: 'PUT', body: { status: m.status } });
+            await api(m.path, { method: 'PUT', body: { status: m.status, baseUpdatedAt: m.baseUpdatedAt } });
             write(read(user).filter((x) => !(x.path === m.path && x.status === m.status)), user);
             sent++;
           } catch (e) {
