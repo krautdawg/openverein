@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createLimiter, newToken, PER_HOUR, PER_MINUTE } from '../src/server/agents/tokens.ts';
 import { sha256 } from '../src/server/auth/session.ts';
 import { issueLoginCode } from '../src/server/routes/portal.ts';
+import { processJobs } from '../src/server/jobs/worker.ts';
+import { purgeTenant } from '../src/server/tenantPurge.ts';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 /** Change agent-access, slice 1: personal tokens act as their person, narrowed, never more. */
@@ -166,3 +168,43 @@ describe('limit and operation ids', () => {
     expect(ids.sort()).toMatchSnapshot();
   });
 });
+
+describe('review fixes (claude-counsel on #122)', () => {
+  it('lets the club be purged after its agents made calls', async () => {
+    const t = client(ctx.app, { token: await make({ access: 'read' }) });
+    await t.get('/members');
+    await sleep(100);
+    await purgeTenant(ctx.db, org);
+    expect(await ctx.db.selectFrom('agent_call').select('id').execute()).toEqual([]);
+  });
+
+  it('revokes the tokens of an access when it is disabled or its second factor reset, so unlocking does not bring them back', async () => {
+    const kasseCookie = await userWithRole(ctx.app, cookie, 'Kassenwart');
+    const t = client(ctx.app, { token: await make({ access: 'read' }, client(ctx.app, { cookie: kasseCookie })) });
+    const kasseId = ((await admin.get('/users')).body as { id: string; name: string }[]).find((u) => u.name === 'Kassenwart Test')!.id;
+    await admin.patch(`/users/${kasseId}`, { status: 'disabled' });
+    await admin.patch(`/users/${kasseId}`, { status: 'active' });
+    expect((await t.get('/calendars')).status).toBe(401);
+  });
+
+  it('drops a member token when the address changes', async () => {
+    const m = (await admin.post('/members', { firstName: 'Eva', lastName: 'Wechsel', email: 'eva@example.org', joinDate: '2024-01-01' })).body;
+    const pc = await portalCookie('eva@example.org');
+    const token = (await ctx.app.inject({ method: 'POST', url: '/api/v1/portal/tokens', headers: { cookie: pc }, payload: { name: 'Agent' } })).json().token as string;
+    expect((await client(ctx.app, { token }).get('/portal/me')).status).toBe(200);
+    expect((await admin.patch(`/members/${m.id}`, { email: 'eva.neu@example.org' })).status).toBe(200);
+    expect((await client(ctx.app, { token }).get('/portal/me')).status).toBe(401);
+  });
+
+  it('stops a job its agent started once the token is revoked', async () => {
+    const raw = await make({ access: 'write' });
+    const tok = await ctx.db.selectFrom('personal_token').select(['id', 'user_id']).where('token_hash', '=', sha256(raw)).executeTakeFirstOrThrow();
+    const g = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN', kind: 'division' })).body.id;
+    const m = (await admin.post('/members', { lastName: 'Job', joinDate: '2024-01-01' })).body.id;
+    const job = await ctx.db.insertInto('job').values({ organization_id: org, kind: 'member_bulk', created_by: tok.user_id, token_id: tok.id, params: JSON.stringify({ ids: [m], action: 'add_to_group', groupId: g, date: '2026-01-01' }) } as never).returning('id').executeTakeFirstOrThrow();
+    await ctx.db.updateTable('personal_token').set({ revoked_at: new Date() }).where('id', '=', tok.id).execute();
+    await processJobs(ctx.db);
+    expect((await ctx.db.selectFrom('job').select('status').where('id', '=', job.id).executeTakeFirstOrThrow()).status).toBe('failed');
+  });
+});
+

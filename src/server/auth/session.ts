@@ -53,10 +53,10 @@ async function personalActor(db: Db, t: PersonalToken): Promise<Actor> {
   const user = await db.selectFrom('app_user').selectAll().where('id', '=', t.user_id!).where('status', '=', 'active').executeTakeFirst();
   if (!user) throw new Problem(401, 'invalid-token', 'Das Token ist ungültig, abgelaufen oder widerrufen.');
   const grants = await loadGrants(db, user.id);
-  const demo = config.demoMode;
+  const demo = config.demoMode || !!(await db.selectFrom('organization').select('is_demo').where('id', '=', user.organization_id).executeTakeFirst())?.is_demo;
   // No step-up ever: `at` stays empty, so actions that need a fresh second factor stay with the person.
   const mfa = { required: !demo && mfaRequired(grants), enrolled: demo || !!user.totp_enabled_at, at: null };
-  return { kind: 'user', via: 'token', id: user.id, userId: user.id, name: `${user.name} (Agent: ${t.name})`, organizationId: user.organization_id, grants: capGrants(grants, t), mfa };
+  return { kind: 'user', via: 'token', tokenId: t.id, id: user.id, userId: user.id, name: `${user.name} (Agent: ${t.name})`, organizationId: user.organization_id, grants: capGrants(grants, t), mfa };
 }
 
 async function tokenActor(db: Db, token: string): Promise<Actor> {

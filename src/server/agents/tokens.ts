@@ -23,6 +23,7 @@ declare module 'fastify' {
     agentToken?: PersonalToken;
     /** the outer /mcp request: limited, not logged; its inner calls are logged, not limited again */
     agentChannel?: 'rest' | 'mcp' | 'cli';
+    agentLimited?: boolean;
   }
 }
 
@@ -55,7 +56,7 @@ export async function findToken(db: Db, raw: string) {
 const rank: Record<Level, number> = { none: 0, read: 1, write: 2 };
 const lower = (a: Level, b: Level): Level => (rank[a]! <= rank[b]! ? a : b);
 
-/** The access's grants, narrowed to what the token allows (read-only, module cap). A token is never club admin by role key. */
+/** The access's grants, narrowed to what the token allows (read-only, module cap). Only an unrestricted token keeps the admin role key. */
 export function capGrants(grants: Grant[], t: PersonalToken): Grant[] {
   const ceiling = (m: Module): Level => lower(t.access, t.cap ? (t.cap[m] ?? 'none') : 'write');
   const full = !t.cap && t.access === 'write';
@@ -113,6 +114,7 @@ export function registerAgentTokens(app: FastifyInstance, db: Db) {
       const wait = limit(t.id);
       if (wait !== null) {
         reply.header('retry-after', String(wait));
+        req.agentLimited = true;
         if (!outerMcp) logCall(db, req, t, 429);
         throw new Problem(429, 'rate-limited', 'Zu viele Anfragen mit diesem Token.', `Wieder möglich in ${wait} Sekunden.`);
       }
@@ -124,7 +126,8 @@ export function registerAgentTokens(app: FastifyInstance, db: Db) {
   });
   app.addHook('onResponse', async (req, reply) => {
     const t = req.agentToken;
-    if (!t || req.agentChannel === 'mcp' || reply.statusCode === 429) return;
+    // The agent limit logs its own 429; a route's own limit (also 429) is logged here.
+    if (!t || req.agentChannel === 'mcp' || req.agentLimited) return;
     logCall(db, req, t, reply.statusCode);
   });
 }
@@ -147,10 +150,13 @@ export async function tokenList(db: Db, owner: { organizationId: string; userId?
   q = owner.userId ? q.where('user_id', '=', owner.userId) : q.where('email', '=', owner.email!.toLowerCase());
   const tokens = await q.orderBy('created_at', 'desc').limit(50).execute();
   const ids = tokens.map((t) => t.id);
+  // The last 20 calls per token and the 24-hour count, per token in SQL (a busy token must not hide the others).
   const calls = ids.length
-    ? await db.selectFrom('agent_call').select(['token_id', 'at', 'operation', 'channel', 'status']).where('token_id', 'in', ids).where('at', '>', new Date(Date.now() - 7 * 86_400_000)).orderBy('at', 'desc').limit(1000).execute()
+    ? (await sql<{ token_id: string; at: Date; operation: string; channel: 'rest' | 'mcp' | 'cli'; status: number }>`
+        select c.token_id, c.at, c.operation, c.channel, c.status from unnest(${ids}::uuid[]) as t(id)
+        cross join lateral (select * from agent_call where token_id = t.id order by at desc limit 20) c`.execute(db)).rows
     : [];
-  const dayAgo = Date.now() - 86_400_000;
+  const counts = new Map(ids.length ? (await db.selectFrom('agent_call').select(['token_id', sql<number>`count(*)::int`.as('n')]).where('token_id', 'in', ids).where('at', '>', new Date(Date.now() - 86_400_000)).groupBy('token_id').execute()).map((r) => [r.token_id, r.n]) : []);
   return tokens.map((t) => {
     const own = calls.filter((c) => c.token_id === t.id);
     return {
@@ -164,7 +170,7 @@ export async function tokenList(db: Db, owner: { organizationId: string; userId?
       lastUsedAt: t.last_used_at?.toISOString() ?? null,
       revoked: t.revoked_at !== null,
       createdAt: t.created_at.toISOString(),
-      calls24h: own.filter((c) => c.at.getTime() > dayAgo).length,
+      calls24h: counts.get(t.id) ?? 0,
       recentCalls: own.slice(0, 20).map((c) => ({ at: c.at.toISOString(), operation: c.operation, channel: c.channel, status: c.status })),
     };
   });

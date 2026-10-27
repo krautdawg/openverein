@@ -23,6 +23,8 @@ export const CHILDREN: Record<string, { parent: string; key: string }> = {
   assembly_item: { parent: 'assembly', key: 'assembly_id' },
   assembly_attendance: { parent: 'assembly', key: 'assembly_id' },
   poll_vote: { parent: 'poll', key: 'poll_id' },
+  // Skipped in the export, but the tenant purge deletes children through this map (cascades are off there).
+  agent_call: { parent: 'personal_token', key: 'token_id' },
 };
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');

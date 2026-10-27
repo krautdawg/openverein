@@ -174,7 +174,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
         return '(nicht lesbar)';
       }
     };
-    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours, fees, assessments, collections, allowances, declarations, claims, hours, settlements, loans, attendance, votes, greetings, households] = await Promise.all([
+    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours, fees, assessments, collections, allowances, declarations, claims, hours, settlements, loans, attendance, votes, greetings, households, agentTokens] = await Promise.all([
       q(db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['club_group.name as Gruppe', 'group_membership.member_id']).where('group_membership.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('consent').selectAll().where('person_id', '=', p.id).execute()),
       q(db.selectFrom('invoice').select(['number as Nummer', 'kind as Art', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'paid_cents as Bezahlt_Cent', 'status as Status']).where('recipient_person_id', '=', p.id).where('status', '<>', 'draft').execute()),
@@ -204,6 +204,10 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('poll_vote').innerJoin('poll', 'poll.id', 'poll_vote.poll_id').select(['poll.question as Umfrage', 'poll_vote.voted_at as Am']).where('poll_vote.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('greeting_sent').select(['kind as Art', 'year as Jahr', 'sent_at as Gesendet']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('household').select(['name as Haushalt', 'created_at as Seit']).where('payer_person_id', '=', p.id).execute()),
+      // Agent tokens of the person's portal address, with how often each was used (the call log itself is technical).
+      p.email
+        ? q(db.selectFrom('personal_token').select(['name as Token', 'access as Recht', 'created_at as Erstellt', 'expires_at as Gueltig_bis', 'revoked_at as Widerrufen', sql<number>`(select count(*)::int from agent_call where token_id = personal_token.id)`.as('Aufrufe')]).where('organization_id', '=', p.organization_id).where('email', '=', p.email.toLowerCase()).execute())
+        : Promise.resolve([]),
     ]);
     const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
@@ -231,6 +235,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Umfrage-Teilnahme', votes as Row[]],
       ['Glückwünsche', greetings as Row[]],
       ['Haushalte (als zahlende Person)', households as Row[]],
+      ['Agenten-Tokens (Mitgliederportal)', agentTokens as Row[]],
       ['SEPA-Mandate', mandates.map(({ iban_encrypted, ...m }) => ({ ...m, IBAN: clear(iban_encrypted) }))],
       ['Spenden', donations as Row[]],
       ['Zuwendungsbestätigungen', receipts as Row[]],

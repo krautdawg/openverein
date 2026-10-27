@@ -37,3 +37,18 @@ create table agent_call (
 );
 create index agent_call_token on agent_call (token_id, at desc);
 create index agent_call_at on agent_call (at);
+
+-- A job started by an agent runs with the token's narrowed rights and stops when the token goes.
+alter table job add column token_id uuid references personal_token on delete set null;
+
+-- A member token belongs to an address: when a person's address changes (edit, accepted change request, erasure),
+-- tokens for the old address go with their call log, unless another person of the club still has that address.
+create function ov_member_tokens_follow_email() returns trigger language plpgsql as $$
+begin
+  if old.email is not null and lower(old.email) is distinct from lower(new.email)
+     and not exists (select 1 from person p where p.organization_id = old.organization_id and p.id <> old.id and lower(p.email) = lower(old.email)) then
+    delete from personal_token where organization_id = old.organization_id and kind = 'member' and email = lower(old.email);
+  end if;
+  return new;
+end $$;
+create trigger member_tokens_follow_email after update of email on person for each row execute function ov_member_tokens_follow_email();

@@ -34,7 +34,7 @@ export const fullExportRoutes: FastifyPluginAsyncZod = async (app) => {
     requireAdmin(actor);
     requireStepUp(actor);
     // One at a time per club (index job_one_active): a retried request gets 409, not a second export.
-    const job = await db.insertInto('job').values({ organization_id: actor.organizationId, kind: 'full_export', created_by: actor.userId }).returningAll().executeTakeFirstOrThrow();
+    const job = await db.insertInto('job').values({ organization_id: actor.organizationId, kind: 'full_export', created_by: actor.userId, token_id: actor.tokenId ?? null }).returningAll().executeTakeFirstOrThrow();
     reply.status(202);
     return jobDto(job);
   });

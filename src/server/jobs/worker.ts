@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { capGrants } from '../agents/tokens.ts';
 import type { Db, JobKind } from '../db.ts';
 import { JobError, type Job, type JobContext } from './job.ts';
 import { Problem } from '../http/problem.ts';
@@ -22,7 +23,12 @@ const MAX_ATTEMPTS = 2;
 async function currentActor(db: Db, job: Job): Promise<Actor> {
   const user = job.created_by ? await db.selectFrom('app_user').select(['id', 'name', 'status', 'organization_id']).where('id', '=', job.created_by).executeTakeFirst() : undefined;
   if (!user || user.status !== 'active' || user.organization_id !== job.organization_id) throw new JobError('Das Konto, das die Aufgabe gestartet hat, ist nicht mehr aktiv.');
-  return { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: job.organization_id, grants: await loadGrants(db, user.id) };
+  const grants = await loadGrants(db, user.id);
+  if (!job.token_id) return { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: job.organization_id, grants };
+  // Started by an agent: its token's narrowed rights, and a revoked or expired token stops the job.
+  const t = await db.selectFrom('personal_token').selectAll().where('id', '=', job.token_id).where('revoked_at', 'is', null).where('expires_at', '>', new Date()).executeTakeFirst();
+  if (!t) throw new JobError('Das Agenten-Token, das die Aufgabe gestartet hat, gilt nicht mehr.');
+  return { kind: 'user', via: 'token', tokenId: t.id, id: user.id, userId: user.id, name: `${user.name} (Agent: ${t.name})`, organizationId: job.organization_id, grants: capGrants(grants, t) };
 }
 
 /** Runs queued jobs one after another until none is left; returns how many ran. */

@@ -1262,6 +1262,7 @@ export interface JobTable {
   result: unknown;
   attempts: Generated<number>;
   created_by: string | null;
+  token_id: Generated<string | null>;
   created_at: Generated<Date>;
   claimed_at: Date | null;
   finished_at: Date | null;

@@ -229,7 +229,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     const id = await db.transaction().execute(async (tx) => {
       await assertRoom(tx, owner);
       const t = await tx.insertInto('personal_token').values({ organization_id: owner.organizationId, kind: 'member', email: owner.email, name: b.name, prefix, token_hash: sha256(token), access: b.access, expires_at: new Date(Date.now() + b.expiresInDays * 86_400_000) }).returning('id').executeTakeFirstOrThrow();
-      await audit(tx, owner.organizationId, null, { action: 'personal_token.created', entityType: 'personal_token', entityId: t.id, diff: { name: [null, b.name], access: [null, b.access], portal: [null, true] } });
+      await audit(tx, owner.organizationId, null, { action: 'personal_token.created', entityType: 'personal_token', entityId: t.id, diff: { access: [null, b.access], portal: [null, true] } });
       return t.id;
     });
     reply.status(201);
