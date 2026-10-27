@@ -406,7 +406,7 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     await assertGroup(db, actor, req.body.groupId);
     if (req.body.ids.length > BULK_INLINE_MAX) {
       // The selection is frozen now; the job re-checks the starting user's rights and scope when it runs.
-      const job = await db.insertInto('job').values({ organization_id: actor.organizationId, kind: 'member_bulk', created_by: actor.userId, params: JSON.stringify(req.body) }).returningAll().executeTakeFirstOrThrow();
+      const job = await db.insertInto('job').values({ organization_id: actor.organizationId, kind: 'member_bulk', created_by: actor.userId, token_id: actor.tokenId ?? null, params: JSON.stringify(req.body) }).returningAll().executeTakeFirstOrThrow();
       reply.status(202);
       return jobDto(job);
     }

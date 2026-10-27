@@ -24,7 +24,7 @@ import type { Db, Level } from '../db.ts';
 import { CONSTRAINT_MESSAGES, forbidden, notFound, Problem } from '../http/problem.ts';
 import { visibleDiffKeys } from '../members/custom.ts';
 import { maskCustom, maskDiff } from '../members/query.ts';
-import { type Actor, level, loadGrants, MODULES, requirePermission, requireStepUp, RESTRICTABLE_FIELDS, restrictedFields, scopeOf } from '../policy.ts';
+import { type Actor, level, loadGrants, MODULES, requirePermission, requireStepUp, RESTRICTABLE_FIELDS, restrictedFields, scopeOf, requirePerson } from '../policy.ts';
 
 CONSTRAINT_MESSAGES.role_organization_id_name_key = 'Eine Rolle mit diesem Namen gibt es schon.';
 
@@ -73,7 +73,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /** People and role definitions are managed by people: a leaked API key must not create accounts or roles. */
   function assertHuman(actor: Actor) {
-    if (actor.kind === 'token') throw forbidden('settings:write (nur angemeldete Zugänge, keine API-Schlüssel)');
+    requirePerson(actor);
   }
 
   /** Acting on another user (role change, lock, invite) needs at least that user's current rights. */
@@ -266,8 +266,9 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       await tx.updateTable('app_user').set({ totp_secret_encrypted: null, totp_enabled_at: null, totp_last_step: null, updated_at: new Date() }).where('id', '=', u.id).execute();
       await tx.deleteFrom('totp_recovery_code').where('user_id', '=', u.id).execute();
-      // Sessions confirmed with the old factor end too.
+      // Sessions confirmed with the old factor end too, and so do the agent tokens made with them.
       await tx.deleteFrom('session').where('user_id', '=', u.id).execute();
+      await tx.updateTable('personal_token').set({ revoked_at: new Date() }).where('user_id', '=', u.id).where('revoked_at', 'is', null).execute();
       await audit(tx, actor.organizationId, actor, { action: 'auth.totp_reset', entityType: 'app_user', entityId: u.id });
     });
     return userDto(u.id);
@@ -288,7 +289,11 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       if (req.body.name || req.body.status) {
         await tx.updateTable('app_user').set({ ...(req.body.name ? { name: req.body.name } : {}), ...(req.body.status ? { status: req.body.status } : {}), updated_at: new Date() }).where('id', '=', u.id).execute();
       }
-      if (req.body.status === 'disabled') await tx.deleteFrom('session').where('user_id', '=', u.id).execute();
+      if (req.body.status === 'disabled') {
+        await tx.deleteFrom('session').where('user_id', '=', u.id).execute();
+        // Revoked, not just paused: unlocking a (perhaps compromised) access must not bring its agents back.
+        await tx.updateTable('personal_token').set({ revoked_at: new Date() }).where('user_id', '=', u.id).where('revoked_at', 'is', null).execute();
+      }
       if (req.body.grants) {
         await tx.deleteFrom('role_grant').where('user_id', '=', u.id).execute();
         for (const g of req.body.grants) {
@@ -355,7 +360,7 @@ export const accessRoutes: FastifyPluginAsyncZod = async (app) => {
       requireStepUp(actor);
       requirePermission(actor, 'settings', 'write');
       // Tokens cannot create tokens: a leaked key must not be able to mint more keys.
-      if (actor.kind === 'token') throw forbidden('api:write (nur angemeldete Zugänge)');
+      requirePerson(actor);
       await checkGrants(actor, [{ roleId: req.body.roleId, scopeGroupIds: req.body.scopeGroupIds }]);
       const prefix = randomBytes(4).toString('hex');
       const token = `ov_${prefix}_${randomBytes(32).toString('base64url')}`;

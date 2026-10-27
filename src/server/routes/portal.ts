@@ -17,6 +17,8 @@ import { audit } from '../audit.ts';
 import { sha256 } from '../auth/session.ts';
 import { config } from '../config.ts';
 import { blindIndex, encrypt } from '../crypto.ts';
+import { memberTokenCreate, personalToken, tokenCreated } from '../../shared/agents.ts';
+import { assertRoom, newToken, tokenList } from '../agents/tokens.ts';
 import type { ChangeField, Db } from '../db.ts';
 import { getBlob, putBlob } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
@@ -81,11 +83,20 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
   /** The signed-in address, every current membership registered under it, and the members of households it pays for (proxy). */
-  async function portalUser(req: FastifyRequest, reply: FastifyReply) {
+  /** The portal sign-in: the cookie, or a member's personal token (an agent sees exactly what the member sees). */
+  async function portalSession(req: FastifyRequest) {
+    const t = req.agentToken;
+    if (t) return t.kind === 'member' ? { organization_id: t.organization_id, email: t.email!, viaToken: true as const } : undefined;
     const token = req.cookies[PORTAL_COOKIE];
     const s = token ? await db.selectFrom('portal_session').selectAll().where('token_hash', '=', sha256(token)).where('expires_at', '>', new Date()).executeTakeFirst() : undefined;
+    return s && { ...s, viaToken: false as const };
+  }
+
+  async function portalUser(req: FastifyRequest, reply: FastifyReply) {
+    const token = req.cookies[PORTAL_COOKIE];
+    const s = await portalSession(req);
     if (!s) throw new Problem(401, 'unauthenticated', 'Bitte melde Dich im Mitgliederportal an.');
-    if (Date.now() - s.last_seen_at.getTime() > 60_000) {
+    if (!s.viaToken && Date.now() - s.last_seen_at.getTime() > 60_000) {
       await db.updateTable('portal_session').set({ last_seen_at: new Date(), expires_at: new Date(Date.now() + PORTAL_IDLE_MS) }).where('token_hash', '=', s.token_hash).execute();
       reply.setCookie(PORTAL_COOKIE, token!, { path: '/', httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, maxAge: PORTAL_IDLE_MS / 1000 });
     }
@@ -196,6 +207,45 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
   });
 
   // ---------- Pages ----------
+
+  // ---------- Agents: the member's own tokens (they act as this portal sign-in) ----------
+
+  /** Managing tokens needs the member at the keyboard (the cookie), never a token. */
+  async function portalPerson(req: FastifyRequest, reply: FastifyReply) {
+    const u = await portalUser(req, reply);
+    if (u.session.viaToken) throw new Problem(403, 'person-required', 'Tokens verwaltest Du nur angemeldet im Portal, nicht mit einem Token.');
+    return { u, owner: { organizationId: u.organizationId, email: u.email.toLowerCase() } };
+  }
+
+  app.get('/portal/tokens', { schema: { tags, summary: 'Meine Agenten-Tokens mit ihren letzten Aufrufen', security: [], response: { 200: z.array(personalToken) } } }, async (req, reply) => {
+    const { owner } = await portalPerson(req, reply);
+    return tokenList(db, owner);
+  });
+
+  app.post('/portal/tokens', { schema: { tags, summary: 'Agenten-Token erstellen (wird nur einmal angezeigt; sieht und darf, was Du im Portal siehst und darfst)', security: [], body: memberTokenCreate, response: { 201: tokenCreated } } }, async (req, reply) => {
+    const { owner } = await portalPerson(req, reply);
+    const b = req.body;
+    const { prefix, token } = newToken('member');
+    const id = await db.transaction().execute(async (tx) => {
+      await assertRoom(tx, owner);
+      const t = await tx.insertInto('personal_token').values({ organization_id: owner.organizationId, kind: 'member', email: owner.email, name: b.name, prefix, token_hash: sha256(token), access: b.access, expires_at: new Date(Date.now() + b.expiresInDays * 86_400_000) }).returning('id').executeTakeFirstOrThrow();
+      await audit(tx, owner.organizationId, null, { action: 'personal_token.created', entityType: 'personal_token', entityId: t.id, diff: { access: [null, b.access], portal: [null, true] } });
+      return t.id;
+    });
+    reply.status(201);
+    return { token, personalToken: (await tokenList(db, owner)).find((t) => t.id === id)! };
+  });
+
+  app.post('/portal/tokens/:id/revoke', { schema: { tags, summary: 'Agenten-Token widerrufen', security: [], params: z.object({ id: z.uuid() }), body: z.object({}).optional(), response: { 200: personalToken } } }, async (req, reply) => {
+    const { owner } = await portalPerson(req, reply);
+    await db.transaction().execute(async (tx) => {
+      const r = await tx.updateTable('personal_token').set({ revoked_at: new Date() }).where('id', '=', req.params.id).where('organization_id', '=', owner.organizationId).where('email', '=', owner.email).where('revoked_at', 'is', null).executeTakeFirst();
+      if (Number(r.numUpdatedRows)) await audit(tx, owner.organizationId, null, { action: 'personal_token.revoked', entityType: 'personal_token', entityId: req.params.id });
+    });
+    const t = (await tokenList(db, owner)).find((x) => x.id === req.params.id);
+    if (!t) throw notFound('Token');
+    return t;
+  });
 
   app.get('/portal/me', { schema: { tags, summary: 'Meine Mitgliedschaften (alle unter meiner E-Mail-Adresse)', security: [] } }, async (req, reply) => {
     const u = await portalUser(req, reply);

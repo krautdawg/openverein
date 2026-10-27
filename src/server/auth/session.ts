@@ -4,6 +4,7 @@ import type { AppUser, Db } from '../db.ts';
 import { config } from '../config.ts';
 import { Problem, unauthorized } from '../http/problem.ts';
 import { loadGrants, mfaRequired, type Actor } from '../policy.ts';
+import { capGrants, type PersonalToken } from '../agents/tokens.ts';
 
 export const SESSION_COOKIE = 'ov_session';
 const IDLE_MS = 8 * 60 * 60 * 1000; // admin idle timeout (spec auth: 8 h)
@@ -35,6 +36,8 @@ export async function destroySession(db: Db, req: FastifyRequest, reply: Fastify
 
 /** Resolves `Authorization: Bearer ov_…` or the session cookie to an actor with its role grants. */
 export async function actorFromRequest(db: Db, req: FastifyRequest, reply: FastifyReply): Promise<Actor | null> {
+  // A personal token (resolved by the agent hook) acts as its access with narrowed grants; a member token has no admin actor.
+  if (req.agentToken) return req.agentToken.kind === 'admin' ? personalActor(db, req.agentToken) : null;
   const auth = req.headers.authorization;
   if (auth?.startsWith('Bearer ')) return tokenActor(db, auth.slice(7).trim());
   const user = await userFromCookie(db, req, reply);
@@ -44,6 +47,16 @@ export async function actorFromRequest(db: Db, req: FastifyRequest, reply: Fasti
   const demo = config.demoMode || user.is_demo;
   const mfa = { required: !demo && mfaRequired(grants), enrolled: demo || !!user.totp_enabled_at, at: demo ? new Date() : user.mfa_at };
   return { kind: 'user', id: user.id, userId: user.id, name: user.name, organizationId: user.organization_id, grants, mfa };
+}
+
+async function personalActor(db: Db, t: PersonalToken): Promise<Actor> {
+  const user = await db.selectFrom('app_user').selectAll().where('id', '=', t.user_id!).where('status', '=', 'active').executeTakeFirst();
+  if (!user) throw new Problem(401, 'invalid-token', 'Das Token ist ungültig, abgelaufen oder widerrufen.');
+  const grants = await loadGrants(db, user.id);
+  const demo = config.demoMode || !!(await db.selectFrom('organization').select('is_demo').where('id', '=', user.organization_id).executeTakeFirst())?.is_demo;
+  // No step-up ever: `at` stays empty, so actions that need a fresh second factor stay with the person.
+  const mfa = { required: !demo && mfaRequired(grants), enrolled: demo || !!user.totp_enabled_at, at: null };
+  return { kind: 'user', via: 'token', tokenId: t.id, id: user.id, userId: user.id, name: `${user.name} (Agent: ${t.name})`, organizationId: user.organization_id, grants: capGrants(grants, t), mfa };
 }
 
 async function tokenActor(db: Db, token: string): Promise<Actor> {

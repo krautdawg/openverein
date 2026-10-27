@@ -64,7 +64,7 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
     if (req.method !== 'POST' || !MONEY_ROUTES.has(req.routeOptions.url ?? '') || !req.actor) return;
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) throw new Problem(400, 'idempotency-key-required', 'Für diese Anfrage fehlt der Header Idempotency-Key.', 'Schick bei Geld-Buchungen einen eindeutigen Schlüssel (8 bis 200 Zeichen) mit; bei einer Wiederholung denselben.');
-    const actor = req.actor.kind === 'user' ? req.actor.id : `token:${req.actor.id}`;
+    const actor = req.actor.tokenId ? `pat:${req.actor.tokenId}` : req.actor.kind === 'user' ? req.actor.id : `token:${req.actor.id}`;
     const route = `${req.method} ${req.url.split('?')[0]}`;
     const hash = createHash('sha256').update(JSON.stringify(req.body ?? null)).digest('hex');
     const grants = createHash('sha256').update(JSON.stringify(req.actor.grants)).digest('hex');

@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs';
+import { registerAgentTokens } from './agents/tokens.ts';
+import { agentRoutes } from './routes/agents.ts';
 import { demoResetting } from './demo/reset.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -67,6 +69,12 @@ declare module 'fastify' {
   }
 }
 
+/** `GET /members/:id/fees` → `getMembersIdFees`; `/api/v1` is left out. */
+export function operationIdOf(method: string, url: string) {
+  const words = url.replace(/^\/api\/v1/, '').split(/[/._-]+/).filter(Boolean).map((w) => w.replace(/^:/, '').replace(/[^A-Za-z0-9]/g, ''));
+  return method.toLowerCase() + words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+}
+
 export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: boolean; authRateLimit?: number; demoSeed?: boolean } = {}) {
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: config.trustProxy.length ? config.trustProxy : false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
@@ -100,6 +108,12 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
     const path = url.split('?')[0]!;
     return path === '/api' || path.startsWith('/api/');
   };
+
+  // Every operation gets a stable id (method + route pattern) unless it names one: MCP tools and the CLI call it.
+  app.addHook('onRoute', (route) => {
+    if (route.schema && !route.schema.operationId) route.schema.operationId = operationIdOf(String(route.method), route.url);
+  });
+  registerAgentTokens(app, db);
 
   app.addHook('onRequest', async (req, reply) => {
     // The route pattern where there is one: a percent-encoded path (/%61pi/…) is routed like the plain one.
@@ -139,6 +153,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(memberRoutes);
       await api.register(groupRoutes);
       await api.register(accessRoutes);
+      await api.register(agentRoutes);
       await api.register(feeRoutes);
       await api.register(invoiceRoutes);
       await api.register(sepaRoutes);

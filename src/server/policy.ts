@@ -26,6 +26,10 @@ export interface Actor {
   name: string;
   organizationId: string;
   grants: Grant[];
+  /** 'token': a personal access token acting as this user (an agent): no step-up, no account security, keys or accesses. */
+  via?: 'token';
+  /** the personal token's id when via = 'token' (jobs keep its narrowed rights) */
+  tokenId?: string;
   /** Second factor of a signed-in user (absent for API tokens). */
   mfa?: { required: boolean; enrolled: boolean; at: Date | null };
 }
@@ -95,7 +99,12 @@ export function restrictedFields(actor: Actor, module: Module = 'members'): Set<
   return hidden;
 }
 
-/** A signed-in user holding the built-in admin role for the whole club. */
+/** Account security (second factor, sessions), keys and accesses are for the person at the keyboard: never an API key or an agent's token. */
+export function requirePerson(actor: Actor) {
+  if (actor.kind !== 'user' || actor.via === 'token') throw new Problem(403, 'person-required', 'Das geht nur angemeldet im Browser, nicht mit einem API-Schlüssel oder Agenten-Token.');
+}
+
+/** A signed-in user holding the built-in admin role for the whole club (an agent's unrestricted token counts, as its person). */
 export const isClubAdmin = (actor: Actor) => actor.kind === 'user' && actor.grants.some((g) => g.builtinKey === 'admin' && g.scope === null);
 
 export async function loadGrants(db: Db, userId: string): Promise<Grant[]> {
