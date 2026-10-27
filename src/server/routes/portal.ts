@@ -236,10 +236,22 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
   });
 
   /** Invoices addressed to any person under this address. */
+  /**
+   * Invoices addressed to the signed-in person's own memberships, and household invoices to them as payer (also a
+   * payer who is no member). A household invoice covers the managed members too: it shows only if every one of
+   * them may see invoices (deny wins).
+   */
   async function ownInvoices(u: PortalUser) {
-    const persons = u.members.filter((m) => m.features.invoices).map((m) => m.personId);
+    const managed = u.members.filter((m) => m.viaHousehold);
+    const householdAllowed = managed.every((m) => m.features.invoices);
+    const own = u.members.filter((m) => !m.viaHousehold && m.features.invoices).map((m) => m.personId);
+    const payers = managed.length && householdAllowed
+      ? (await db.selectFrom('person').select('id').where('organization_id', '=', u.organizationId).where(sql<boolean>`lower(email) = lower(${u.email})`).execute()).map((p) => p.id)
+      : [];
+    const persons = [...new Set([...own, ...payers])];
     if (!persons.length) return [];
-    return db.selectFrom('invoice').selectAll().where('organization_id', '=', u.organizationId).where('recipient_person_id', 'in', persons).where('status', '!=', 'draft').orderBy('issue_date', 'desc').execute();
+    const rows = await db.selectFrom('invoice').selectAll().where('organization_id', '=', u.organizationId).where('recipient_person_id', 'in', persons).where('status', '!=', 'draft').orderBy('issue_date', 'desc').execute();
+    return rows.filter((i) => !(i.recipient as IssueSnapshot | null)?.household || householdAllowed);
   }
 
   app.get('/portal/invoices', { schema: { tags, summary: 'Meine Rechnungen', security: [] } }, async (req, reply) => {

@@ -91,8 +91,9 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     faellig: dueOn ? formatDate(dueOn) : '',
     verein: org.name,
   };
+  // The club's defaults ask for payment: a credit note (money back) and a cancellation get only their own text.
   const textOf = (own: string | null, template: string | null) => {
-    const t = own ?? (isCancellation ? null : template);
+    const t = own ?? (isCancellation || inv.kind === 'credit_note' ? null : template);
     return t ? fillInvoiceText(t, values) : null;
   };
   const coverText = textOf(inv.cover_text, org.invoice_cover_template);
@@ -106,7 +107,7 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     const linesFull = await tx.selectFrom('invoice_line').leftJoin('assessment', 'assessment.id', 'invoice_line.assessment_id').select(['invoice_line.text', 'invoice_line.quantity', 'invoice_line.total_cents', 'invoice_line.tax_rate', 'assessment.period_start', 'assessment.period_end']).where('invoice_line.invoice_id', '=', inv.id).orderBy('invoice_line.position').execute();
     const debit = snapshot.paymentMethod === 'direct_debit' && snapshot.mandateReference && org.creditor_id ? await tx.selectFrom('sepa_mandate').select('iban_encrypted').where('reference', '=', snapshot.mandateReference).where('person_id', '=', person.id).executeTakeFirst() : undefined;
     const x: Omit<XInvoice, 'lines'> = {
-      number, typeCode: inv.kind === 'credit_note' || isCancellation ? '381' : '380', issueDate, dueDate: isCancellation ? null : (dueDate ?? inv.due_date ?? addDays(issueDate, org.payment_terms_days)), precedingNumber: cancels?.number ?? null, note: coverText,
+      number, typeCode: inv.kind === 'credit_note' || isCancellation ? '381' : '380', issueDate, dueDate: isCancellation ? null : (dueDate ?? inv.due_date ?? addDays(issueDate, org.payment_terms_days)), precedingNumber: cancels?.number ?? null, note: [coverText, closingText].filter(Boolean).join('\n\n') || null,
       seller: { name: org.name, street: org.street ?? '', postalCode: org.postal_code ?? '', city: org.city ?? '', country: 'DE', vatId: org.vat_id, taxNumber: org.tax_number, registerNumber: org.register_number, contactName: org.einvoice_contact_name ?? '', contactPhone: org.einvoice_contact_phone ?? '', contactEmail: org.email ?? '', smallBusiness: org.small_business },
       buyer: { name: snapshot.recipient.name, street: person.street ?? '', postalCode: person.postal_code ?? '', city: person.city ?? '', country: person.country, reference: person.buyer_reference ?? '', address: person.einvoice_address ?? '', vatId: person.vat_id },
       payment: debit && !isCancellation && inv.kind !== 'credit_note' ? { kind: 'direct_debit', mandateReference: snapshot.mandateReference!, creditorId: org.creditor_id!, debtorIban: decrypt(debit.iban_encrypted) } : { kind: 'transfer', iban: org.iban ?? '', bic: org.bic, accountName: org.name },
@@ -236,9 +237,21 @@ export function lineTotal(quantity: number, unitCents: number) {
   return Math.sign(product) * Math.floor((Math.abs(product) + 50) / 100);
 }
 
+/**
+ * A net price is stored as a rounded gross unit price. With a quantity that can differ from the gross of the net line
+ * total (100 × 0.01 € net at 19 %: 1.00 € instead of 1.19 €): such lines are refused, the gross price must be entered.
+ */
+export function assertNetLine(l: { quantity: number; unitCents: number; taxRate: number; net?: boolean }, index: number) {
+  if (!l.net) return;
+  if (lineTotal(l.quantity, grossFromNet(l.unitCents, l.taxRate)) !== grossFromNet(lineTotal(l.quantity, l.unitCents), l.taxRate)) {
+    throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: `lines.${index}.unitCents`, message: 'Bei diesem Nettopreis und dieser Menge ergäbe die Umrechnung einen anderen Betrag. Bitte den Bruttopreis eingeben.' }] });
+  }
+}
+
 export async function insertLines(tx: Db, organizationId: string, invoiceId: string, lines: { text: string; quantity: number; unitCents: number; taxRate: number; net?: boolean; assessmentId?: string | null; discount?: boolean }[]) {
   let position = 1;
   for (const l of lines) {
+    assertNetLine(l, position - 1);
     const unitCents = l.net ? grossFromNet(l.unitCents, l.taxRate) : l.unitCents;
     await tx
       .insertInto('invoice_line')

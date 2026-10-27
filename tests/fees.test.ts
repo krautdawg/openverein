@@ -184,6 +184,12 @@ describe('invoices', () => {
     expect(second.body.totalCents).toBe(5000);
     const fee = (await admin.get('/invoices?status=open')).body.items.find((i: { kind: string }) => i.kind === 'dunning_fee');
     expect(fee.totalCents).toBe(500);
+    // A cancelled fee invoice is not claimed on a printed letter any more (Codex review G13).
+    const { dunningLetterPdf } = await import('../src/server/invoices/dunning-pdf.ts');
+    const org = (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
+    expect((await dunningLetterPdf(ctx.db, org, id)).feeCents).toBe(500);
+    expect((await admin.post(`/invoices/${fee.id}/cancel`, {})).status).toBe(200);
+    expect((await dunningLetterPdf(ctx.db, org, id)).feeCents).toBe(0);
     await admin.post(`/invoices/${fee.id}/dunning-hold`, { until: '2099-01-01', reason: 'Ratenzahlung' });
     proposal = (await admin.get('/dunning/proposal')).body;
     expect(proposal.find((p: { invoice: { id: string } }) => p.invoice.id === fee.id)).toBeUndefined();
