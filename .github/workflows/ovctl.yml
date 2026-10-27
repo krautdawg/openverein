@@ -1,0 +1,20 @@
+# Live round trips of ovctl (backup -> restore, failed update -> rollback) against a throwaway Docker installation.
+# Slow (two image builds), so only when the operations tooling changes, weekly, and on demand.
+name: ovctl round trips
+on:
+  pull_request:
+    paths: [ovctl, deploy/**, Dockerfile, scripts/ovctl-roundtrip.sh, migrations/**]
+  push:
+    branches: [main]
+    paths: [ovctl, deploy/**, Dockerfile, scripts/ovctl-roundtrip.sh, migrations/**]
+  schedule: [{ cron: '17 3 * * 1' }]
+  workflow_dispatch:
+
+jobs:
+  roundtrip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - run: scripts/ovctl-roundtrip.sh
