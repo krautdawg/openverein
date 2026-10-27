@@ -197,7 +197,9 @@ describe('review G8', () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     const insert = ctx.db.insertInto('allowance_payment').values({ organization_id: org, person_id: m.personId, kind: 'ehrenamt', paid_on: '2026-03-01', amount_cents: 100, text: 'Parallel' }).execute();
+    // Attached before waiting: the insert may fail while the archive is still being awaited.
+    const refused = expect(insert).rejects.toThrow(/archived/);
     await archiving;
-    await expect(insert).rejects.toThrow(/archived/);
+    await refused;
   });
 });
