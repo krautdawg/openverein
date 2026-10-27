@@ -15,13 +15,14 @@ const BACKOFF = [1, 5, 30, 120, 720];
 /** Everything that is not a public unicast address: a webhook must not reach into the server's own network. */
 const BLOCKED = new BlockList();
 for (const [net, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]] as const) BLOCKED.addSubnet(net, bits, 'ipv4');
-for (const [net, bits] of [['::', 127], ['64:ff9b::', 96], ['100::', 64], ['2001:db8::', 32], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) BLOCKED.addSubnet(net, bits, 'ipv6');
-
+// IPv4-compatible (::/96), 6to4 (2002::/16) and Teredo (2001::/32) carry an IPv4 address too: blocked as a whole.
+for (const [net, bits] of [['::', 96], ['64:ff9b::', 96], ['100::', 64], ['2001::', 32], ['2001:db8::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) BLOCKED.addSubnet(net, bits, 'ipv6');
+/**
+ * IPv4-mapped IPv6 in any spelling (::ffff:7f00:1, ::ffff:127.0.0.1) is checked against the IPv4 rules by BlockList
+ * itself (Node 24); the test pins that.
+ */
 export function isPrivateAddress(ip: string): boolean {
   const v = ip.replace(/^\[|\]$/g, '').toLowerCase();
-  // IPv4-mapped IPv6 (::ffff:10.0.0.1) is the IPv4 address.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v)?.[1];
-  if (mapped) return isPrivateAddress(mapped);
   const kind = isIP(v);
   if (!kind) return true;
   return BLOCKED.check(v, kind === 4 ? 'ipv4' : 'ipv6');

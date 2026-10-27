@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { CONSENT_PURPOSE_LABEL, consent, consentInput, privacyState, reviewItem } from '../../shared/privacy.ts';
 import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
+import { decrypt } from '../crypto.ts';
 import { zip } from '../exports/zip.ts';
 import { getBlob } from '../files/store.ts';
 import { customText } from '../../shared/customFields.ts';
@@ -162,18 +163,29 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const members = await db.selectFrom('member').selectAll().where('person_id', '=', p.id).execute();
     const memberIds = members.map((m) => m.id).concat(['00000000-0000-0000-0000-000000000000']);
     const q = <T>(rows: Promise<T[]>) => rows;
+    // Every stored file about the person: member files with all kept versions, and the receipts of their expense claims.
+    const personFiles = () => db.selectFrom('file').where('organization_id', '=', actor.organizationId).where((eb) => eb.or([eb('member_id', 'in', memberIds), eb('id', 'in', eb.selectFrom('expense_claim').select('file_id').where('person_id', '=', p.id).where('file_id', 'is not', null))]));
+    /** Stored values are given back in clear (a copy of the data, Art. 15 (3)); one that cannot be read says so. */
+    const clear = (v: string | null) => {
+      if (v === null || v === '') return v;
+      try {
+        return decrypt(v);
+      } catch {
+        return '(nicht lesbar)';
+      }
+    };
     const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours, fees, assessments, collections, allowances, declarations, claims, hours, settlements, loans, attendance, votes, greetings, households] = await Promise.all([
       q(db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['club_group.name as Gruppe', 'group_membership.member_id']).where('group_membership.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('consent').selectAll().where('person_id', '=', p.id).execute()),
       q(db.selectFrom('invoice').select(['number as Nummer', 'kind as Art', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'paid_cents as Bezahlt_Cent', 'status as Status']).where('recipient_person_id', '=', p.id).where('status', '<>', 'draft').execute()),
-      q(db.selectFrom('sepa_mandate').select(['reference as Referenz', 'signed_on as Unterschrieben', 'account_holder as Kontoinhaber', 'iban_last4 as IBAN_Ende', 'status as Status', 'last_collected_on as Letzter_Einzug']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('sepa_mandate').select(['reference as Referenz', 'signed_on as Unterschrieben', 'account_holder as Kontoinhaber', 'iban_encrypted', 'status as Status', 'last_collected_on as Letzter_Einzug']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('donation').select(['donated_on as Datum', 'amount_cents as Betrag_Cent', 'waiver as Aufwandsspende']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('donation_receipt').select(['number as Nummer', 'issued_on as Ausgestellt', 'total_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('participation').innerJoin('event', 'event.id', 'participation.event_id').select(['event.title as Termin', 'participation.occurrence_date as Datum', 'participation.status as Status']).where('participation.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('delivery').innerJoin('message', 'message.id', 'delivery.message_id').select(['message.subject as Betreff', 'delivery.email as An', 'delivery.status as Status', 'delivery.sent_at as Gesendet']).where('delivery.person_id', '=', p.id).execute()),
-      q(db.selectFrom('change_request').select(['field as Feld', sql<string>`case when field = 'iban' then '(IBAN, verschlüsselt gespeichert)' else new_value end`.as('Neu'), 'status as Status', 'requested_at as Angefragt']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('change_request').select(['field as Feld', 'new_value as Neu', 'status as Status', 'requested_at as Angefragt']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('application').select(['application_date as Datum', 'payload as Angaben', 'consent as Einwilligung', 'status as Status']).where('member_id', 'in', memberIds).execute()),
-      q(db.selectFrom('file').select(['name as Datei', 'created_at as Hochgeladen']).where('member_id', 'in', memberIds).where('superseded_at', 'is', null).execute()),
+      q(personFiles().select(['name as Datei', 'created_at as Hochgeladen', 'superseded_at as Ersetzt']).execute()),
       // Private entries too: the right of access covers every note about the person.
       q(db.selectFrom('contact_log').select(['occurred_on as Datum', 'kind as Art', 'text as Notiz']).where('person_id', '=', p.id).orderBy('occurred_on').execute()),
       q(db.selectFrom('offer').select(['number as Nummer', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'status as Status', 'cover_text as Anschreiben', 'closing_text as Schlusstext', sql<string>`(select string_agg(text, ' | ' order by position) from offer_line where offer_id = offer.id)`.as('Positionen')]).where('person_id', '=', p.id).execute()),
@@ -184,12 +196,12 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('collection_item').select(['end_to_end_id as Referenz', 'amount_cents as Betrag_Cent', 'sequence_type as Art', 'status as Status', 'created_at as Erstellt']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('allowance_payment').select(['kind as Art', 'paid_on as Gezahlt', 'amount_cents as Betrag_Cent', 'text as Wofür', 'voided_at as Ungültig']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('allowance_declaration').select(['kind as Art', 'year as Jahr', 'other_cents as Anderweitig_Cent', 'declared_on as Erklärt']).where('person_id', '=', p.id).execute()),
-      q(db.selectFrom('expense_claim').select(['purpose as Wofür', 'spent_on as Bezahlt', 'amount_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).execute()),
+      q(db.selectFrom('expense_claim').select(['purpose as Wofür', 'spent_on as Bezahlt', 'amount_cents as Betrag_Cent', 'status as Status', 'account_holder as Kontoinhaber', 'iban_encrypted']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('work_hour_entry').select(['worked_on as Datum', 'hours as Stunden', 'text as Wofür']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('work_hour_settlement').select(['year as Jahr', 'required as Soll', 'done as Geleistet', 'missing as Fehlend']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('inventory_loan').innerJoin('inventory_item', 'inventory_item.id', 'inventory_loan.item_id').select(['inventory_item.name as Gegenstand', 'inventory_loan.lent_on as Ausgeliehen', 'inventory_loan.returned_on as Zurück']).where('inventory_loan.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('assembly_attendance').innerJoin('assembly', 'assembly.id', 'assembly_attendance.assembly_id').select(['assembly.title as Versammlung', 'assembly.held_on as Am']).where('assembly_attendance.member_id', 'in', memberIds).execute()),
-      q(db.selectFrom('poll_vote').innerJoin('poll', 'poll.id', 'poll_vote.poll_id').select(['poll.question as Umfrage', 'poll_vote.choices as Antwort', 'poll_vote.voted_at as Am']).where('poll_vote.member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('poll_vote').innerJoin('poll', 'poll.id', 'poll_vote.poll_id').select(['poll.question as Umfrage', 'poll_vote.voted_at as Am']).where('poll_vote.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('greeting_sent').select(['kind as Art', 'year as Jahr', 'sent_at as Gesendet']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('household').select(['name as Haushalt', 'created_at as Seit']).where('payer_person_id', '=', p.id).execute()),
     ]);
@@ -210,20 +222,21 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Lastschriften', collections as Row[]],
       ['Pauschalen', allowances as Row[]],
       ['Pauschalen-Erklärungen', declarations as Row[]],
-      ['Auslagen', claims as Row[]],
+      ['Auslagen', claims.map(({ iban_encrypted, ...c }) => ({ ...c, IBAN: clear(iban_encrypted) }))],
       ['Arbeitsstunden', hours as Row[]],
       ['Arbeitsstunden-Abrechnungen', settlements as Row[]],
       ['Ausleihen', loans as Row[]],
       ['Versammlungen', attendance as Row[]],
-      ['Umfrage-Antworten', votes as Row[]],
+      // Whether and when, never the choice: the board sees only counts (spec member-portal, polls).
+      ['Umfrage-Teilnahme', votes as Row[]],
       ['Glückwünsche', greetings as Row[]],
       ['Haushalte (als zahlende Person)', households as Row[]],
-      ['SEPA-Mandate', mandates as Row[]],
+      ['SEPA-Mandate', mandates.map(({ iban_encrypted, ...m }) => ({ ...m, IBAN: clear(iban_encrypted) }))],
       ['Spenden', donations as Row[]],
       ['Zuwendungsbestätigungen', receipts as Row[]],
       ['Termine', events as Row[]],
       ['E-Mails', mails as Row[]],
-      ['Änderungswünsche', changes as Row[]],
+      ['Änderungswünsche', changes.map((c) => (c.Feld === 'iban' ? { ...c, Neu: clear(c.Neu) } : c))],
       ['Anträge', applications as Row[]],
       ['Dateien', files as Row[]],
       ['Kontaktverlauf', contacts as Row[]],
@@ -232,7 +245,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const title = `Auskunft über gespeicherte Daten: ${p.company_name ?? [p.first_name, p.last_name].filter(Boolean).join(' ')}`;
     const json = Buffer.from(JSON.stringify(Object.fromEntries(sections), null, 2), 'utf8');
     // The stored documents themselves, not only their names (a copy of the data, Art. 15 (3)).
-    const docs = await db.selectFrom('file').select(['name', 'sha256']).where('member_id', 'in', memberIds).where('superseded_at', 'is', null).execute();
+    const docs = await personFiles().select(['name', 'sha256']).orderBy('created_at').execute();
     const used = new Set<string>();
     const attachments = [];
     for (const d of docs) {
