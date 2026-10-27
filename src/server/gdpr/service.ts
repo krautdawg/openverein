@@ -161,6 +161,8 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
     purged.add(r.organization_id);
   }
   let n = 0;
+  // Every failure is collected; the start stops afterwards, so restored personal data is never served.
+  const failed: string[] = [];
   for (const o of purged) {
     if (!(await db.selectFrom('organization').select('id').where('id', '=', o).executeTakeFirst())) continue;
     try {
@@ -169,6 +171,7 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
       n++;
     } catch (err) {
       log.warn(`Deletion of club ${o} could not be repeated after the restore; repeat it by hand: ${String(err)}`);
+      failed.push(`club ${o}`);
     }
   }
   for (const { o, p } of entries) {
@@ -182,9 +185,11 @@ export async function replayErasures(db: Db, log: { warn: (msg: string) => void 
       return true;
     }).catch((err: unknown) => {
       log.warn(`Erasure of person ${p} (organization ${o}) could not be repeated after the restore; repeat it by hand: ${String(err)}`);
+      failed.push(`person ${p}`);
       return false;
     });
     if (again) n++;
   }
+  if (failed.length) throw new Error(`Nach dem Zurückspielen ließen sich ${failed.length} Löschungen nicht wiederholen (${failed.join(', ')}). Der Server startet erst, wenn sie nachgeholt sind (siehe docs/operations.md).`);
   return n;
 }

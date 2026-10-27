@@ -34,9 +34,16 @@ describe('privacy', () => {
     expect((await admin.post(`/persons/${m.personId}/consents`, { purpose: 'newsletter', source: 'paper' })).status).toBe(409); // one live consent per purpose
     expect((await admin.post(`/consents/${c.body.id}/withdraw`, { source: 'portal' })).body.withdrawnSource).toBe('portal');
     expect(await ctx.db.selectFrom('suppression').select('reason').execute()).toEqual([{ reason: 'unsubscribe' }]);
-    // A new opt-in does not silently lift an unsubscribe (the address may be shared).
+    // Someone else with the same address: a new opt-in does not lift the unsubscribe (it may be theirs).
+    const twin = (await admin.post('/members', { lastName: 'Zwilling', firstName: 'Zoe', email: 'zahler@example.org', joinDate: '2020-01-01' })).body;
     await admin.post(`/persons/${m.personId}/consents`, { purpose: 'newsletter', source: 'form' });
     expect(await ctx.db.selectFrom('suppression').select('reason').execute()).toEqual([{ reason: 'unsubscribe' }]);
+    // The address alone again: the fresh opt-in ends the unsubscribe.
+    await ctx.db.updateTable('person').set({ email: null }).where('id', '=', twin.personId).execute();
+    const live = (await admin.get(`/persons/${m.personId}/privacy`)).body.consents.find((x: { purpose: string; withdrawnAt: string | null }) => x.purpose === 'newsletter' && !x.withdrawnAt);
+    await admin.post(`/consents/${live.id}/withdraw`, { source: 'portal' });
+    await admin.post(`/persons/${m.personId}/consents`, { purpose: 'newsletter', source: 'paper' });
+    expect(await ctx.db.selectFrom('suppression').select('reason').execute()).toEqual([]);
   });
 
   it('refuses to anonymise with open items or a hold, then anonymises, keeps the invoice snapshot and survives a restore', async () => {
