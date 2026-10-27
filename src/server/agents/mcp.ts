@@ -26,7 +26,7 @@ interface OpenApiOp { operationId?: string; summary?: string; tags?: string[]; s
 export interface Tool { name: string; method: string; path: string; description: string; tag: string | null; inputSchema: { type: 'object'; properties: Record<string, object>; required: string[] }; pathParams: string[]; queryParams: string[]; hasBody: boolean }
 
 // Not for agents: sign-in and token management (people only), the operator API, uploads of raw bytes.
-const EXCLUDED = /^\/(auth\/(?!me$)|setup$|operator\/|personal-tokens|portal\/(auth|tokens)|files(\/\{[^}]+\}\/versions)?$|receipts\/files$|portal\/expenses\/files$|unsubscribe\/|forms\/|applications\/public)/;
+const EXCLUDED = /^\/(auth\/(?!me$)|setup$|operator\/|personal-tokens|oauth\/|portal\/(auth|tokens|oauth)|files(\/\{[^}]+\}\/versions)?$|receipts\/files$|portal\/expenses\/files$|unsubscribe\/|forms\/|applications\/public)/;
 
 /** All operations of the OpenAPI document as tools (computed once). */
 export function toolsFrom(doc: { paths: Record<string, Record<string, OpenApiOp>> }): Tool[] {
@@ -177,6 +177,15 @@ export function registerMcp(app: FastifyInstance) {
     reply.header('www-authenticate', `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
     return reply.status(401).type('application/problem+json').send({ type: 'https://openverein.org/probleme/unauthenticated', title: 'Der MCP-Zugang braucht ein Token.', status: 401, detail });
   };
+
+  // Every 401 at /mcp carries the way to OAuth, also a revoked or expired token refused before the handler (RFC 9728).
+  app.addHook('onSend', async (req, reply, payload) => {
+    if (reply.statusCode === 401 && (req.routeOptions.config as { mcp?: boolean } | undefined)?.mcp && !reply.hasHeader('www-authenticate')) {
+      const { base } = await hostBase(app.db, req);
+      reply.header('www-authenticate', `Bearer error="invalid_token", resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
+    }
+    return payload;
+  });
 
   app.post(MCP_PATH, { config: { mcp: true }, bodyLimit: 64 * 1024, schema: { hide: true } }, async (req, reply) => {
     const t = req.agentToken;

@@ -4,6 +4,8 @@ import type { Db, Level, PersonalTokenTable } from '../db.ts';
 import { sql, type Selectable } from 'kysely';
 import { sha256 } from '../auth/session.ts';
 import { Problem } from '../http/problem.ts';
+import { config } from '../config.ts';
+import { tenantForRequest } from '../tenant.ts';
 import { MODULES, type Grant, type Module } from '../policy.ts';
 
 /**
@@ -111,6 +113,8 @@ export function registerAgentTokens(app: FastifyInstance, db: Db) {
     const inner = req.headers[INTERNAL_HEADER] === internalSecret;
     const outerMcp = req.agentChannel === 'mcp';
     if (t.audience === 'mcp' && !inner && !outerMcp) throw new Problem(401, 'invalid-token', 'Dieses Token gilt nur für den MCP-Zugang (/mcp).');
+    // Managed hosting: a token works only at its own club's host (RFC 8707 audience), never as another club's.
+    if (config.multiTenant && !inner && (await tenantForRequest(db, req))?.id !== t.organization_id) throw new Problem(401, 'invalid-token', 'Das Token gehört zu einem anderen Verein.');
     req.agentToken = t;
     // Counted per API call: an MCP tool call is its inner call; the outer /mcp envelope (initialize, tools/list) is not.
     if (!outerMcp) {
@@ -180,8 +184,12 @@ export async function tokenList(db: Db, owner: { organizationId: string; userId?
 }
 
 /** At most MAX_ACTIVE live tokens per person; counted under a lock so two requests cannot both take the last place. */
-export async function assertRoom(tx: Db, owner: { organizationId: string; userId?: string; email?: string }) {
+export async function lockOwner(tx: Db, owner: { organizationId: string; userId?: string; email?: string }) {
   await tx.executeQuery(sql`select pg_advisory_xact_lock(hashtext(${`pat:${owner.organizationId}:${owner.userId ?? owner.email}`}))`.compile(tx));
+}
+
+export async function assertRoom(tx: Db, owner: { organizationId: string; userId?: string; email?: string }) {
+  await lockOwner(tx, owner);
   let q = tx.selectFrom('personal_token').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', owner.organizationId).where('revoked_at', 'is', null).where('expires_at', '>', new Date());
   q = owner.userId ? q.where('user_id', '=', owner.userId) : q.where('email', '=', owner.email!.toLowerCase());
   if ((await q.executeTakeFirstOrThrow()).n >= MAX_ACTIVE) throw new Problem(409, 'too-many-tokens', `Höchstens ${MAX_ACTIVE} aktive Tokens.`, 'Widerrufe zuerst ein altes.');

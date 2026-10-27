@@ -82,7 +82,7 @@ export function ConnectConsent({ base, who, other }: { base: '/oauth' | '/portal
   return (
     <AuthLayout>
       <h1>{v.clientName} verbinden?</h1>
-      <p className="meta">Der Name stammt vom Client selbst und ist nicht geprüft. Nach Deiner Entscheidung geht es zurück zu <span className="connect-uri">{v.redirectUri}</span>.</p>
+      <p className="meta">Der Name stammt vom Client selbst und ist nicht geprüft. Nach Deiner Entscheidung geht es zurück zu <strong className="connect-uri">{new URL(v.redirectUri).host}</strong> (<span className="connect-uri">{v.redirectUri}</span>).</p>
       <p>Der Client handelt dann als <strong>{who}</strong> und sieht nur, was Du siehst. Widerrufen kannst Du ihn jederzeit unter Agenten.</p>
       <form className="form" onSubmit={(e) => void decide(true, e)}>
         {error && <div className="alert alert-error" role="alert">{error}</div>}

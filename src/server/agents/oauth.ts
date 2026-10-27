@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.ts';
@@ -8,13 +8,14 @@ import type { Db } from '../db.ts';
 import { Problem } from '../http/problem.ts';
 import type { Actor } from '../policy.ts';
 import { baseUrlOf, tenantForRequest } from '../tenant.ts';
-import { assertRoom, newToken } from './tokens.ts';
+import { assertRoom, lockOwner, newToken } from './tokens.ts';
 
 /**
  * OAuth 2.1 for /mcp (change agent-access, slice 4), after the KI Klub Klubraum: protected-resource and
  * authorization-server metadata (RFC 9728, 8414), stateless dynamic client registration (RFC 7591), PKCE S256,
- * `resource` (RFC 8707). The client_id and the code are HMAC-signed blobs; only a code's single use is stored, in
- * the grant's own transaction. A grant is a personal token with audience `mcp` (`ov_oat_`): valid only at /mcp.
+ * `resource` (RFC 8707). The client_id is an HMAC-signed blob bound to its issuer (host). Codes are random and live in
+ * oauth_code (hash only): redeeming deletes the row in the grant's transaction. A grant is a personal token with
+ * audience `mcp` (`ov_oat_`): valid only at /mcp, and only at its club's host.
  * The person consents in the web app (admin access, after its login and a fresh second factor) or the portal (member).
  */
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -25,12 +26,12 @@ const hmac = (key: string, text: string) => createHmac('sha256', key).update(tex
 /** One key per purpose, derived from the data key: a leaked client id key cannot mint codes. */
 const keyFor = (purpose: string) => hmac(config.dataKey, `openverein-oauth:${purpose}`);
 
-export function sign(kind: 'ovc' | 'ovo', payload: unknown) {
+export function sign(kind: 'ovc', payload: unknown) {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${kind}.${body}.${hmac(keyFor(kind), `${kind}.${body}`)}`;
 }
 
-export function verify<T>(kind: 'ovc' | 'ovo', token: string | undefined): T | null {
+export function verify<T>(kind: 'ovc', token: string | undefined): T | null {
   if (!token || token.length > 5000) return null;
   const [k, body, sig] = token.split('.');
   if (k !== kind || !body || !sig) return null;
@@ -44,8 +45,8 @@ export function verify<T>(kind: 'ovc' | 'ovo', token: string | undefined): T | n
   }
 }
 
-/** A registered client: name, redirect URIs, issue time, randomness (each registration is its own client). */
-export interface ClientData { n: string; r: string[]; t: number; j: string }
+/** A registered client: name, redirect URIs, issuer (the host that registered it), issue time, randomness. */
+export interface ClientData { n: string; r: string[]; i: string; t: number; j: string }
 /** "The same client" for replacing a grant: name and redirect URIs, not the client_id (new on every registration). */
 export const fingerprint = (c: ClientData) => createHash('sha256').update(JSON.stringify([c.n, [...c.r].sort()])).digest('hex');
 
@@ -70,7 +71,8 @@ export function checkRequest(q: Record<string, unknown>, resource: string): Chec
   const text = (k: string) => (typeof q[k] === 'string' ? (q[k] as string) : undefined);
   const clientId = text('client_id');
   const client = verify<ClientData>('ovc', clientId);
-  if (!clientId || !client) return { ok: false, error: 'invalid_client', description: 'Unbekannter oder ungültiger Client.' };
+  // A client belongs to the authorization server (host) that registered it.
+  if (!clientId || !client || `${client.i}/mcp` !== resource) return { ok: false, error: 'invalid_client', description: 'Unbekannter oder ungültiger Client.' };
   const redirectUri = text('redirect_uri');
   if (!redirectUri || !client.r.includes(redirectUri)) return { ok: false, error: 'invalid_request', description: 'Die redirect_uri ist für diesen Client nicht registriert.' };
   const state = text('state');
@@ -94,7 +96,8 @@ export function withParams(uri: string, params: Record<string, string | undefine
   return u.toString();
 }
 
-export interface CodeData { cid: string; fp: string; r: string; ch: string; org: string; kind: 'admin' | 'member'; sub: string; a: 'read' | 'write'; d: number; res: string; exp: number; n: string }
+/** What the person allowed, stored with the code's hash. */
+export interface CodeData { cid: string; fp: string; r: string; ch: string; org: string; kind: 'admin' | 'member'; sub: string; a: 'read' | 'write'; d: number; res: string }
 
 export function pkceOk(verifier: string, challenge: string) {
   if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return false;
@@ -124,17 +127,24 @@ export function consentView(r: AuthRequest) {
 
 /** The person's decision: a code bound to client, redirect, PKCE challenge, owner, access and lifetime, or a refusal. */
 export async function decide(db: Db, req: FastifyRequest, owner: { org: string; kind: 'admin' | 'member'; sub: string; actor: Actor | null }, body: z.infer<typeof consentInput>) {
-  const { org, resource } = await hostBase(db, req);
+  const { org, resource, base } = await hostBase(db, req);
   if (!org || org.id !== owner.org) throw new Problem(400, 'oauth-host', 'Diese Anfrage gehört zu einem anderen Verein.');
   const c = checkRequest(body.query, resource);
   if (!c.ok) throw new Problem(400, 'oauth-request', c.description);
   const r = c.request;
-  if (!body.allow) return { redirect: withParams(r.redirectUri, { error: 'access_denied', state: r.state }) };
+  if (!body.allow) return { redirect: withParams(r.redirectUri, { error: 'access_denied', state: r.state, iss: base }) };
   // Never more than the client asked for.
   if (r.access === 'read' && body.access === 'write') throw new Problem(400, 'oauth-access', 'Der Client hat nur Lesen angefragt.');
-  const code = sign('ovo', { cid: sha256(r.clientId), fp: fingerprint(r.client), r: r.redirectUri, ch: r.codeChallenge, org: owner.org, kind: owner.kind, sub: owner.sub, a: body.access, d: body.days, res: r.resource, exp: Date.now() + CODE_TTL_MS, n: randomUUID() } satisfies CodeData);
+  const code = randomBytes(32).toString('base64url');
+  const fp = fingerprint(r.client);
+  const payload: CodeData = { cid: sha256(r.clientId), fp, r: r.redirectUri, ch: r.codeChallenge, org: owner.org, kind: owner.kind, sub: owner.sub, a: body.access, d: body.days, res: r.resource };
+  await db.transaction().execute(async (tx) => {
+    // Newest consent wins: older codes of this person for this client cannot be redeemed any more.
+    await tx.deleteFrom('oauth_code').where('organization_id', '=', owner.org).where('owner_key', '=', `${owner.kind}:${owner.sub}`).where('client_fingerprint', '=', fp).execute();
+    await tx.insertInto('oauth_code').values({ code_hash: sha256(code), organization_id: owner.org, owner_key: `${owner.kind}:${owner.sub}`, client_fingerprint: fp, payload: JSON.stringify(payload), expires_at: new Date(Date.now() + CODE_TTL_MS) }).execute();
+  });
   await audit(db, owner.org, owner.actor, { action: 'oauth.consented', entityType: 'oauth_client', entityId: fingerprint(r.client).slice(0, 16), diff: { client: [null, r.client.n], access: [null, body.access], portal: [null, owner.kind === 'member'] } });
-  return { redirect: withParams(r.redirectUri, { code, state: r.state }) };
+  return { redirect: withParams(r.redirectUri, { code, state: r.state, iss: base }) };
 }
 
 function oauthError(reply: FastifyReply, status: number, error: string, description: string) {
@@ -183,6 +193,7 @@ export async function registerOAuth(app: FastifyInstance, db: Db) {
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],
       scopes_supported: ACCESS_SCOPES,
+      authorization_response_iss_parameter_supported: true,
     };
   });
 
@@ -195,13 +206,19 @@ export async function registerOAuth(app: FastifyInstance, db: Db) {
     if (!p.success) return oauthError(reply, 400, 'invalid_client_metadata', 'client_name (höchstens 80 Zeichen) und 1 bis 5 redirect_uris sind nötig.');
     if (p.data.token_endpoint_auth_method && p.data.token_endpoint_auth_method !== 'none') return oauthError(reply, 400, 'invalid_client_metadata', 'Nur öffentliche Clients (token_endpoint_auth_method=none, PKCE).');
     if (!p.data.redirect_uris.every(redirectAllowed)) return oauthError(reply, 400, 'invalid_redirect_uri', 'redirect_uris müssen https sein (oder http auf localhost).');
-    const client: ClientData = { n: p.data.client_name ?? 'Unbenannter Client', r: p.data.redirect_uris, t: Math.floor(Date.now() / 1000), j: randomBytes(8).toString('base64url') };
+    const { base, org } = await hostBase(db, req);
+    if (!org) return oauthError(reply, 404, 'invalid_request', 'Unbekannter Verein.');
+    // Stored as the URL parser reads them, so what is checked, shown and redirected to is the same string.
+    const client: ClientData = { n: p.data.client_name ?? 'Unbenannter Client', r: p.data.redirect_uris.map((u) => new URL(u).href), i: base, t: Math.floor(Date.now() / 1000), j: randomBytes(8).toString('base64url') };
     return reply.status(201).header('cache-control', 'no-store').send({ client_id: sign('ovc', client), client_id_issued_at: client.t, client_name: client.n, redirect_uris: client.r, token_endpoint_auth_method: 'none', grant_types: ['authorization_code'], response_types: ['code'] });
   });
 
   app.get('/oauth/authorize', { schema: { hide: true } }, async (req, reply) => {
-    const { resource } = await hostBase(db, req);
+    const { resource, base, org } = await hostBase(db, req);
+    if (!org) return reply.status(404).type('text/html').send(errorPage('Verbindung nicht möglich', 'Unbekannter Verein.'));
     const c = checkRequest(req.query as Record<string, unknown>, resource);
+    // After the redirect is confirmed the client hears the error; before, only a page (no open redirect).
+    if (!c.ok && c.redirectUri) return reply.redirect(withParams(c.redirectUri, { error: c.error, error_description: c.description, state: c.state, iss: base }), 302);
     if (!c.ok) return reply.status(400).type('text/html').send(errorPage('Verbindung nicht möglich', `${escapeHtml(c.description)} Starte die Verbindung bitte noch einmal in Deinem KI-Client.`));
     // The consent page gets only the checked parameters and checks them again.
     const r = c.request;
@@ -221,40 +238,42 @@ export async function registerOAuth(app: FastifyInstance, db: Db) {
       if (b.grant_type !== 'authorization_code') return oauthError(reply, 400, 'unsupported_grant_type', 'Nur grant_type=authorization_code.');
       const client = verify<ClientData>('ovc', b.client_id);
       if (!client) return oauthError(reply, 401, 'invalid_client', 'Unbekannter oder ungültiger Client.');
-      const code = verify<CodeData>('ovo', b.code);
       const invalid = () => oauthError(reply, 400, 'invalid_grant', 'Der Code ist ungültig, abgelaufen oder schon benutzt.');
+      if (!b.code) return invalid();
       const now = Date.now();
       const { org } = await hostBase(db, req);
-      if (!code || code.exp < now || code.exp > now + CODE_TTL_MS || code.cid !== sha256(b.client_id!) || code.r !== b.redirect_uri || code.org !== org?.id) return invalid();
-      if (b.resource !== undefined && b.resource.replace(/\/$/, '') !== code.res) return oauthError(reply, 400, 'invalid_target', 'resource passt nicht zur Autorisierung.');
-      if (!b.code_verifier || !pkceOk(b.code_verifier, code.ch)) return invalid();
       const { prefix, token } = newToken('oauth');
       const issued = await db.transaction().execute(async (tx) => {
-        // Single use, durable: a second redemption (also on another instance) fails on the key.
-        const used = await tx.insertInto('oauth_code').values({ nonce: code.n }).onConflict((oc) => oc.doNothing()).returning('nonce').executeTakeFirst();
-        if (!used) return 'used' as const;
+        // Taking the code deletes it: one redemption, also across instances; a failed attempt uses it up too.
+        const row = await tx.deleteFrom('oauth_code').where('code_hash', '=', sha256(b.code!)).where('expires_at', '>', new Date()).returning('payload').executeTakeFirst();
+        const code = row?.payload as CodeData | undefined;
+        if (!code || code.cid !== sha256(b.client_id!) || code.r !== b.redirect_uri || code.org !== org?.id) return 'invalid' as const;
+        if (b.resource !== undefined && b.resource.replace(/\/$/, '') !== code.res) return 'target' as const;
+        if (!b.code_verifier || !pkceOk(b.code_verifier, code.ch)) return 'invalid' as const;
         const owner = code.kind === 'admin' ? { organizationId: code.org, userId: code.sub } : { organizationId: code.org, email: code.sub };
         if (code.kind === 'admin') {
           const user = await tx.selectFrom('app_user').select('status').where('id', '=', code.sub).where('organization_id', '=', code.org).executeTakeFirst();
-          if (user?.status !== 'active') return 'inactive' as const;
+          if (user?.status !== 'active') return 'invalid' as const;
         }
-        // A new consent from the same client replaces its earlier grant for this person (no pile-up of tokens).
+        // Lock first, then replace: two redemptions for the same person cannot both miss each other's grant.
+        await lockOwner(tx, owner);
         let old = tx.updateTable('personal_token').set({ revoked_at: new Date() }).where('organization_id', '=', code.org).where('oauth_client', '=', code.fp).where('revoked_at', 'is', null);
         old = code.kind === 'admin' ? old.where('user_id', '=', code.sub) : old.where('email', '=', code.sub);
-        await old.execute();
+        for (const r of await old.returning('id').execute()) await audit(tx, code.org, null, { action: 'personal_token.revoked', entityType: 'personal_token', entityId: r.id, diff: { replacedByNewConsent: [null, true] } });
         await assertRoom(tx, owner);
         const expires = new Date(now + code.d * 86_400_000);
         const t = await tx.insertInto('personal_token').values({ organization_id: code.org, kind: code.kind, user_id: code.kind === 'admin' ? code.sub : null, email: code.kind === 'member' ? code.sub : null, name: `${client.n} (OAuth)`.slice(0, 80), prefix, token_hash: sha256(token), access: code.a, audience: 'mcp', oauth_client: code.fp, expires_at: expires }).returning('id').executeTakeFirstOrThrow();
         await audit(tx, code.org, null, { action: 'personal_token.created', entityType: 'personal_token', entityId: t.id, diff: { access: [null, code.a], oauth: [null, true] } });
-        return { expires };
+        return { expires, access: code.a };
       }).catch((err: unknown) => (err instanceof Problem && err.type.endsWith('/too-many-tokens') ? ('limit' as const) : Promise.reject(err)));
-      if (issued === 'used' || issued === 'inactive') return invalid();
+      if (issued === 'invalid') return invalid();
+      if (issued === 'target') return oauthError(reply, 400, 'invalid_target', 'resource passt nicht zur Autorisierung.');
       if (issued === 'limit') return oauthError(reply, 400, 'invalid_grant', 'Es gibt schon zehn aktive Tokens. Widerrufe eines unter Agenten.');
-      return reply.header('cache-control', 'no-store').header('pragma', 'no-cache').send({ access_token: token, token_type: 'Bearer', expires_in: Math.floor((issued.expires.getTime() - now) / 1000), scope: code.a });
+      return reply.header('cache-control', 'no-store').header('pragma', 'no-cache').send({ access_token: token, token_type: 'Bearer', expires_in: Math.floor((issued.expires.getTime() - now) / 1000), scope: issued.access });
     });
   });
 }
 
 export async function pruneOAuthCodes(db: Db) {
-  await db.deleteFrom('oauth_code').where('used_at', '<', new Date(Date.now() - 86_400_000)).execute();
+  await db.deleteFrom('oauth_code').where('expires_at', '<', new Date()).execute();
 }

@@ -75,6 +75,7 @@ describe('OAuth for MCP', () => {
     const back = new URL(ok.json().redirect);
     expect(back.origin + back.pathname).toBe(REDIRECT);
     expect(back.searchParams.get('state')).toBe('xyz');
+    expect(back.searchParams.get('iss')).toBe(config.publicUrl);
     const code = back.searchParams.get('code')!;
 
     const tok = await form({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier, resource: resource() });
@@ -85,6 +86,11 @@ describe('OAuth for MCP', () => {
     const tools = (await mcp(accessToken, 'tools/list')).json().result.tools.map((t: { name: string }) => t.name);
     expect(tools).toContain('getPortalInvoices');
     expect((await client(ctx.app, { token: accessToken }).get('/portal/me')).status).toBe(401);
+    // Revoked: /mcp still says where to sign in again.
+    await ctx.db.updateTable('personal_token').set({ revoked_at: new Date() }).execute();
+    const gone = await mcp(accessToken, 'tools/list');
+    expect(gone.statusCode).toBe(401);
+    expect(gone.headers['www-authenticate']).toMatch(/error="invalid_token", resource_metadata=/);
     // The code works once.
     expect((await form({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier })).json().error).toBe('invalid_grant');
   });
@@ -98,6 +104,11 @@ describe('OAuth for MCP', () => {
     const foreign = await ctx.app.inject({ url: `/oauth/authorize?${new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: 'https://evil.example/cb', code_challenge: challenge, code_challenge_method: 'S256' })}` });
     expect(foreign.statusCode).toBe(400);
     expect(foreign.headers.location).toBeUndefined();
+    // After the redirect is confirmed, errors go back to the client (with state and issuer).
+    const badType = await ctx.app.inject({ url: `/oauth/authorize?${new URLSearchParams({ response_type: 'token', client_id: clientId, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', state: 'st' })}` });
+    expect(badType.statusCode).toBe(302);
+    const err = new URL(String(badType.headers.location));
+    expect([err.searchParams.get('error'), err.searchParams.get('state'), err.searchParams.get('iss')]).toEqual(['unsupported_response_type', 'st', config.publicUrl]);
     const tampered = clientId.replace(/\.[^.]+$/, '.AAAA');
     expect((await ctx.app.inject({ url: `/oauth/authorize?${new URLSearchParams({ client_id: tampered, redirect_uri: REDIRECT })}` })).statusCode).toBe(400);
     expect((await ctx.app.inject({ method: 'POST', url: '/oauth/register', payload: { client_name: 'x', redirect_uris: ['http://evil.example/cb'] } })).statusCode).toBe(400);
@@ -108,9 +119,18 @@ describe('OAuth for MCP', () => {
     expect(new URL(denied.json().redirect).searchParams.get('error')).toBe('access_denied');
     expect(new URL(denied.json().redirect).searchParams.get('state')).toBe('xyz');
 
-    const code = new URL((await consent(pc, query)).json().redirect).searchParams.get('code')!;
-    expect((await form({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: REDIRECT, code_verifier: pkce().verifier })).json().error).toBe('invalid_grant');
-    expect((await form({ grant_type: 'authorization_code', code, client_id: await register('Anderer'), redirect_uri: REDIRECT, code_verifier: verifier })).json().error).toBe('invalid_grant');
+    const fresh = async () => new URL((await consent(pc, query)).json().redirect).searchParams.get('code')!;
+    // A wrong verifier or another client fails, and uses the code up.
+    const c1 = await fresh();
+    expect((await form({ grant_type: 'authorization_code', code: c1, client_id: clientId, redirect_uri: REDIRECT, code_verifier: pkce().verifier })).json().error).toBe('invalid_grant');
+    expect((await form({ grant_type: 'authorization_code', code: c1, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier })).json().error).toBe('invalid_grant');
+    expect((await form({ grant_type: 'authorization_code', code: await fresh(), client_id: await register('Anderer'), redirect_uri: REDIRECT, code_verifier: verifier })).json().error).toBe('invalid_grant');
+    // Newest consent wins: an older, unredeemed code is gone once the person consents again.
+    const older = await fresh();
+    const code = await fresh();
+    expect((await form({ grant_type: 'authorization_code', code: older, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier })).json().error).toBe('invalid_grant');
+    // The code is opaque: no address or ids in the redirect.
+    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const both = await Promise.all([1, 2].map(() => form({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier })));
     expect(both.map((r) => r.statusCode).sort()).toEqual([200, 400]);
   });
@@ -141,5 +161,50 @@ describe('OAuth for MCP', () => {
     const query = await authorize(clientId, pkce().challenge);
     expect((await admin.post('/oauth/consent', { query, allow: true })).body.type).toMatch(/step-up-required$/);
     void org;
+  });
+
+  it('keeps clients, codes and tokens to their own club under managed hosting', async () => {
+    await reset(ctx.db);
+    config.multiTenant = true;
+    config.operatorToken = 'o'.repeat(40);
+    try {
+      const tenant = async (clubName: string, hostname: string) => {
+        const t = await ctx.app.inject({ method: 'POST', url: '/api/v1/operator/tenants', headers: { 'x-operator-token': config.operatorToken }, payload: { clubName, hostname, adminName: 'Ada Admin', adminEmail: `admin@${hostname}` } });
+        expect(t.statusCode, t.body).toBe(201);
+        return t.json().id as string;
+      };
+      const a = await tenant('TSV A', 'verein-a.example.org');
+      await tenant('SV B', 'verein-b.example.org');
+      const at = (host: string) => ({ host });
+      const reg = await ctx.app.inject({ method: 'POST', url: '/oauth/register', headers: at('verein-a.example.org'), payload: { client_name: 'Claude', redirect_uris: [REDIRECT] } });
+      const clientId = reg.json().client_id as string;
+      const { verifier, challenge } = pkce();
+      const params = (host: string) => new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', resource: `https://${host}/mcp` });
+      // A client of club A is unknown at club B.
+      expect((await ctx.app.inject({ url: `/oauth/authorize?${params('verein-b.example.org')}`, headers: at('verein-b.example.org') })).statusCode).toBe(400);
+      const ok = await ctx.app.inject({ url: `/oauth/authorize?${params('verein-a.example.org')}`, headers: at('verein-a.example.org') });
+      expect(ok.statusCode, ok.body).toBe(302);
+      const query = Object.fromEntries(new URLSearchParams(String(ok.headers.location).split('?')[1]));
+      const user = (await ctx.db.selectFrom('app_user').select('id').where('organization_id', '=', a).executeTakeFirstOrThrow()).id;
+      const { decide } = await import('../src/server/agents/oauth.ts');
+      const fakeReq = { hostname: 'verein-a.example.org' } as never;
+      const code = new URL((await decide(ctx.db, fakeReq, { org: a, kind: 'admin', sub: user, actor: null }, { query, allow: true, access: 'read', days: 30 })).redirect).searchParams.get('code')!;
+      const redeem = (host: string) => ctx.app.inject({ method: 'POST', url: '/oauth/token', headers: { ...at(host), 'content-type': 'application/x-www-form-urlencoded' }, payload: new URLSearchParams({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier }).toString() });
+      // Redeemed at club B: refused (and used up).
+      expect((await redeem('verein-b.example.org')).json().error).toBe('invalid_grant');
+      const code2 = new URL((await decide(ctx.db, fakeReq, { org: a, kind: 'admin', sub: user, actor: null }, { query, allow: true, access: 'read', days: 30 })).redirect).searchParams.get('code')!;
+      const tok = await ctx.app.inject({ method: 'POST', url: '/oauth/token', headers: { ...at('verein-a.example.org'), 'content-type': 'application/x-www-form-urlencoded' }, payload: new URLSearchParams({ grant_type: 'authorization_code', code: code2, client_id: clientId, redirect_uri: REDIRECT, code_verifier: verifier }).toString() });
+      expect(tok.statusCode, tok.body).toBe(200);
+      const accessToken = tok.json().access_token as string;
+      const call = (host: string) => ctx.app.inject({ method: 'POST', url: '/mcp', headers: { host, 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${accessToken}` }, payload: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} } });
+      expect((await call('verein-a.example.org')).statusCode).toBe(200);
+      // Club A's token at club B's host: refused, with the way to sign in there.
+      const foreign = await call('verein-b.example.org');
+      expect(foreign.statusCode).toBe(401);
+      expect(foreign.headers['www-authenticate']).toContain('https://verein-b.example.org/.well-known/oauth-protected-resource/mcp');
+    } finally {
+      config.multiTenant = false;
+      config.operatorToken = '';
+    }
   });
 });
