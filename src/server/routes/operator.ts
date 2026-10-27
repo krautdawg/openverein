@@ -9,7 +9,7 @@ import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { sendSystemMail } from '../mail/system.ts';
 import { buildFullExport } from '../exports/full.ts';
 import { baseUrlOf } from '../tenant.ts';
-import { purgeTenant } from '../tenantPurge.ts';
+import { lockClub, purgeTenant } from '../tenantPurge.ts';
 import { erasuresSince, lockErasures } from '../gdpr/service.ts';
 import { createClub } from './auth.ts';
 
@@ -81,13 +81,16 @@ export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
     const { file, manifest } = await buildFullExport(db, o.id);
     // A deletion that committed before the export's snapshot leaves a valid but empty archive: refuse it.
     if (manifest.counts.organization !== 1) throw notFound('Verein');
-    // An erasure committed after the snapshot would be handed over with the archive.
-    const erasedMeanwhile = await db.transaction().execute(async (tx) => {
+    // Checked and recorded in one transaction under the club and erasure locks (Codex review G18): a purge or an
+    // erasure either committed before (the club is gone, or the count moved: refused) or waits until the export is
+    // recorded, so no archive leaves with data deleted before it was handed over.
+    await db.transaction().execute(async (tx) => {
+      await lockClub(tx, o.id);
       await lockErasures(tx, o.id);
-      return erasuresSince(tx, o.id, manifest.counts.erasure_log ?? 0);
+      if (!(await tx.selectFrom('organization').select('id').where('id', '=', o.id).executeTakeFirst())) throw notFound('Verein');
+      if (await erasuresSince(tx, o.id, manifest.counts.erasure_log ?? 0)) throw new Problem(409, 'erased-meanwhile', 'Während des Exports wurde eine Person anonymisiert.', 'Rufe den Export noch einmal ab.');
+      await tx.insertInto('operator_event').values({ action: 'tenant.exported', organization_id: o.id, hostname: o.hostname, detail: JSON.stringify({ sha256: createHash('sha256').update(file).digest('hex'), bytes: file.length }) }).execute();
     });
-    if (erasedMeanwhile) throw new Problem(409, 'erased-meanwhile', 'Während des Exports wurde eine Person anonymisiert.', 'Rufe den Export noch einmal ab.');
-    await db.insertInto('operator_event').values({ action: 'tenant.exported', organization_id: o.id, hostname: o.hostname, detail: JSON.stringify({ sha256: createHash('sha256').update(file).digest('hex'), bytes: file.length }) }).execute();
     req.log.warn({ organizationId: o.id }, 'operator downloaded full export');
     // The whole club in clear text: no cache may keep it (the operator token is not a standard auth header).
     return reply.header('cache-control', 'private, no-store').header('content-type', 'application/zip').header('content-disposition', `attachment; filename="openverein-${o.hostname ?? o.id}.zip"`).send(file);

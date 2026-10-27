@@ -73,3 +73,6 @@ Not covered by a test:
 | G17 | Art. 15: clear IBANs, claim receipts, all file versions; no ballot choices | `g17Second` "gives the person their stored data …" | yes |
 | G17 | Work-hour settlement recomputed under locks | `g17Second` "settles work hours …" | yes |
 | G17 | Restore keeps erasures and purges recorded only in the database | `scripts/ovctl-roundtrip.sh` (person "Wiederkehr") | no: with the old ovctl the scenario passes too, because the safety backup before every restore restarts the app, and its start-up replay writes the missing line into the file. The database merge covers a start that cannot repair the file (read-only or full volume), which the round trip cannot set up without breaking the app. |
+| G18 | Operator export checked and recorded under club and erasure locks | `g18Second` "records an operator export before an erasure …" | yes |
+| G18 | Ownerless legacy attendance marks stay unclaimed until someone takes them over (merged, conflicts kept) | `offlineQueue` "leaves old ownerless marks unclaimed …" | yes |
+| G18 | Flushing is bound to the user who started it and stops when someone else signs in | `offlineQueue` "stops sending when another person signs in …" | yes |

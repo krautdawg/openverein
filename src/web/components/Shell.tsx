@@ -8,7 +8,7 @@ import type { Command } from '../lib/commands.ts';
 import type { Me } from '../../shared/auth.ts';
 import { CommandPalette } from './CommandPalette.tsx';
 import { JobTray } from './JobTray.tsx';
-import { useAttendanceSync } from '../lib/offlineAttendance.ts';
+import { claimLegacyMarks, discardLegacyMarks, useAttendanceSync, useLegacyMarks } from '../lib/offlineAttendance.ts';
 import { StepUpPrompt } from './StepUp.tsx';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -22,6 +22,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
 
   useEffect(() => setNavOpen(false), [location.pathname]);
   useAttendanceSync(me.id);
+  const legacyMarks = useLegacyMarks();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -90,6 +91,15 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
         {demo && (
           <div className="demo-banner" role="note">
             <strong>Demo</strong> Alle Personen und Zahlen hier sind erfunden. Die Daten werden regelmäßig zurückgesetzt.
+          </div>
+        )}
+        {legacyMarks.length > 0 && (
+          <div className="mfa-banner" role="note">
+            <span>Auf diesem Gerät warten {legacyMarks.length === 1 ? '1 Anwesenheit' : `${legacyMarks.length} Anwesenheiten`} von früher, ohne Zuordnung zu einer Person ({legacyMarks.map((m) => m.name).slice(0, 3).join(', ')}{legacyMarks.length > 3 ? ' …' : ''}). Hast Du sie eingetragen?</span>
+            <span>
+              <button className="btn btn-ghost" onClick={claimLegacyMarks}>Ja, übernehmen</button>{' '}
+              <button className="btn btn-ghost" onClick={discardLegacyMarks}>Verwerfen</button>
+            </span>
           </div>
         )}
         <main id="main" tabIndex={-1}>
