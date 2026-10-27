@@ -18,9 +18,9 @@
 
 ## 3. CLI (slice 3)
 
-- [ ] 3.1 `ov.mjs` served at `/ov.mjs`: `ov list`, `ov <operationId> [path params] [--query v] [--json …|@file]`
-- [ ] 3.2 Channel marker `X-OV-Channel: cli` (self-declared, metadata only)
-- [ ] 3.3 Test: the CLI runs against a test server
+- [x] 3.1 `ov.mjs` served at `/ov.mjs`: `ov list`, `ov <operationId> [path params] [--query v] [--json …|@file]`
+- [x] 3.2 Channel marker `X-OV-Channel: cli` (self-declared, metadata only)
+- [x] 3.3 Test: the CLI runs against a test server
 
 ## 4. OAuth 2.1 (slice 4)
 
