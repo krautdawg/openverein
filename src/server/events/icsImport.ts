@@ -51,6 +51,9 @@ function parseDate(p: Prop, clubZone: string): { wall: string; allDay: boolean }
   const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(v);
   if (!m) return null;
   const date = `${m[1]}-${m[2]}-${m[3]}`;
+  // The pattern alone lets 20261345 through: the date and time must exist (else the event is skipped, not a 500).
+  const day = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(day) || new Date(day).toISOString().slice(0, 10) !== date || Number(m[4] ?? 0) > 23 || Number(m[5] ?? 0) > 59 || Number(m[6] ?? 0) > 59) return null;
   if (!m[4] || p.params.VALUE === 'DATE') return { wall: `${date} 00:00:00`, allDay: true };
   const wall = `${date} ${m[4]}:${m[5]}:${m[6]}`;
   if (m[7]) return { wall: inZone(Date.parse(`${wall.replace(' ', 'T')}Z`), clubZone), allDay: false };

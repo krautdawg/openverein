@@ -33,4 +33,10 @@ describe('parseIcs', () => {
     const feed = ics('Verein', 'Europe/Berlin', [{ id: 'e1', title: 'Training', location: 'Halle', description: null, starts_at: '2026-11-03 18:00:00', ends_at: '2026-11-03 19:30:00', all_day: false, rrule: 'FREQ=WEEKLY;BYDAY=TU', exdates: [] }] as never);
     expect(parseIcs(feed, 'Europe/Berlin').events[0]).toMatchObject({ title: 'Training', location: 'Halle', startsAt: '2026-11-03 18:00:00', rrule: 'FREQ=WEEKLY;BYDAY=TU' });
   });
+
+  it('skips an event whose date does not exist instead of failing the import', () => {
+    const r = parseIcs(wrap('BEGIN:VEVENT\r\nUID:bad\r\nSUMMARY:Kaputt\r\nDTSTART:20261345T100000Z\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:ok\r\nSUMMARY:Gut\r\nDTSTART:20261105T100000Z\r\nEND:VEVENT'), 'Europe/Berlin');
+    expect(r.events.map((e) => e.title)).toEqual(['Gut']);
+    expect(r.skipped).toHaveLength(1);
+  });
 });

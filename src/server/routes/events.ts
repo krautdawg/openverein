@@ -296,11 +296,14 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     });
     const totals = ['Anwesende je Termin', '', ...sessions.map((x) => members.filter((m) => present.has(`${m.id}|${x.date}|${x.key.split('|')[1]}`)).length), present.size].map(csvCell).join(';');
     const csv = '\uFEFF' + [head.map(csvCell).join(';'), ...lines, totals].join('\r\n') + '\r\n';
+    // Personal data leaving the system, like the member list export: logged.
+    await audit(db, actor.organizationId, actor, { action: 'calendar.attendance_exported', entityType: 'calendar', entityId: cal.id, diff: { from: [null, req.query.from], to: [null, req.query.to], members: [null, members.length] } });
     const safe = cal.name.replace(/[^\p{L}\p{N}_-]+/gu, '-');
     return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="Anwesenheit-${safe}-${req.query.from}-${req.query.to}.csv"`).header('cache-control', 'private, no-store').send(csv);
   });
 
-  app.post('/calendars/:id/import', { schema: { tags, summary: 'Termine aus einer ICS-Datei übernehmen (z. B. aus Google- oder Outlook-Kalender); schon übernommene werden übersprungen', params: idParam, body: z.object({ content: z.string().min(1).max(2_000_000) }), response: { 200: z.object({ imported: z.number(), duplicates: z.number(), notes: z.array(z.object({ title: z.string(), note: z.string() })) }) } } }, async (req) => {
+  // The schema allows 2 MB of ICS text: the body limit must, too (the default is 1 MiB).
+  app.post('/calendars/:id/import', { bodyLimit: 3 * 1024 * 1024, schema: { tags, summary: 'Termine aus einer ICS-Datei übernehmen (z. B. aus Google- oder Outlook-Kalender); schon übernommene werden übersprungen', params: idParam, body: z.object({ content: z.string().min(1).max(2_000_000) }), response: { 200: z.object({ imported: z.number(), duplicates: z.number(), notes: z.array(z.object({ title: z.string(), note: z.string() })) }) } } }, async (req) => {
     const actor = requireActor(req);
     requirePermission(actor, 'events', 'write');
     const cal = await writableCalendar(actor, req.params.id);

@@ -17,6 +17,12 @@ export async function resetDemoIfDue(db: Db, hours: number) {
   return db.connection().execute(async (conn) => {
     const got = await sql<{ ok: boolean }>`select pg_try_advisory_lock(hashtext('openverein:demo-reset')) as ok`.execute(conn);
     if (!got.rows[0]?.ok) return false;
+    // Read again under the lock: another instance may have just reset, between our first read and the lock.
+    const again = await db.selectFrom('instance_setting').select('value').where('key', '=', 'demo_last_reset').executeTakeFirst();
+    if (again && Date.now() - Date.parse(again.value) < hours * 3_600_000) {
+      await sql`select pg_advisory_unlock(hashtext('openverein:demo-reset'))`.execute(conn);
+      return false;
+    }
     resetting = true;
     try {
       await seedDemo(db, { reset: true });

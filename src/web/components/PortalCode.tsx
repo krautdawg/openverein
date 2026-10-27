@@ -16,9 +16,9 @@ export function PortalCode({ memberId }: { memberId: string }) {
       setError(err instanceof ApiError ? (err.problem.detail ?? err.problem.title) : 'Das hat nicht geklappt.');
     }
   }
+  if (!isAdmin) return null;
   if (code) {
-    if (!isAdmin) return null;
-  return (
+    return (
       <div className="alert alert-ok" role="status" style={{ marginTop: 'var(--s-3)' }}>
         Portal-Code für {code.email}: <strong className="token-once" style={{ display: 'inline', padding: '0 4px' }}>{code.code}</strong>
         <div className="meta">Einmal sichtbar, 24 Stunden gültig. Anmelden unter {location.origin}/portal mit dieser Adresse und dem Code.</div>

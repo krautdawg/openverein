@@ -21,6 +21,17 @@ export interface IssueSnapshot {
   /** SEPA pre-notification data, frozen at issue (direct debit only) */
   mandateReference?: string | null;
   creditorId?: string | null;
+  /** a household invoice: its payment method comes from the payer's mandate, not from the member it is filed under */
+  household?: boolean;
+}
+
+/**
+ * How an issued invoice is paid now: the member's current method, except for household invoices, whose method was
+ * fixed at issue from the payer (shared by the debit candidates and the run's re-check, so they never disagree).
+ */
+export function effectivePaymentMethod(snap: { paymentMethod?: string | null; household?: boolean } | null, recipientPersonId: string, memberPersonId: string | null, memberMethod: string | null) {
+  const household = snap?.household || (memberPersonId !== null && recipientPersonId !== memberPersonId) || memberPersonId === null;
+  return household ? (snap?.paymentMethod ?? memberMethod) : memberMethod;
 }
 
 export const RECEIVABLE_KINDS: InvoiceKind[] = ['membership', 'other', 'dunning_fee'];
@@ -37,7 +48,7 @@ export function personLines(p: { kind: string; first_name: string | null; last_n
  * Issues a draft: assigns the next gapless number in this transaction, freezes recipient and letterhead,
  * fixes the total from the lines and opens the receivable. Content is immutable afterwards (DB trigger).
  */
-export async function issueInvoice(tx: Db, organizationId: string, invoiceId: string, issueDate: string, dueDate?: string | null, opts: { paymentMethod?: PaymentMethod } = {}) {
+export async function issueInvoice(tx: Db, organizationId: string, invoiceId: string, issueDate: string, dueDate?: string | null, opts: { paymentMethod?: PaymentMethod; household?: boolean } = {}) {
   const inv = await tx.selectFrom('invoice').selectAll().where('id', '=', invoiceId).where('organization_id', '=', organizationId).forUpdate().executeTakeFirstOrThrow();
   if (inv.status !== 'draft') throw new Problem(409, 'not-draft', 'Die Rechnung ist bereits ausgestellt.');
   const lines = await tx.selectFrom('invoice_line').select(['total_cents', 'tax_rate']).where('invoice_id', '=', inv.id).execute();
@@ -65,6 +76,7 @@ export async function issueInvoice(tx: Db, organizationId: string, invoiceId: st
     cancelsNumber: cancels?.number ?? null,
     mandateReference: mandate?.reference ?? null,
     creditorId: org.creditor_id,
+    ...(opts.household ? { household: true } : {}),
   };
   const status = isCancellation ? 'issued' : total === 0 ? 'paid' : 'open';
   const dueOn = isCancellation ? null : (due ?? addDays(issueDate, org.payment_terms_days));

@@ -15,6 +15,7 @@ import { addBusinessDays, isTargetDay, pain001, pain008, splitIntoFiles } from '
 import { addDays, formatDate } from '../../shared/dates.ts';
 import { fillRemittance } from '../../shared/organization.ts';
 import { validateSepa } from '../sepa/validate.ts';
+import { effectivePaymentMethod, type IssueSnapshot } from '../invoices/service.ts';
 import type { Selectable } from 'kysely';
 
 CONSTRAINT_MESSAGES.sepa_mandate_organization_id_reference_key = 'Diese Mandatsreferenz ist schon vergeben.';
@@ -129,9 +130,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
     if (scope !== null) q = q.where(scopePredicate(scope, today, 'write'));
     const rows = await q.orderBy('invoice.due_date').execute();
     return rows.map((r) => {
-      const snap = r.recipient as { recipient: { name: string }; mandateReference?: string | null; paymentMethod?: string | null };
-      // A household invoice goes to the payer: its method was fixed at issue from the payer's mandate.
-      const method = r.recipient_person_id !== r.member_person_id ? (snap.paymentMethod ?? r.payment_method) : r.payment_method;
+      const snap = r.recipient as { recipient: { name: string }; mandateReference?: string | null; paymentMethod?: string | null; household?: boolean };
+      const method = effectivePaymentMethod(snap, r.recipient_person_id, r.member_person_id, r.payment_method);
       let readiness: Candidate['readiness'];
       if (r.in_run) readiness = 'in_run';
       else if (kind === 'debit' && method !== 'direct_debit') readiness = 'not_debit';
@@ -258,8 +258,9 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
           if (kind === 'debit' && m.type === 'one_off' && (m.first_collected || items.some((x) => x.mandate.id === m.id))) throw new Problem(409, 'one-off', `Das Einmal-Mandat ${m.reference} kann nur einmal eingezogen werden.`);
           // Re-checked under the locks: the readiness above was computed before them (Codex review of #4).
           if (kind === 'debit') {
-            const now = await tx.selectFrom('invoice').leftJoin('member', 'member.id', 'invoice.member_id').select(['invoice.recipient', 'member.payment_method']).where('invoice.id', '=', c.invoiceId).executeTakeFirstOrThrow();
-            if (now.payment_method !== null && now.payment_method !== 'direct_debit') throw new Problem(409, 'not-debit', `Rechnung ${c.number} wird nicht mehr per Lastschrift bezahlt.`);
+            const now = await tx.selectFrom('invoice').leftJoin('member', 'member.id', 'invoice.member_id').select(['invoice.recipient', 'invoice.recipient_person_id', 'member.person_id', 'member.payment_method']).where('invoice.id', '=', c.invoiceId).executeTakeFirstOrThrow();
+            const method = effectivePaymentMethod(now.recipient as IssueSnapshot, now.recipient_person_id, now.person_id, now.payment_method);
+            if (method !== null && method !== 'direct_debit') throw new Problem(409, 'not-debit', `Rechnung ${c.number} wird nicht mehr per Lastschrift bezahlt.`);
             if ((now.recipient as { mandateReference?: string | null }).mandateReference !== m.reference) throw new Problem(409, 'no-prenotification', `Für Rechnung ${c.number} gilt inzwischen ein anderes Mandat; die Vorabankündigung passt nicht mehr.`);
           }
           const amount = inv.total_cents - inv.paid_cents;
