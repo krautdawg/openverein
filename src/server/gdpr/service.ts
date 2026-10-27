@@ -69,7 +69,13 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   const members = (await tx.selectFrom('member').select('id').where('person_id', '=', personId).execute()).map((m) => m.id);
   const fileIds: string[] = [];
   // Tasks about the person ("Müller wegen Rückstand anrufen") go with their audit trail; honours go too.
-  // Issued offers stay, like invoices: they are business letters to keep (§ 147 AO), frozen by trigger.
+  // Issued offers stay, like invoices: they are business letters to keep (§ 147 AO), frozen by trigger. Drafts were
+  // never sent, so nothing keeps them.
+  const drafts = (await tx.selectFrom('offer').select('id').where('person_id', '=', personId).where('status', '=', 'draft').execute()).map((o) => o.id);
+  if (drafts.length) {
+    await tx.deleteFrom('offer_line').where('offer_id', 'in', drafts).execute();
+    await tx.deleteFrom('offer').where('id', 'in', drafts).execute();
+  }
   const taskIds = members.length ? (await tx.deleteFrom('task').where('member_id', 'in', members).returning('id').execute()).map((t) => t.id) : [];
   if (members.length) await tx.deleteFrom('honour').where('member_id', 'in', members).execute();
   if (members.length) {

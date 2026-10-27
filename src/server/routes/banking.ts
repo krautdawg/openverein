@@ -333,6 +333,9 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
       const noAccount = rows.find((r) => !(r.ledger_account_id ?? fallback));
       if (noAccount) throw new Problem(409, 'bank-ledger-account', `Das Bankkonto ${noAccount.bank_name} hat kein Buchhaltungskonto.`, 'Ordne es unter Buchhaltung → Einstellungen zu.');
       if (rows.some((r) => r.amount_cents > 0) && rows.some((r) => r.amount_cents < 0)) throw new Problem(400, 'mixed-directions', 'Einnahmen und Ausgaben bitte getrennt buchen.');
+      // Like manual bookings: nothing dated after today (a reversal today would precede it).
+      const today = await orgToday(tx, actor.organizationId);
+      if (rows.some((r) => String(r.booking_date) > today)) throw new Problem(409, 'future-date', 'Eine gewählte Bewegung liegt in der Zukunft.', 'Buche sie an ihrem Buchungstag.');
       const kind = rows[0]!.amount_cents > 0 ? 'income' : 'expense';
       for (const r of rows) {
         const text = [r.counterparty_name, r.remittance].filter(Boolean).join(': ').slice(0, 300) || 'Kontobewegung';
@@ -360,10 +363,11 @@ export const bankingRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/bank-transactions/:id/unmatch', { schema: { tags, summary: 'Zuordnung aufheben: Zahlungen werden zurückgenommen, Einzugspositionen wieder offen', params: idParam, body: z.object({}).optional(), response: { 200: bankTx } } }, async (req) => {
     const actor = requireActor(req);
     requireBanking(actor, 'write');
-    requirePermission(actor, 'invoices', 'write');
     await db.transaction().execute(async (tx) => {
       const t = await tx.selectFrom('bank_transaction').selectAll().where('id', '=', req.params.id).where('organization_id', '=', actor.organizationId).forUpdate().executeTakeFirst();
       if (!t) throw notFound('Buchung');
+      // The right that made the state undoes it: a booking needs the ledger, a match the invoices, an ignore nothing more.
+      if (t.status !== 'booked' && t.status !== 'ignored') requirePermission(actor, 'invoices', 'write');
       const ret = await tx.selectFrom('return_debit').select('id').where('bank_transaction_id', '=', t.id).executeTakeFirst();
       if (ret) throw new Problem(409, 'is-return', 'Eine verbuchte Rücklastschrift lässt sich nicht aufheben. Ziehe die Rechnung erneut ein oder buche sie aus.');
       const lock = (await tx.selectFrom('ledger_setting').select('lock_date').where('organization_id', '=', actor.organizationId).executeTakeFirst())?.lock_date;

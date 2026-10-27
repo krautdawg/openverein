@@ -176,7 +176,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('file').select(['name as Datei', 'created_at as Hochgeladen']).where('member_id', 'in', memberIds).where('superseded_at', 'is', null).execute()),
       // Private entries too: the right of access covers every note about the person.
       q(db.selectFrom('contact_log').select(['occurred_on as Datum', 'kind as Art', 'text as Notiz']).where('person_id', '=', p.id).orderBy('occurred_on').execute()),
-      q(db.selectFrom('offer').select(['number as Nummer', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).where('status', '<>', 'draft').execute()),
+      q(db.selectFrom('offer').select(['number as Nummer', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'status as Status', 'cover_text as Anschreiben', 'closing_text as Schlusstext', sql<string>`(select string_agg(text, ' | ' order by position) from offer_line where offer_id = offer.id)`.as('Positionen')]).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('task').select(['title as Aufgabe', 'note as Notiz', 'due_on as Fällig', 'done_at as Erledigt', 'created_at as Angelegt']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('honour').select(['title as Ehrung', 'awarded_on as Verliehen', 'decision as Beschluss']).where('member_id', 'in', memberIds).execute()),
       q(db.selectFrom('fee_assignment').innerJoin('fee_plan', 'fee_plan.id', 'fee_assignment.fee_plan_id').select(['fee_plan.name as Beitrag', 'fee_assignment.valid_from as Ab', 'fee_assignment.valid_to as Bis', 'fee_assignment.override_cents as Abweichend_Cent']).where('fee_assignment.member_id', 'in', memberIds).execute()),
