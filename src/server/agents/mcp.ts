@@ -57,7 +57,8 @@ export function toolsFrom(doc: { paths: Record<string, Record<string, OpenApiOp>
         properties.body = { ...body, description: 'JSON-Body der Anfrage' };
         if (op.requestBody?.required) required.push('body');
       }
-      if (method === 'patch') properties.ifMatch = { type: 'string', description: 'ETag aus der letzten Antwort (verhindert, dass Du fremde Änderungen überschreibst); ohne Angabe: *' };
+      if (method === 'patch') properties.ifMatch = { type: 'string', description: 'Version aus der letzten Antwort (ETag oder version). Pflicht: ohne sie antwortet die API 428 mit der aktuellen Version; * überschreibt bewusst.' };
+      if (method === 'post') properties.idempotencyKey = { type: 'string', maxLength: 200, description: 'Eigener Schlüssel für Wiederholungen: derselbe Schlüssel bei einem erneuten Versuch liefert die erste Antwort statt doppelt zu buchen. Bei Geld-Aktionen immer setzen.' };
       tools.push({
         name: op.operationId,
         method: method.toUpperCase(),
@@ -97,6 +98,9 @@ Du handelst im Namen genau einer Person: der, der das Token gehört. Du siehst u
 - Ändere nichts ohne ausdrückliche Zustimmung Deiner Person. Geld-Aktionen mit zweitem Faktor (Zahlungsexporte u. a.) gehen nur im Browser.
 - Fehler kommen als RFC 9457 (\`title\`, \`detail\`, bei Eingabefehlern \`errors\`). Bei 429 warte so viele Sekunden, wie \`retry-after\` sagt.
 - Beträge sind Cent-Ganzzahlen, Daten ISO 8601.
+- Bei Geld-Aktionen (Rechnungen, Zahlungen, Buchungen) setz \`idempotencyKey\` und nimm bei einem erneuten Versuch denselben.
+- Ändern (PATCH) braucht \`ifMatch\` mit der Version aus der letzten Antwort; fehlt sie, nennt die Antwort (428) die aktuelle.
+- Eine Anfrage ist höchstens 64 kB groß; größere Importe gehen per API oder CLI.
 `;
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
@@ -139,11 +143,13 @@ async function callTool(app: FastifyInstance, req: FastifyRequest, tool: Tool, a
     headers: {
       authorization: req.headers.authorization!,
       [INTERNAL_HEADER]: internalSecret,
-      ...(tool.method === 'POST' ? { 'idempotency-key': randomUUID() } : {}),
-      ...(tool.method === 'PATCH' ? { 'if-match': typeof args.ifMatch === 'string' ? args.ifMatch : '*' } : {}),
-      ...(tool.method !== 'GET' && tool.method !== 'DELETE' ? { 'content-type': 'application/json' } : {}),
+      // The agent's own key makes a retried tool call replay the first answer (no double booking).
+      ...(tool.method === 'POST' ? { 'idempotency-key': typeof args.idempotencyKey === 'string' && args.idempotencyKey ? args.idempotencyKey : randomUUID() } : {}),
+      // No default: without a version the API answers 428 with the current one, so a stale agent cannot overwrite a person's edit.
+      ...(tool.method === 'PATCH' && typeof args.ifMatch === 'string' ? { 'if-match': args.ifMatch } : {}),
+      ...(tool.hasBody || (tool.method !== 'GET' && tool.method !== 'DELETE') ? { 'content-type': 'application/json' } : {}),
     },
-    ...(tool.method !== 'GET' && tool.method !== 'DELETE' ? { payload: JSON.stringify(args.body ?? {}) } : {}),
+    ...(tool.hasBody || (tool.method !== 'GET' && tool.method !== 'DELETE') ? { payload: JSON.stringify(args.body ?? {}) } : {}),
   });
   const type = String(res.headers['content-type'] ?? '');
   if (res.statusCode >= 400) {
@@ -171,6 +177,8 @@ export function registerMcp(app: FastifyInstance) {
 
   app.post(MCP_PATH, { config: { mcp: true }, bodyLimit: 64 * 1024, schema: { hide: true } }, async (req, reply) => {
     const t = req.agentToken;
+    // One request, one message: a JSON-RPC batch (dropped in protocol 2025-06-18) would fan out many calls at once.
+    if (Array.isArray(req.body)) return reply.status(400).send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Keine Stapel-Anfragen: bitte eine Nachricht pro Anfrage.' } });
     if (!t) return unauthorized(reply, 'Authorization: Bearer ov_pat_… (Verwaltung) oder ov_mpt_… (Mitgliederportal); erstellen unter Einstellungen → Agenten bzw. im Portal unter Agenten.');
     // /mcp is outside /api, where the actor hook runs: resolve it here, the same way.
     const actor = await actorFromRequest(app.db, req, reply);
@@ -201,9 +209,15 @@ export function registerMcp(app: FastifyInstance) {
     server.setRequestHandler(ReadResourceRequestSchema, async (r) => ({ contents: r.params.uri === 'openverein://agents.md' ? [{ uri: r.params.uri, mimeType: 'text/markdown', text: GUIDE }] : [] }));
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
+    // shortcut: a client that goes away does not cancel inner calls already running (inject has no abort); they finish like a dropped browser request.
     reply.raw.on('close', () => void server.close().catch(() => undefined));
-    await server.connect(transport);
-    await transport.handleRequest(req.raw, reply.raw, req.body);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req.raw, reply.raw, req.body);
+    } catch (err) {
+      req.log.error(err, 'mcp request failed');
+      if (!reply.raw.headersSent) reply.raw.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Interner Fehler.' } }));
+    }
   });
   // Stateless: no event stream to open, no session to end.
   for (const method of ['GET', 'DELETE'] as const) {

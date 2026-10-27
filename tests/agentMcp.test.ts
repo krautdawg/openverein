@@ -100,7 +100,9 @@ describe('MCP', () => {
     const made = await call(token, 'postMembers', { body: { lastName: 'Per MCP', joinDate: '2024-01-01' } });
     expect(made.isError).toBeFalsy();
     const id = JSON.parse(made.content[0]!.text!).id;
-    const patched = await call(token, 'patchMembersId', { id, body: { firstName: 'Max' } });
+    // Without a version the API asks for it (428) instead of overwriting.
+    expect((await call(token, 'patchMembersId', { id, body: { firstName: 'Max' } })).content[0]!.text).toMatch(/^HTTP 428/);
+    const patched = await call(token, 'patchMembersId', { id, ifMatch: '*', body: { firstName: 'Max' } });
     expect(patched.isError, patched.content[0]!.text).toBeFalsy();
     const bad = await call(token, 'postMembers', { body: { lastName: '' } });
     expect(bad.isError).toBe(true);
@@ -122,5 +124,23 @@ describe('MCP', () => {
     const me = await call(token, 'getAuthMe');
     expect(me.isError, me.content[0]!.text).toBeFalsy();
     expect(JSON.parse(me.content[0]!.text!).email).toBe('erika@example.org');
+  });
+
+  it('takes one message per request, counts every tool call against the limit, and replays a retried POST', async () => {
+    const token = await adminToken({ access: 'write' });
+    const batch = await ctx.app.inject({ method: 'POST', url: '/mcp', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` }, payload: [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }, { jsonrpc: '2.0', id: 2, method: 'tools/list' }] });
+    expect(batch.statusCode).toBe(400);
+    const m = JSON.parse((await call(token, 'postMembers', { body: { lastName: 'Zahler', street: 'Weg 1', postalCode: '12345', city: 'Musterstadt', joinDate: '2024-01-01' } })).content[0]!.text!);
+    const invoice = { idempotencyKey: 'retry-001', body: { memberId: m.id, lines: [{ text: 'Beitrag', unitCents: 100 }] } };
+    const first = await call(token, 'postInvoices', invoice);
+    const again = await call(token, 'postInvoices', invoice);
+    expect(first.isError, first.content[0]!.text).toBeFalsy();
+    expect(JSON.parse(again.content[0]!.text!).id).toBe(JSON.parse(first.content[0]!.text!).id);
+    // Listing is free; tool calls count: the limit stops the 121st call within a minute.
+    const reader = await adminToken({ access: 'read' });
+    let last: Result | undefined;
+    for (let i = 0; i <= 120; i++) last = await call(reader, 'getAuthMe');
+    expect(last!.isError).toBe(true);
+    expect(last!.content[0]!.text).toMatch(/^HTTP 429/);
   });
 });

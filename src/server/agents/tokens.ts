@@ -89,7 +89,7 @@ export function createLimiter(maxKeys = 5000) {
   };
 }
 
-/** Marks in-process calls of the MCP server: only they may carry an MCP-only token and skip the second limit. */
+/** Marks in-process calls of the MCP server: only they may carry an MCP-only token, and they log as channel mcp. */
 export const INTERNAL_HEADER = 'x-ov-internal';
 export const internalSecret = randomUUID();
 
@@ -112,12 +112,13 @@ export function registerAgentTokens(app: FastifyInstance, db: Db) {
     const outerMcp = req.agentChannel === 'mcp';
     if (t.audience === 'mcp' && !inner && !outerMcp) throw new Problem(401, 'invalid-token', 'Dieses Token gilt nur für den MCP-Zugang (/mcp).');
     req.agentToken = t;
-    if (!inner) {
+    // Counted per API call: an MCP tool call is its inner call; the outer /mcp envelope (initialize, tools/list) is not.
+    if (!outerMcp) {
       const wait = limit(t.id);
       if (wait !== null) {
         reply.header('retry-after', String(wait));
         req.agentLimited = true;
-        if (!outerMcp) logCall(db, req, t, 429);
+        logCall(db, req, t, 429);
         throw new Problem(429, 'rate-limited', 'Zu viele Anfragen mit diesem Token.', `Wieder möglich in ${wait} Sekunden.`);
       }
     }
