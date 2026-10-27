@@ -10,6 +10,7 @@ import { sendSystemMail } from '../mail/system.ts';
 import { buildFullExport } from '../exports/full.ts';
 import { baseUrlOf } from '../tenant.ts';
 import { purgeTenant } from '../tenantPurge.ts';
+import { erasuresSince, lockErasures } from '../gdpr/service.ts';
 import { createClub } from './auth.ts';
 
 const tags = ['operator'];
@@ -80,6 +81,12 @@ export const operatorRoutes: FastifyPluginAsyncZod = async (app) => {
     const { file, manifest } = await buildFullExport(db, o.id);
     // A deletion that committed before the export's snapshot leaves a valid but empty archive: refuse it.
     if (manifest.counts.organization !== 1) throw notFound('Verein');
+    // An erasure committed after the snapshot would be handed over with the archive.
+    const erasedMeanwhile = await db.transaction().execute(async (tx) => {
+      await lockErasures(tx, o.id);
+      return erasuresSince(tx, o.id, manifest.counts.erasure_log ?? 0);
+    });
+    if (erasedMeanwhile) throw new Problem(409, 'erased-meanwhile', 'Während des Exports wurde eine Person anonymisiert.', 'Rufe den Export noch einmal ab.');
     await db.insertInto('operator_event').values({ action: 'tenant.exported', organization_id: o.id, hostname: o.hostname, detail: JSON.stringify({ sha256: createHash('sha256').update(file).digest('hex'), bytes: file.length }) }).execute();
     req.log.warn({ organizationId: o.id }, 'operator downloaded full export');
     // The whole club in clear text: no cache may keep it (the operator token is not a standard auth header).

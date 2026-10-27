@@ -184,4 +184,22 @@ describe('review G8', () => {
     const r = await admin.post('/ledger/bookings', { kind: 'income', date: '2026-03-01', text: 'Verkauf', moneyAccountId: acc('1000'), lines: [{ grossCents: 11900, accountId: acc('4400'), taxRateId: rate.body.id }] });
     expect(r.status).toBe(400);
   });
+
+  // ---------- review G17 ----------
+
+  it('makes a financial insert wait for a running archive of the person, then refuses it', async () => {
+    const m = (await admin.post('/members', { firstName: 'Rita', lastName: 'Race', joinDate: '2020-01-01' })).body;
+    const org = (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
+    const archiving = ctx.db.transaction().execute(async (tx) => {
+      await tx.selectFrom('person').select('id').where('id', '=', m.personId).forUpdate().execute();
+      await tx.updateTable('person').set({ status: 'archived' }).where('id', '=', m.personId).execute();
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const insert = ctx.db.insertInto('allowance_payment').values({ organization_id: org, person_id: m.personId, kind: 'ehrenamt', paid_on: '2026-03-01', amount_cents: 100, text: 'Parallel' }).execute();
+    // Attached before waiting: the insert may fail while the archive is still being awaited.
+    const refused = expect(insert).rejects.toThrow(/archived/);
+    await archiving;
+    await refused;
+  });
 });

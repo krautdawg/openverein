@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, NavLink, useNavigate, useParams, useSearchParams } from 'react-router';
 import { Plus } from 'lucide-react';
@@ -253,10 +253,17 @@ function BookingSheet({ onClose }: { onClose: () => void }) {
 }
 
 export function AccountSelect({ label, name, accounts, defaultValue, error }: { label: string; name: string; accounts: Account[]; defaultValue?: string; error?: string }) {
+  // The default (from settings, which may load later) fills an untouched select; a choice the user made stays,
+  // whatever arrives afterwards (a remount would have reset it, and the booking gone to the wrong account).
+  const [value, setValue] = useState(defaultValue ?? '');
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!touched.current) setValue(defaultValue ?? '');
+  }, [defaultValue]);
   return (
     <div className="field">
       <label htmlFor={name}>{label}</label>
-      <select id={name} name={name} className="select" defaultValue={defaultValue ?? ''} key={`${defaultValue}-${accounts.length}`} aria-invalid={!!error}>
+      <select id={name} name={name} className="select" value={accounts.some((a) => a.id === value) ? value : ''} onChange={(e) => { touched.current = true; setValue(e.target.value); }} aria-invalid={!!error}>
         <option value="" disabled>Konto wählen</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.number} {a.name}</option>)}
       </select>

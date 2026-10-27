@@ -45,6 +45,12 @@ export async function anonymiseBlockers(tx: Db, organizationId: string, personId
  * retention ends; the person row stays with an opaque id. Files under retention or legal hold stay as well.
  */
 /** Erasures and the end of a full export of one club never overlap (see runFullExport). */
+/** True when more erasures are committed than an export snapshot contained (call under lockErasures). */
+export async function erasuresSince(tx: Db, organizationId: string, inSnapshot: number) {
+  const now = await tx.selectFrom('erasure_log').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', organizationId).executeTakeFirstOrThrow();
+  return now.n > inSnapshot;
+}
+
 export const lockErasures = (tx: Db, organizationId: string) => sql`select pg_advisory_xact_lock(hashtext(${`openverein:erasure:${organizationId}`}))`.execute(tx);
 
 export async function anonymise(tx: Db, organizationId: string, personId: string) {
