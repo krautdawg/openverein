@@ -11,10 +11,10 @@
 
 ## 2. MCP (slice 2)
 
-- [ ] 2.1 `/mcp` POST-only, 64 kB body, stateless SDK server per request
-- [ ] 2.2 Tools generated from the OpenAPI document, filtered by the token's rights; executed via `app.inject` with the caller's token
-- [ ] 2.3 Errors as `isError` tool results with the problem text; PDF downloads up to 5 MB as embedded resources
-- [ ] 2.4 Tests: tool result equals the REST answer, tool list follows rights, member vs admin tools, limit counted once, log written once
+- [x] 2.1 `/mcp` POST-only, 64 kB body, stateless SDK server per request
+- [x] 2.2 Tools generated from the OpenAPI document, filtered by the token's rights; executed via `app.inject` with the caller's token
+- [x] 2.3 Errors as `isError` tool results with the problem text; PDF downloads up to 5 MB as embedded resources
+- [x] 2.4 Tests: tool result equals the REST answer, tool list follows rights, member vs admin tools, limit counted once, log written once
 
 ## 3. CLI (slice 3)
 

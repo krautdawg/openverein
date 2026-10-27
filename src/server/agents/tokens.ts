@@ -100,6 +100,8 @@ export const internalSecret = randomUUID();
 export function registerAgentTokens(app: FastifyInstance, db: Db) {
   const limit = createLimiter();
   app.addHook('onRequest', async (req, reply) => {
+    // The route marks the outer MCP request (a path comparison would miss /mcp/ and friends).
+    if ((req.routeOptions.config as { mcp?: boolean } | undefined)?.mcp) req.agentChannel = 'mcp';
     const auth = req.headers.authorization;
     if (!auth?.startsWith('Bearer ')) return;
     const raw = auth.slice(7).trim();
