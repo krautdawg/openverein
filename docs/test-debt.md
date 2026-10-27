@@ -72,4 +72,4 @@ Not covered by a test:
 | G17 | Idempotent replay only to unchanged rights (0080) | `g17Second` "replays a stored money answer …" | yes (migration moved out) |
 | G17 | Art. 15: clear IBANs, claim receipts, all file versions; no ballot choices | `g17Second` "gives the person their stored data …" | yes |
 | G17 | Work-hour settlement recomputed under locks | `g17Second` "settles work hours …" | yes |
-| G17 | Restore keeps erasures and purges recorded only in the database | `scripts/ovctl-roundtrip.sh` (person "Wiederkehr") | yes, with `OVCTL_REF=origin/main` (run locally) |
+| G17 | Restore keeps erasures and purges recorded only in the database | `scripts/ovctl-roundtrip.sh` (person "Wiederkehr") | no: with the old ovctl the scenario passes too, because the safety backup before every restore restarts the app, and its start-up replay writes the missing line into the file. The database merge covers a start that cannot repair the file (read-only or full volume), which the round trip cannot set up without breaking the app. |
