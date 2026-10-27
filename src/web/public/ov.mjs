@@ -9,7 +9,8 @@
 //   node ov.mjs getMembers --status active --limit 10
 //   node ov.mjs patchMembersId <id> --json '{"phone":"030 123"}'
 //   node ov.mjs getPortalInvoicesIdPdf <id> --ausgabe rechnung.pdf
-//   node ov.mjs postFiles --datei satzung.pdf --name Satzung.pdf
+//   node ov.mjs postFiles --datei satzung.pdf --dateiname Satzung.pdf
+//   node ov.mjs postInvoices --json @rechnung.json --idempotency-key rechnung-2026-17   # bei Wiederholung derselbe Schlüssel
 
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -34,7 +35,8 @@ export function operations(openapi) {
   for (const [path, methods] of Object.entries(openapi.paths ?? {})) {
     for (const [method, op] of Object.entries(methods)) {
       if (!op?.operationId || method === 'head') continue;
-      ops.push({ id: op.operationId, method: method.toUpperCase(), path, summary: op.summary ?? '', tag: op.tags?.[0] ?? '', params: Array.from(path.matchAll(/\{(\w+)\}/g), (m) => m[1]) });
+      const fields = op.requestBody?.content?.['application/json']?.schema?.properties ?? {};
+      ops.push({ id: op.operationId, method: method.toUpperCase(), path, summary: op.summary ?? '', tag: op.tags?.[0] ?? '', params: Array.from(path.matchAll(/\{(\w+)\}/g), (m) => m[1]), fields });
     }
   }
   return ops.sort((a, b) => a.id.localeCompare(b.id));
@@ -59,7 +61,18 @@ export function parseArgs(argv) {
   return { positional, flags };
 }
 
-const RESERVED = ['json', 'datei', 'ausgabe', 'if-match', 'help'];
+const RESERVED = ['json', 'datei', 'dateiname', 'ausgabe', 'if-match', 'idempotency-key', 'help'];
+
+/** A body flag as the schema wants it: text stays text ("12345" is a postal code), numbers, booleans, lists and objects are parsed. */
+function typed(schema, v) {
+  const types = [schema?.type, ...(schema?.anyOf ?? []).map((x) => x.type)].flat().filter(Boolean);
+  if (!types.length || types.includes('string')) return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
+}
 
 /** Path, query and JSON body: --json (text or @file) is the body, other flags are query (GET/DELETE) or body fields. */
 export function buildRequest(op, positional, flags, jsonText) {
@@ -73,10 +86,20 @@ export function buildRequest(op, positional, flags, jsonText) {
   });
   const rest = Object.fromEntries(Object.entries(flags).filter(([k]) => !RESERVED.includes(k)));
   if (op.method === 'GET' || op.method === 'DELETE' || flags.datei) {
+    if (jsonText !== undefined && !flags.datei && op.method === 'GET') throw new Error('--json gibt es nur für Operationen mit Body.');
     const q = new URLSearchParams(rest).toString();
-    return { path: q ? `${path}?${q}` : path };
+    return { path: q ? `${path}?${q}` : path, ...(jsonText !== undefined && op.method === 'DELETE' ? { body: jsonText } : {}) };
   }
-  const body = { ...(jsonText ? JSON.parse(jsonText) : {}), ...rest };
+  let json = {};
+  if (jsonText !== undefined) {
+    try {
+      json = JSON.parse(jsonText);
+    } catch {
+      throw new Error('--json ist kein gültiges JSON.');
+    }
+    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('--json muss ein JSON-Objekt sein.');
+  }
+  const body = { ...json, ...Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, typed(op.fields?.[k], v)])) };
   return { path, body: JSON.stringify(body) };
 }
 
@@ -87,7 +110,8 @@ function help(ops, base, filter) {
   return `ov — OpenVerein im Terminal (${base})
 
 Aufruf:  node ov.mjs <operation> [<pfadparameter> …] [--feld wert …] [--json '{…}' | --json @datei]
-         Hochladen: --datei pfad   ·   Dateien speichern: --ausgabe pfad   ·   PATCH: --if-match <etag> (sonst *)
+         Hochladen: --datei pfad [--dateiname name]   ·   Antwort in Datei: --ausgabe pfad
+         Ändern (PATCH): --if-match <version>, '*' überschreibt bewusst   ·   Geld-Aktionen: --idempotency-key <eigener schlüssel>
 Suchen:  node ov.mjs suche <stichwort>
 Token:   OV_TOKEN=ov_pat_… oder ov_mpt_… (Einstellungen → Agenten bzw. Portal → Agenten). Was Du nicht darfst, darf auch die CLI nicht.
 
@@ -101,7 +125,8 @@ export async function main(argv, env = process.env) {
     console.error('OV_URL fehlt, z. B. export OV_URL=https://verein.example.org');
     return 2;
   }
-  const res = await fetch(`${base}/api/v1/openapi.json`, { redirect: 'error' });
+  const res = await fetch(`${base}/api/v1/openapi.json`, { redirect: 'manual' });
+  if (res.status >= 300 && res.status < 400) throw new Error(`${base} leitet weiter nach ${res.headers.get('location')}. Setz OV_URL auf die endgültige Adresse.`);
   if (!res.ok) throw new Error(`openapi.json nicht erreichbar (HTTP ${res.status})`);
   const ops = operations(await res.json());
   const { positional, flags } = parseArgs(argv);
@@ -132,25 +157,39 @@ export async function main(argv, env = process.env) {
   const req = buildRequest(op, positional, flags, jsonText);
   const headers = { 'x-ov-channel': 'cli' };
   if (token) headers.authorization = `Bearer ${token}`;
-  if (op.method === 'POST') headers['idempotency-key'] = randomUUID();
-  if (op.method === 'PATCH') headers['if-match'] = flags['if-match'] ?? '*';
+  if (op.method === 'POST') {
+    // Reuse the key on a retry: the server answers the first result instead of booking twice.
+    headers['idempotency-key'] = flags['idempotency-key'] ?? randomUUID();
+    if (!flags['idempotency-key']) console.error(`Idempotency-Key: ${headers['idempotency-key']} (bei einem erneuten Versuch mit --idempotency-key mitgeben)`);
+  }
+  // No default: without a version the server answers 428 with the current one instead of overwriting someone's change.
+  if (op.method === 'PATCH' && flags['if-match']) headers['if-match'] = flags['if-match'];
   let body = req.body;
   if (flags.datei) {
     const ext = flags.datei.split('.').pop().toLowerCase();
     headers['content-type'] = 'application/octet-stream';
     headers['x-file-type'] = MIME[ext] ?? 'application/octet-stream';
-    headers['x-file-name'] = encodeURIComponent(basename(flags.datei));
+    // The name travels in the header, never in the URL (names can be personal: access logs keep URLs).
+    headers['x-file-name'] = encodeURIComponent(flags.dateiname ?? basename(flags.datei));
     body = await readFile(flags.datei);
   } else if (body !== undefined) headers['content-type'] = 'application/json';
+  const url = new URL(req.path, `${base}/`);
+  if (url.origin !== new URL(base).origin) throw new Error('Die Operation zeigt auf eine andere Adresse.');
   // No redirects: the token belongs to exactly this address.
-  const answer = await fetch(`${base}${req.path}`, { method: op.method, headers, body, redirect: 'manual' });
+  const answer = await fetch(url, { method: op.method, headers, body, redirect: 'manual' });
   const type = answer.headers.get('content-type') ?? '';
-  if (answer.ok && !type.includes('json') && !type.startsWith('text/')) {
+  if (answer.ok && flags.ausgabe) {
     const bytes = Buffer.from(await answer.arrayBuffer());
-    if (flags.ausgabe) {
-      await writeFile(flags.ausgabe, bytes);
-      console.error(`${bytes.length} Bytes → ${flags.ausgabe}`);
-    } else process.stdout.write(bytes);
+    await writeFile(flags.ausgabe, bytes);
+    console.error(`${bytes.length} Bytes → ${flags.ausgabe}`);
+    return 0;
+  }
+  if (answer.ok && !type.includes('json') && !type.startsWith('text/')) {
+    if (process.stdout.isTTY) {
+      console.error(`Die Antwort ist eine Datei (${type}). Bitte mit --ausgabe <pfad> speichern.`);
+      return 2;
+    }
+    process.stdout.write(Buffer.from(await answer.arrayBuffer()));
     return 0;
   }
   const text = await answer.text();
@@ -171,11 +210,14 @@ export async function main(argv, env = process.env) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // exitCode, not exit(): piped output must be written completely first.
   main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => {
+      process.exitCode = code;
+    },
     (err) => {
       console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
+      process.exitCode = 1;
     },
   );
 }
