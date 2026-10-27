@@ -67,3 +67,9 @@ Not covered by a test:
 | G15 | Portal codes, failures and lock per club | `g15Second` "accepts a portal code only at the club …" | yes |
 | G15 | ICS entry with unreadable DTEND/DURATION skipped | `g15Second` "skips a calendar entry …" | yes |
 | G15 | Demo reset visible to every instance (advisory lock as lease) | `g15Second` "tells every instance …" | yes |
+| G17 | IPv6 forms carrying an IPv4 address (compatible, 6to4, Teredo) blocked for webhooks | `g17Second` "blocks IPv6 forms …" | yes. The mapped form (`::ffff:7f00:1`) was already blocked: Node 24's BlockList checks mapped addresses against the IPv4 rules; the test pins it. |
+| G17 | Old transfer invoice not debited after a switch to direct debit | `g17Second` "does not debit an invoice …" | no: already guarded before the review (the invoice must have announced this mandate, `no_prenotification`); the test pins it. |
+| G17 | Idempotent replay only to unchanged rights (0080) | `g17Second` "replays a stored money answer …" | yes (migration moved out) |
+| G17 | Art. 15: clear IBANs, claim receipts, all file versions; no ballot choices | `g17Second` "gives the person their stored data …" | yes |
+| G17 | Work-hour settlement recomputed under locks | `g17Second` "settles work hours …" | yes |
+| G17 | Restore keeps erasures and purges recorded only in the database | `scripts/ovctl-roundtrip.sh` (person "Wiederkehr") | yes, with `OVCTL_REF=origin/main` (run locally) |

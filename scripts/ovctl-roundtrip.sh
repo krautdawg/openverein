@@ -47,6 +47,7 @@ say "install"
 ./ovctl install
 dc exec -T app node -e "fetch('http://localhost:3300/api/v1/setup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({clubName:'Roundtrip e.V.',name:'Ada Admin',email:'ada@example.org',password:'ein-sehr-langes-passwort'})}).then(r=>process.exit(r.ok?0:1))"
 set_state 'Stand A'
+sql "insert into person (organization_id, last_name) select id, 'Wiederkehr' from organization" >/dev/null
 
 say "backup (backup folder spelled relative with a trailing slash)"
 BACKUP_DIR=./backups/ ./ovctl backup
@@ -56,9 +57,12 @@ target="$(ls -1d "$PWD"/backups/openverein-* | tail -1)"
 if [ -z "${ROUNDTRIP_SKIP_RESTORE:-}" ]; then
   say "change, then restore"
   set_state 'Stand B'
+  # An erasure after the backup whose line in the file log was lost (disk full): only the database knows it.
+  sql "insert into erasure_log (organization_id, person_id) select organization_id, id from person where last_name = 'Wiederkehr'" >/dev/null
   sleep 1 # the safety backup gets its own timestamp
   BACKUP_DIR=./backups/ ./ovctl restore "$target"
   expect_state 'Stand A'
+  [ "$(sql "select count(*) from person where last_name = 'Wiederkehr'")" = 0 ] || fail "a person erased after the backup came back with the restore"
   [ -d "$target" ] || fail "the restore pruned the backup it restored from"
 fi
 

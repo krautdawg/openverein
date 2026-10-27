@@ -1402,6 +1402,7 @@ export interface IdempotencyKeyTable {
   key: string;
   route: string;
   request_hash: string;
+  grants_hash: string | null;
   status_code: number | null;
   response: string | null;
   content_type: string | null;

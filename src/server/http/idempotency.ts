@@ -67,17 +67,21 @@ export function registerIdempotency(app: FastifyInstance, db: Db) {
     const actor = req.actor.kind === 'user' ? req.actor.id : `token:${req.actor.id}`;
     const route = `${req.method} ${req.url.split('?')[0]}`;
     const hash = createHash('sha256').update(JSON.stringify(req.body ?? null)).digest('hex');
+    const grants = createHash('sha256').update(JSON.stringify(req.actor.grants)).digest('hex');
     // An expired key is free again.
     await db.deleteFrom('idempotency_key').where('organization_id', '=', req.actor.organizationId).where('actor', '=', actor).where('key', '=', key).where('created_at', '<', sql<Date>`now() - make_interval(hours => ${TTL_HOURS})`).execute();
-    const inserted = await db.insertInto('idempotency_key').values({ organization_id: req.actor.organizationId, actor, key, route, request_hash: hash }).onConflict((oc) => oc.doNothing()).returning('key').executeTakeFirst();
+    const inserted = await db.insertInto('idempotency_key').values({ organization_id: req.actor.organizationId, actor, key, route, request_hash: hash, grants_hash: grants }).onConflict((oc) => oc.doNothing()).returning('key').executeTakeFirst();
     if (!inserted) {
       const prior = await db.selectFrom('idempotency_key').selectAll().where('organization_id', '=', req.actor.organizationId).where('actor', '=', actor).where('key', '=', key).executeTakeFirstOrThrow();
       if (prior.route !== route || prior.request_hash !== hash) throw new Problem(422, 'idempotency-key-reused', 'Dieser Idempotency-Key gehört zu einer anderen Anfrage.');
       if (prior.status_code === null) throw new Problem(409, 'idempotency-in-progress', 'Diese Anfrage wird gerade bearbeitet oder ihr Ergebnis ist unklar.', 'Prüfe, ob die Buchung angekommen ist, bevor Du es noch einmal versuchst; eine neue Anfrage braucht dann einen neuen Schlüssel.');
       // The stored answer was dropped by an anonymisation: the request ran, but its response is gone.
       if (prior.response === null) throw new Problem(409, 'idempotency-already-done', 'Diese Anfrage wurde schon ausgeführt.', 'Lade die Seite neu, um das Ergebnis zu sehen.');
-      // A replay answers without running the route: the right it needs is checked here, as it stands today.
+      // A replay answers without running the route, so it cannot repeat the route's own checks (club-wide, group
+      // scope, restricted fields). The stored answer goes only to unchanged rights; otherwise the caller hears that
+      // the request ran, without its content, and reads the result with its rights today.
       requirePermission(req.actor, moduleOf(req.routeOptions.url ?? ''), 'write');
+      if (prior.grants_hash !== grants) throw new Problem(409, 'idempotency-already-done', 'Diese Anfrage wurde schon ausgeführt.', 'Deine Rechte haben sich seitdem geändert; lade die Seite neu, um das Ergebnis zu sehen.');
       reply.header('idempotent-replayed', 'true');
       return reply.status(prior.status_code).type(prior.content_type ?? 'application/json').send(prior.response);
     }

@@ -129,6 +129,11 @@ restore_data() {
   # Whatever fails from here on, the app comes back up (with whatever state there is) instead of staying down.
   trap 'dc start app >/dev/null 2>&1 || true' EXIT
   dc run --rm --no-deps -T --entrypoint sh app -c 'cat /data/files/erasure-log.jsonl 2>/dev/null || true' > "$erasures"
+  # The database records every erasure and purge too, also one whose line in the file failed (disk full): take them
+  # from there before the database is dropped. Without them, refuse (OVCTL_RESTORE_WITHOUT_DB_LOG=1 overrides).
+  if ! dc exec -T db psql -U openverein -d openverein -Atc "select json_build_object('o', organization_id, 'p', person_id)::text from erasure_log union all select json_build_object('o', organization_id, 'purge', true)::text from operator_event where action = 'tenant.purged'" >> "$erasures"; then
+    [ "${OVCTL_RESTORE_WITHOUT_DB_LOG:-}" = 1 ] || { rm -f "$erasures"; die "Die Löschungen der jetzigen Datenbank ließen sich nicht lesen; nichts wurde verändert. (Nur im Notfall: OVCTL_RESTORE_WITHOUT_DB_LOG=1)"; }
+  fi
   say "Spiele die Datenbank zurück …"
   dc exec -T db sh -c 'dropdb -U openverein --force openverein && createdb -U openverein openverein'
   dc exec -T db pg_restore -U openverein -d openverein --no-owner < "$dir/db.dump"

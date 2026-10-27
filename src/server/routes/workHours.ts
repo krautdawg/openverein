@@ -28,19 +28,19 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
   const { db } = app;
 
   /** The rule of a year: the latest one that starts in or before it. */
-  async function loadSettings(organizationId: string, year: number) {
-    const r = await db.selectFrom('work_hour_rule').selectAll().where('organization_id', '=', organizationId).where('from_year', '<=', year).orderBy('from_year', 'desc').executeTakeFirst();
+  async function loadSettings(organizationId: string, year: number, conn: Db = db) {
+    const r = await conn.selectFrom('work_hour_rule').selectAll().where('organization_id', '=', organizationId).where('from_year', '<=', year).orderBy('from_year', 'desc').executeTakeFirst();
     return { required: r?.required == null ? null : Number(r.required), rateCents: r?.rate_cents == null ? null : Number(r.rate_cents), ageFrom: r?.age_from ?? null, ageTo: r?.age_to ?? null };
   }
   const yearOf = async (organizationId: string) => Number((await orgToday(db, organizationId)).slice(0, 4));
 
   /** Members of the year (by join and exit date) in the caller's scope, with hours owed, done and missing. */
-  async function overview(actor: Actor, year: number) {
-    const s = await loadSettings(actor.organizationId, year);
+  async function overview(actor: Actor, year: number, conn: Db = db, memberId?: string) {
+    const s = await loadSettings(actor.organizationId, year, conn);
     // With age limits, who owes hours in which year gives birth years away.
     if ((s.ageFrom !== null || s.ageTo !== null) && restrictedFields(actor).has('birth_date')) throw forbidden('members.field.birth_date');
-    const today = await orgToday(db, actor.organizationId);
-    const rows = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id')
+    const today = await orgToday(conn, actor.organizationId);
+    const rows = await conn.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id')
       .select(['member.id', 'person.kind', 'person.first_name', 'person.last_name', 'person.company_name', 'person.birth_date'])
       .select((eb) => eb.selectFrom('work_hour_entry').select(sql<string>`coalesce(sum(hours), 0)`.as('h')).whereRef('work_hour_entry.member_id', '=', 'member.id').where('worked_on', '>=', `${year}-01-01`).where('worked_on', '<=', `${year}-12-31`).as('done'))
       .select((eb) => eb.selectFrom('work_hour_settlement').select('invoice_id').whereRef('work_hour_settlement.member_id', '=', 'member.id').where('year', '=', year).as('invoice_id'))
@@ -48,6 +48,7 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
       .where('member.join_date', '<=', `${year}-12-31`)
       .where((eb) => eb.or([eb('member.exit_date', 'is', null), eb('member.exit_date', '>=', `${year}-01-01`)]))
       .where(applyScope(actor, today, 'read'))
+      .$if(!!memberId, (q) => q.where('member.id', '=', memberId!))
       .orderBy('person.last_name').orderBy('person.first_name').execute();
     return rows.map((r) => {
       const age = r.birth_date ? year - Number(r.birth_date.slice(0, 4)) : null;
@@ -142,16 +143,23 @@ export const workHourRoutes: FastifyPluginAsyncZod = async (app) => {
     for (const m of due) {
       if (m.invoiceId) { alreadySettled++; continue; }
       const made = await db.transaction().execute(async (tx) => {
-        // Recomputed under the lock: hours logged since the overview count, and nobody adds any meanwhile.
+        // Recomputed under locks: hours, the member's dates and age and the rule are read as they are now, and none of
+        // them changes until the draft exists (Codex review G17).
         await lockMemberYear(tx, m.memberId, year);
         if (await settledIn(tx, m.memberId, year)) return 'settled';
+        await tx.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select('member.id').where('member.id', '=', m.memberId).forShare().execute();
+        await tx.selectFrom('work_hour_rule').select('from_year').where('organization_id', '=', actor.organizationId).forShare().execute();
+        const now = (await overview(actor, year, tx, m.memberId))[0];
+        if (!now) return 'none';
+        const rule = await loadSettings(actor.organizationId, year, tx);
+        if (rule.required === null || !rule.rateCents) return 'none';
         const done = Number((await tx.selectFrom('work_hour_entry').select(sql<string>`coalesce(sum(hours), 0)`.as('h')).where('member_id', '=', m.memberId).where('worked_on', '>=', `${year}-01-01`).where('worked_on', '<=', `${year}-12-31`).executeTakeFirstOrThrow()).h);
-        const missing = Math.max(0, Math.round((m.required - done) * 100) / 100);
+        const missing = Math.max(0, Math.round((now.required - done) * 100) / 100);
         if (missing <= 0) return 'none';
         const member = await tx.selectFrom('member').select(['id', 'person_id']).where('id', '=', m.memberId).executeTakeFirstOrThrow();
-        const id = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId: member.person_id, memberId: member.id, createdBy: actor.userId }, [{ text: `Ersatzgeld Arbeitsstunden ${year} (${done.toLocaleString('de-DE')} von ${m.required.toLocaleString('de-DE')} Std. geleistet)`, quantity: missing, unitCents: s.rateCents!, taxRate: 0 }]);
+        const id = await createDraft(tx, { organizationId: actor.organizationId, kind: 'other', personId: member.person_id, memberId: member.id, createdBy: actor.userId }, [{ text: `Ersatzgeld Arbeitsstunden ${year} (${done.toLocaleString('de-DE')} von ${now.required.toLocaleString('de-DE')} Std. geleistet)`, quantity: missing, unitCents: rule.rateCents, taxRate: 0 }]);
         // The primary key (member, year) refuses a second settlement, also under concurrent runs.
-        await tx.insertInto('work_hour_settlement').values({ organization_id: actor.organizationId, member_id: member.id, year, invoice_id: id, required: String(m.required), done: String(done), missing: String(missing), rate_cents: String(s.rateCents) }).execute();
+        await tx.insertInto('work_hour_settlement').values({ organization_id: actor.organizationId, member_id: member.id, year, invoice_id: id, required: String(now.required), done: String(done), missing: String(missing), rate_cents: String(rule.rateCents) }).execute();
         await audit(tx, actor.organizationId, actor, { action: 'work_hours.settled', entityType: 'invoice', entityId: id, diff: { year: [null, year], missing: [null, missing] } });
         return 'drafted';
       });
