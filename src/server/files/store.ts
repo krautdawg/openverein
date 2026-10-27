@@ -57,11 +57,15 @@ export async function sweepFiles(db: Db) {
 }
 
 async function expireTemporary(db: Db) {
-  const heads = await db.selectFrom('file').select(['id', 'organization_id']).where('retention_class', '=', 'temporary').where('superseded_at', 'is', null).where('temporary_since', '<', new Date(Date.now() - 7 * 86_400_000)).execute();
+  const cutoff = new Date(Date.now() - 7 * 86_400_000);
+  const heads = await db.selectFrom('file').select(['id', 'organization_id']).where('retention_class', '=', 'temporary').where('superseded_at', 'is', null).where('temporary_since', '<', cutoff).execute();
   for (const h of heads) {
     await db.transaction().execute(async (tx) => {
       const chain = await lockChain(tx, h.id);
       if (!chain || deletionBlocker(chain, await orgToday(tx, h.organization_id))) return;
+      // Kept meanwhile (another retention class, a new upload period): the locked row decides, not the list above.
+      const head = chain[0]!;
+      if (head.retention_class !== 'temporary' || !head.temporary_since || new Date(head.temporary_since) >= cutoff) return;
       await deleteChain(tx, chain);
       await audit(tx, h.organization_id, null, { action: 'file.expired', entityType: 'file', entityId: h.id, diff: { name: [chain[0]!.name, null] } });
     });

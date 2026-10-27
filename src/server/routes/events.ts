@@ -21,6 +21,7 @@ import { requirePermission, restrictedFields, scopeOf, type Actor } from '../pol
 const idParam = z.object({ id: z.uuid() });
 const tags = ['events'];
 CONSTRAINT_MESSAGES.event_child_price_pair = 'Für den ermäßigten Preis bitte Betrag und Altersgrenze angeben.';
+CONSTRAINT_MESSAGES.event_child_price_valid = 'Der ermäßigte Preis braucht einen regulären Preis und liegt nicht darüber.';
 type Ev = Selectable<EventTable>;
 
 const toLocal = (s: string) => s.replace('T', ' ') + (s.length === 16 ? ':00' : '');
@@ -509,25 +510,26 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const actor = requireActor(req);
       requirePermission(actor, 'events', 'write');
-      const { e } = await loadEvent(actor, req.params.id, 'write');
-      assertOccurrence(e, req.params.date);
+      await loadEvent(actor, req.params.id, 'write');
       const wanted = req.body.status;
       const attendance = wanted === 'attended' || wanted === 'not_attended';
       const { row: member } = await loadMemberRow(db, actor, req.params.memberId, attendance ? 'read' : 'write', 'events');
       const { now } = await localNow(db, actor.organizationId);
-      const start = shiftTo(e.starts_at, req.params.date).slice(0, 16);
-      if (attendance && now < start) throw new Problem(409, 'not-started', 'Anwesenheit lässt sich erst ab Beginn des Termins eintragen.');
-      if (!attendance) {
-        if (!e.rsvp) throw new Problem(409, 'no-rsvp', 'Für diesen Termin gibt es keine Rückmeldungen.');
-        if (now >= start) throw new Problem(409, 'closed', 'Der Termin hat schon begonnen; trag stattdessen die Anwesenheit ein.');
-        if (e.registration_closes_hours !== null) {
-          const closes = new Date(Date.parse(`${start}:00Z`) - e.registration_closes_hours * 3_600_000).toISOString().slice(0, 16).replace('T', ' ');
-          if (now >= closes) throw new Problem(409, 'registration-closed', 'Die Anmeldefrist ist abgelaufen.');
-        }
-      }
       await db.transaction().execute(async (tx) => {
-        // The event's current calendar must still be writable (lock order: event row, then the occurrence lock).
-        await lockEvent(tx, actor, e.id, 'share');
+        // The event as it is now, locked: its calendar must still be writable, and dates, places and prices come from
+        // this row, not from a read before (lock order: event row, then the occurrence lock).
+        const e = await lockEvent(tx, actor, req.params.id, 'share');
+        assertOccurrence(e, req.params.date);
+        const start = shiftTo(e.starts_at, req.params.date).slice(0, 16);
+        if (attendance && now < start) throw new Problem(409, 'not-started', 'Anwesenheit lässt sich erst ab Beginn des Termins eintragen.');
+        if (!attendance) {
+          if (!e.rsvp) throw new Problem(409, 'no-rsvp', 'Für diesen Termin gibt es keine Rückmeldungen.');
+          if (now >= start) throw new Problem(409, 'closed', 'Der Termin hat schon begonnen; trag stattdessen die Anwesenheit ein.');
+          if (e.registration_closes_hours !== null) {
+            const closes = new Date(Date.parse(`${start}:00Z`) - e.registration_closes_hours * 3_600_000).toISOString().slice(0, 16).replace('T', ' ');
+            if (now >= closes) throw new Problem(409, 'registration-closed', 'Die Anmeldefrist ist abgelaufen.');
+          }
+        }
         // Serialise changes per occurrence so two last places cannot both be taken.
         await sql`select pg_advisory_xact_lock(hashtext(${`${e.id}|${req.params.date}`}))`.execute(tx);
         const current = await tx.selectFrom('participation').selectAll().where('event_id', '=', e.id).where('occurrence_date', '=', req.params.date).where('member_id', '=', member.id).executeTakeFirst();
@@ -551,7 +553,7 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
           }
         }
       });
-      return detail(actor, e.id, req.params.date);
+      return detail(actor, req.params.id, req.params.date);
     },
   );
 

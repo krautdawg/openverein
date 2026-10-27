@@ -136,7 +136,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       // A parent who pays for a child member signs in too, without being a member (the portal then shows the child).
       const member = own ?? (await db.selectFrom('household').innerJoin('person as payer', 'payer.id', 'household.payer_person_id').innerJoin('member', 'member.household_id', 'household.id').select('household.id').where('household.organization_id', '=', org.id).where(sql<boolean>`lower(payer.email) = ${email}`).where('member.status', 'in', [...CURRENT]).executeTakeFirst());
       // At most three codes per address and hour, so the endpoint cannot be used to flood an inbox.
-      const recent = await db.selectFrom('login_code').select(sql<number>`count(*)::int`.as('n')).where('email_hash', '=', emailKey(email)).where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
+      const recent = await db.selectFrom('login_code').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', org.id).where('email_hash', '=', emailKey(email)).where('created_at', '>', new Date(Date.now() - 3_600_000)).executeTakeFirstOrThrow();
       // The public demo sends no mail, so it shows the code right away (demo members only exist there).
       if (config.demoMode && member) return { ok: true, demoCode: await issueLoginCode(db, org.id, email, null) };
       if (member && recent.n < 3) {
@@ -156,15 +156,19 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
       const email = req.body.email.trim().toLowerCase();
       const wrong = () => new Problem(400, 'invalid-code', 'Der Code stimmt nicht oder ist abgelaufen.', 'Fordere bei Bedarf einen neuen an.');
       const key = emailKey(email);
+      // Codes, failures and the lock belong to the club of this address (host): one club's attempts touch no other's.
+      const org = await tenantForRequest(db, req);
+      if (!org) throw wrong();
+      const failureKey = blindIndex(`login:${org.id}:${email}`);
       const token = await db.transaction().execute(async (tx) => {
         // Serialise sign-ins per address so the failure budget cannot be raced.
-        await sql`select pg_advisory_xact_lock(hashtext(${`portal:${key}`}))`.execute(tx);
+        await sql`select pg_advisory_xact_lock(hashtext(${`portal:${org.id}:${key}`}))`.execute(tx);
         // Failures count per address and day whether or not a code exists, so the answers do not tell members from
         // non-members (Codex review of #9).
-        const failures = await tx.selectFrom('portal_verify_failure').select('n').where('email_hash', '=', key).where('day', '=', sql<string>`current_date`).executeTakeFirst();
+        const failures = await tx.selectFrom('portal_verify_failure').select('n').where('email_hash', '=', failureKey).where('day', '=', sql<string>`current_date`).executeTakeFirst();
         if ((failures?.n ?? 0) >= MAX_FAILURES_PER_DAY) throw new Problem(429, 'too-many-attempts', 'Zu viele falsche Codes für diese Adresse.', 'Versuch es morgen wieder oder bitte den Verein um einen Code.');
-        const fail = () => tx.insertInto('portal_verify_failure').values({ email_hash: key, day: sql<string>`current_date`, n: 1 }).onConflict((oc) => oc.columns(['email_hash', 'day']).doUpdateSet({ n: sql<number>`portal_verify_failure.n + 1` })).execute();
-        const live = await tx.selectFrom('login_code').selectAll().where('email_hash', '=', key).where('consumed_at', 'is', null).where('expires_at', '>', new Date()).where('attempts', '<', MAX_ATTEMPTS).orderBy('created_at', 'desc').execute();
+        const fail = () => tx.insertInto('portal_verify_failure').values({ email_hash: failureKey, day: sql<string>`current_date`, n: 1 }).onConflict((oc) => oc.columns(['email_hash', 'day']).doUpdateSet({ n: sql<number>`portal_verify_failure.n + 1` })).execute();
+        const live = await tx.selectFrom('login_code').selectAll().where('organization_id', '=', org.id).where('email_hash', '=', key).where('consumed_at', 'is', null).where('expires_at', '>', new Date()).where('attempts', '<', MAX_ATTEMPTS).orderBy('created_at', 'desc').execute();
         // Any live code counts (a mailed one and one the club handed out can both be valid).
         const c = live.find((x) => timingSafeEqual(Buffer.from(x.code_hash), Buffer.from(codeHash(x.id, req.body.code))));
         if (!c) {
@@ -172,7 +176,7 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
           if (live.length) await tx.updateTable('login_code').set({ attempts: live[0]!.attempts + 1 }).where('id', '=', live[0]!.id).execute();
           return null;
         }
-        await tx.updateTable('login_code').set({ consumed_at: new Date() }).where('email_hash', '=', key).where('consumed_at', 'is', null).execute();
+        await tx.updateTable('login_code').set({ consumed_at: new Date() }).where('organization_id', '=', org.id).where('email_hash', '=', key).where('consumed_at', 'is', null).execute();
         const t = randomBytes(32).toString('base64url');
         await tx.insertInto('portal_session').values({ token_hash: sha256(t), organization_id: c.organization_id, email, expires_at: new Date(Date.now() + PORTAL_IDLE_MS) }).execute();
         await audit(tx, c.organization_id, null, { action: 'portal.signed_in', entityType: 'login_code', entityId: c.id });
