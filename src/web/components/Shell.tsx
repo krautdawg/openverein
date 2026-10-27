@@ -21,7 +21,7 @@ export function Shell({ me, demo }: { me: Me; demo: boolean }) {
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => setNavOpen(false), [location.pathname]);
-  useAttendanceSync();
+  useAttendanceSync(me.id);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

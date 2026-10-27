@@ -14,6 +14,8 @@ import type { Db, EventTable, ParticipationStatus } from '../db.ts';
 import { CONSTRAINT_MESSAGES, notFound, Problem } from '../http/problem.ts';
 import { cancelInvoice, createDraft, issueInvoice } from '../invoices/service.ts';
 import { applyScope, loadMemberRow, orgToday } from '../members/query.ts';
+import { config } from '../config.ts';
+import { tenantForRequest } from '../tenant.ts';
 import { requirePermission, restrictedFields, scopeOf, type Actor } from '../policy.ts';
 
 const idParam = z.object({ id: z.uuid() });
@@ -176,7 +178,9 @@ export const eventRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/public/calendars/:id/events', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } }, schema: { tags, summary: 'Öffentlicher Kalender für die Website: Termine der nächsten Wochen (nur wenn der Kalender öffentlich ist)', security: [], params: idParam, querystring: z.object({ days: z.coerce.number().int().min(1).max(365).default(90) }), response: { 200: z.object({ calendar: z.string(), club: z.string(), events: z.array(z.object({ title: z.string(), date: z.string(), startsAt: z.string(), endsAt: z.string(), allDay: z.boolean(), location: z.string().nullable() })) }) } } }, async (req) => {
     const cal = await db.selectFrom('calendar').innerJoin('organization', 'organization.id', 'calendar.organization_id').select(['calendar.id', 'calendar.name', 'calendar.organization_id', 'organization.name as club']).where('calendar.id', '=', req.params.id).where('calendar.public', '=', true).executeTakeFirst();
-    if (!cal) throw notFound('Kalender');
+    // With several clubs, a calendar is public only on its own club's host name.
+    const club = config.multiTenant ? await tenantForRequest(db, req) : null;
+    if (!cal || (config.multiTenant && cal.organization_id !== club?.id)) throw notFound('Kalender');
     const from = (await localNow(db, cal.organization_id)).now.slice(0, 10);
     const to = addDays(from, req.query.days);
     const events = await db.selectFrom('event').select(['title', 'location', 'starts_at', 'ends_at', 'all_day', 'rrule', 'exdates']).where('calendar_id', '=', cal.id)

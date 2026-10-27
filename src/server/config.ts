@@ -29,6 +29,8 @@ export const config = {
   operatorToken: env.OPERATOR_TOKEN ?? '',
   /** OIDC issuers over plain http: only for development and tests. */
   oidcAllowHttp: env.OIDC_ALLOW_HTTP === 'true',
+  /** Managed hosting: the most mails per minute any one club may send through the shared server. */
+  mailPerMinuteMax: Number(env.MAIL_PER_MINUTE_MAX ?? 60),
 };
 if (config.multiTenant && config.operatorToken.length < 32) throw new Error('MULTI_TENANT=true braucht OPERATOR_TOKEN mit mindestens 32 Zeichen.');
 if (config.multiTenant && config.demoMode) throw new Error('DEMO_MODE und MULTI_TENANT schließen sich aus.');

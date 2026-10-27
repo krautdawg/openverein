@@ -52,7 +52,8 @@ async function processClub(db: Db, org: { id: string; mail_per_minute: number },
     const used = await tx.selectFrom('delivery').select(sql<number>`count(*)::int`.as('n')).where('organization_id', '=', org.id)
       .where((eb) => eb.or([eb.and([eb('status', '=', 'sent'), eb('sent_at', '>', sql<Date>`now() - interval '1 minute'`)]), eb.and([eb('status', '=', 'sending'), eb('claimed_at', '>', sql<Date>`now() - interval '1 minute'`)])]))
       .executeTakeFirstOrThrow();
-    const budget = Math.min(opts.limit ?? 30, org.mail_per_minute - used.n);
+    const perMinute = config.multiTenant ? Math.min(org.mail_per_minute, config.mailPerMinuteMax) : org.mail_per_minute;
+    const budget = Math.min(opts.limit ?? 30, perMinute - used.n);
     if (budget <= 0) return [];
     // Rows that crashed past their last attempt are given up instead of retried forever.
     await tx.updateTable('delivery').set({ status: 'failed', error: 'Versand abgebrochen (zu viele Versuche).' }).where('status', '=', 'sending').where('attempts', '>=', MAX_ATTEMPTS).where('claimed_at', '<', sql<Date>`now() - interval '10 minutes'`).execute();
