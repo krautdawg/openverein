@@ -194,6 +194,9 @@ describe('booking without invoice', () => {
     expect((await admin.post('/bank-transactions/book', { transactionIds: fees, accountId: expense })).status).toBe(409);
     const entries = (await admin.get('/ledger/entries?from=2026-10-01&to=2026-10-31')).body as { lines: { debitCents: number; sphere: string }[] }[];
     expect(entries.filter((e) => e.lines.some((l) => l.debitCents === 490 && l.sphere === 'vermoegen'))).toHaveLength(1);
+    // The bank booking is undone in the bank view only: the ledger would leave the movement stuck as booked.
+    const bankEntry = (await ctx.db.selectFrom('bank_transaction').select('journal_entry_id').where('id', '=', fees[0]!).executeTakeFirstOrThrow()).journal_entry_id!;
+    expect((await admin.post(`/ledger/entries/${bankEntry}/reverse`, {})).body.type).toMatch(/bank-entry$/);
     const undo = await admin.post(`/bank-transactions/${fees[0]}/unmatch`);
     expect(undo.status, JSON.stringify(undo.body)).toBe(200);
     expect(undo.body).toMatchObject({ status: 'unmatched', journalNumber: null });

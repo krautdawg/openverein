@@ -150,7 +150,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
     const members = await db.selectFrom('member').selectAll().where('person_id', '=', p.id).execute();
     const memberIds = members.map((m) => m.id).concat(['00000000-0000-0000-0000-000000000000']);
     const q = <T>(rows: Promise<T[]>) => rows;
-    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers] = await Promise.all([
+    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours] = await Promise.all([
       q(db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['club_group.name as Gruppe', 'group_membership.member_id']).where('group_membership.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('consent').selectAll().where('person_id', '=', p.id).execute()),
       q(db.selectFrom('invoice').select(['number as Nummer', 'kind as Art', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'paid_cents as Bezahlt_Cent', 'status as Status']).where('recipient_person_id', '=', p.id).where('status', '<>', 'draft').execute()),
@@ -165,6 +165,8 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       // Private entries too: the right of access covers every note about the person.
       q(db.selectFrom('contact_log').select(['occurred_on as Datum', 'kind as Art', 'text as Notiz']).where('person_id', '=', p.id).orderBy('occurred_on').execute()),
       q(db.selectFrom('offer').select(['number as Nummer', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'status as Status']).where('person_id', '=', p.id).where('status', '<>', 'draft').execute()),
+      q(db.selectFrom('task').select(['title as Aufgabe', 'note as Notiz', 'due_on as Fällig', 'done_at as Erledigt', 'created_at as Angelegt']).where('member_id', 'in', memberIds).execute()),
+      q(db.selectFrom('honour').select(['title as Ehrung', 'awarded_on as Verliehen', 'decision as Beschluss']).where('member_id', 'in', memberIds).execute()),
     ]);
     const auditRows = await db.selectFrom('audit_event').select(['at as Zeit', 'action as Aktion', 'actor_label as Von', 'diff as Änderung']).where('organization_id', '=', actor.organizationId).where('entity_id', 'in', [p.id, ...memberIds]).orderBy('id').execute();
     const sections: [string, Row[]][] = [
@@ -176,6 +178,8 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Einwilligungen', consents.map((c) => ({ Zweck: c.label ?? CONSENT_PURPOSE_LABEL[c.purpose], Quelle: c.source, Text: c.text_version, Erteilt: c.granted_at.toISOString(), Widerrufen: c.withdrawn_at?.toISOString() ?? null }))],
       ['Rechnungen', invoices as Row[]],
       ['Angebote', offers as Row[]],
+      ['Aufgaben', tasks as Row[]],
+      ['Ehrungen', honours as Row[]],
       ['SEPA-Mandate', mandates as Row[]],
       ['Spenden', donations as Row[]],
       ['Zuwendungsbestätigungen', receipts as Row[]],

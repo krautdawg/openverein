@@ -263,6 +263,8 @@ export const invoiceRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.transaction().execute(async (tx) => {
       const inv = await loadForWrite(tx, actor, req.params.id);
       if (inv.status !== 'draft') throw new Problem(409, 'immutable', 'Nur Entwürfe lassen sich löschen.');
+      // A draft made from an offer: the offer is accepted again (and can be converted anew).
+      await tx.updateTable('offer').set({ status: 'accepted', invoice_id: null }).where('invoice_id', '=', inv.id).execute();
       await tx.deleteFrom('invoice').where('id', '=', inv.id).execute();
       await audit(tx, actor.organizationId, actor, { action: 'invoice.draft_deleted', entityType: 'invoice', entityId: inv.id });
     });
