@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "openverein": {
+      "type": "http",
+      "url": "${user_config.club_url}/mcp"
+    }
+  }
+}

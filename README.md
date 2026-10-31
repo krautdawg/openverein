@@ -56,6 +56,31 @@ Then open http://localhost:3300.
 - [Handbuch für Vorstand und Verwaltung](docs/handbuch-verwaltung.md): members, intake, events, mail, portal and privacy, in German.
 - [Verfahrensdokumentation (Vorlage)](docs/verfahrensdokumentation.md): GoBD procedural documentation template to fill in.
 
+## Mit Claude Code verbinden
+
+The plugin connects Claude Code to a club through the remote MCP server at `<club>/mcp`. Your agent sees and does what you see and do in the club administration or the member portal, nothing more.
+
+1. Install the plugin in Claude Code:
+
+   ```
+   /plugin marketplace add krautdawg/openverein
+   /plugin install openverein@openverein
+   ```
+
+   On Claude Code 2.1.275 or later this also works in one step: `/plugin install openverein --marketplace krautdawg/openverein`.
+
+2. Enter your club's address when asked, for example `https://verein.example.org`. To try the public demo, enter `https://klub2.ki-klub-werder.de`. You can change it later with `/plugin configure openverein@openverein`; then sign in again. From a shell, the address comes with the install command: `claude plugin install openverein@openverein --config club_url=https://verein.example.org`.
+
+3. Sign in: run `/mcp`, choose `openverein` and authenticate. In the browser:
+   - members sign in to the portal with their e-mail code
+   - the club administration signs in with its normal login and second factor
+
+   Before you sign in, check that the browser shows your club's address. Then choose read-only or read-and-write and allow access. No token ends up in any file.
+
+4. Ask, for example, "Welche Rechnungen sind bei mir offen?" or "Wer hat sich für das Training am Dienstag angemeldet?".
+
+You see the agent's calls, and can revoke its access, under **Einstellungen → Agenten** (or **Portal → Agenten**). Scripts and the `ov` command-line tool use a token from the same page instead of OAuth. claude.ai and ChatGPT connect to the same `<club>/mcp` address as a custom connector.
+
 ## Run it on a server
 
 `./ovctl install` sets up Caddy (HTTPS), the app and Postgres with Docker Compose; `./ovctl backup`, `restore`, `update` and `doctor` keep it running. See [docs/operations.md](docs/operations.md).

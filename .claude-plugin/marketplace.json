@@ -1,0 +1,17 @@
+{
+  "name": "openverein",
+  "owner": {
+    "name": "OpenVerein",
+    "url": "https://github.com/krautdawg/openverein"
+  },
+  "metadata": {
+    "description": "OpenVerein, open-source club management for German e.V. clubs: connect Claude Code to your club."
+  },
+  "plugins": [
+    {
+      "name": "openverein",
+      "source": "./plugins/openverein",
+      "description": "Connects Claude Code to an OpenVerein club (MCP with OAuth): members see their portal, the club administration works with its own rights."
+    }
+  ]
+}
