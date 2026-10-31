@@ -2,7 +2,7 @@
   "mcpServers": {
     "openverein": {
       "type": "http",
-      "url": "${OPENVEREIN_URL:-https://klub2.ki-klub-werder.de}/mcp"
+      "url": "${user_config.club_url}/mcp"
     }
   }
 }

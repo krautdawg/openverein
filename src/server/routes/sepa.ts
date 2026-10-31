@@ -341,6 +341,8 @@ export const sepaRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/collection-runs/:id/files/:position', { config: { agent: { modules: ['sepa'], write: true } }, schema: { tags, summary: 'SEPA-Datei herunterladen (immer dieselben Bytes; der erste Download markiert den Einzug als heruntergeladen)', params: z.object({ id: z.uuid(), position: z.coerce.number().int().min(1) }) } }, async (req, reply) => {
     const actor = requireActor(req);
+    // The bank file (all debtors' IBANs) goes to a person or a club API key, never into an agent's context.
+    if (actor.via === 'token') throw new Problem(403, 'person-required', 'Die SEPA-Datei lädt nur eine Person im Browser herunter, kein Agent.');
     requireClubWide(actor, 'write');
     if (restrictedFields(actor).has('iban')) throw new Problem(403, 'forbidden', 'Dafür fehlt Dir die Berechtigung.', 'Die SEPA-Datei enthält IBANs, die Du nicht sehen darfst.', { permission: 'members.field.iban' });
     // The download changes state (the run becomes live); a link on a foreign site must not trigger it.

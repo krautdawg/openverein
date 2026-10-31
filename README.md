@@ -60,13 +60,7 @@ Then open http://localhost:3300.
 
 The plugin connects Claude Code to a club through the remote MCP server at `<club>/mcp`. Your agent sees and does what you see and do in the club administration or the member portal, nothing more.
 
-1. Set your club's address. Skip this step to try the public demo (`https://klub2.ki-klub-werder.de`).
-
-   ```bash
-   export OPENVEREIN_URL=https://verein.example.org
-   ```
-
-2. Install the plugin in Claude Code:
+1. Install the plugin in Claude Code:
 
    ```
    /plugin marketplace add krautdawg/openverein
@@ -75,11 +69,13 @@ The plugin connects Claude Code to a club through the remote MCP server at `<clu
 
    On Claude Code 2.1.275 or later this also works in one step: `/plugin install openverein --marketplace krautdawg/openverein`.
 
+2. Enter your club's address when asked, for example `https://verein.example.org`. To try the public demo, enter `https://klub2.ki-klub-werder.de`. You can change it later with `/plugin configure openverein@openverein`; then sign in again. From a shell, the address comes with the install command: `claude plugin install openverein@openverein --config club_url=https://verein.example.org`.
+
 3. Sign in: run `/mcp`, choose `openverein` and authenticate. In the browser:
    - members sign in to the portal with their e-mail code
    - the club administration signs in with its normal login and second factor
 
-   Then choose read-only or read-and-write and allow access. No token ends up in any file.
+   Before you sign in, check that the browser shows your club's address. Then choose read-only or read-and-write and allow access. No token ends up in any file.
 
 4. Ask, for example, "Welche Rechnungen sind bei mir offen?" or "Wer hat sich für das Training am Dienstag angemeldet?".
 

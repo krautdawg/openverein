@@ -5,18 +5,18 @@ description: Work in an OpenVerein club (German e.V.) through the openverein MCP
 
 # OpenVerein
 
-You act for exactly one person: the one who signed in. You can do what they can in OpenVerein, never more. Every tool call is the same API call the web app makes, with their rights, and it shows up in their call log (Agenten).
+You act for exactly one person: the one who signed in. You can do what they can in OpenVerein, never more. Every read or write goes through the same API the web app uses, with their rights, and appears in their call log (Agenten). Searching for and describing operations is not logged.
 
 ## Start
 
-- Admin access: call `getAuthMe` first. It tells you the name, roles and rights per module (members, fees, invoices, sepa, banking, ledger, donations, communication, documents, events, settings).
+- Admin access: call `getAuthMe` first. If it isn't listed as a tool, call `operation_aufrufen` with `{ "operation": "getAuthMe", "eingabe": {} }`. It tells you the name, roles and rights per module (members, fees, invoices, sepa, banking, ledger, donations, communication, documents, events, settings).
 - Member: call `getPortalMe` first. It lists the person's memberships, including ones they manage as household payer. You only have the `getPortal…` tools then (invoices, documents, donation receipts, polls, expenses).
 - If the server is not connected or asks for sign-in, tell the person to run `/mcp` and sign in. Don't try to get around it.
 
 ## Finding tools
 
 - Up to 60 operations, each operation is its own tool, named by its operationId (`getMembers`, `postInvoices`).
-- With more (a full admin has about 300), you get three tools:
+- With more (a full admin has about 300), you get three tools instead, and every operation named here is called through them:
   - `operationen_suchen` with a German or English keyword (`rechnung storno`, `mitglied`, `termin`)
   - `operation_beschreiben` to read the input schema
   - `operation_aufrufen` with `{ "operation": "...", "eingabe": { ... } }`
@@ -26,8 +26,8 @@ You act for exactly one person: the one who signed in. You can do what they can 
 
 - Read first, then say what you will change, and wait for a clear yes. This applies above all to money (invoices, payments, fee runs, direct debits, bookings, donation receipts) and member data (addresses, bank details, status, resignations, erasure).
 - For money POSTs, set `idempotencyKey` and reuse it when you retry, so nothing is booked twice.
-- For PATCH, send `ifMatch` with the version from your last read. On HTTP 428, read again and show the person what changed.
-- Some actions are refused to agents on purpose (403 `person-required` or `step-up-required`): API keys, accesses, roles, the second factor, SEPA files and other money exports. Tell the person to do them in the browser.
+- For PATCH, send `ifMatch` with the version from your last read. On HTTP 428 or 412, read again, show the person what changed and ask again before retrying. Use `ifMatch: "*"` only if they explicitly agree to overwrite someone else's change.
+- Some actions are refused to agents on purpose (403 `person-required` or `step-up-required`): API keys, accesses, roles, the second factor, SEPA bank files and actions that need a fresh second factor. Tell the person to do them in the browser.
 - Errors come as RFC 9457 problems: say the `title` and `detail` in plain words. On 429, wait for `retry-after`.
 
 ## Club terms (German UI, German data)

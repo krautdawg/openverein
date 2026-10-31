@@ -9,5 +9,13 @@
   "homepage": "https://github.com/krautdawg/openverein#mit-claude-code-verbinden",
   "repository": "https://github.com/krautdawg/openverein",
   "license": "AGPL-3.0-only",
-  "privacyPolicyUrl": "https://github.com/krautdawg/openverein/blob/main/plugins/openverein/README.md#privacy"
+  "privacyPolicyUrl": "https://github.com/krautdawg/openverein/blob/main/plugins/openverein/README.md#privacy",
+  "userConfig": {
+    "club_url": {
+      "type": "string",
+      "title": "Adresse Deines Vereins",
+      "description": "Die Adresse, unter der Dein Verein OpenVerein betreibt, z. B. https://verein.example.org (ohne /mcp). Zum Ausprobieren: https://klub2.ki-klub-werder.de (öffentliche Demo).",
+      "required": true
+    }
+  }
 }

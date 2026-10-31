@@ -118,4 +118,12 @@ describe('agent access, second review', () => {
       quiet.forEach((q) => q.mockRestore());
     }
   });
+
+  it('keeps the SEPA bank file away from agents (plugin review): not offered, and refused by the route', async () => {
+    const writer = await pat({ access: 'write' });
+    expect(await search(writer)).not.toContain('getCollectionRunsIdFilesPosition');
+    const r = await client(ctx.app, { token: writer }).get('/collection-runs/01900000-0000-7000-8000-000000000000/files/1');
+    expect(r.status).toBe(403);
+    expect(r.body.type).toMatch(/person-required$/);
+  });
 });
