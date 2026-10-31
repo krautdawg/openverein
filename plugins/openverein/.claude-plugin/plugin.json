@@ -1,0 +1,13 @@
+{
+  "name": "openverein",
+  "version": "1.0.0",
+  "description": "Connects Claude Code to an OpenVerein club over MCP (OAuth sign-in, no token in any file) and teaches the agent how to use it.",
+  "author": {
+    "name": "OpenVerein",
+    "url": "https://github.com/krautdawg/openverein"
+  },
+  "homepage": "https://github.com/krautdawg/openverein#mit-claude-code-verbinden",
+  "repository": "https://github.com/krautdawg/openverein",
+  "license": "AGPL-3.0-only",
+  "privacyPolicyUrl": "https://github.com/krautdawg/openverein/blob/main/plugins/openverein/README.md#privacy"
+}
