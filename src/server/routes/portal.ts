@@ -23,7 +23,7 @@ import { checkRequest, consentInput, consentView, decide, hostBase } from '../ag
 import type { ChangeField, Db } from '../db.ts';
 import { getBlob, putBlob } from '../files/store.ts';
 import { deleteChain, deletionBlocker, lockChain } from '../files/chain.ts';
-import { imageTypeOf, profileOf, saveProfile, setPhoto } from '../profiles/service.ts';
+import { imageTypeOf, profileOf, saveProfile, setPhoto, stripPhotoMetadata } from '../profiles/service.ts';
 import { PROFILE_PHOTO_MAX, PROFILE_PHOTO_TYPES, profileDto, profileInput } from '../../shared/profiles.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { epcPayload } from '../invoices/pdf.ts';
@@ -454,12 +454,14 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/portal/profiles/:memberId/photo', { bodyLimit: PROFILE_PHOTO_MAX, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Profilfoto hochladen (JPG, PNG oder WebP, höchstens 2 MB; öffentlich nur mit Einwilligung „Fotos“)', security: [], params: memberParam, response: { 200: profileDto } } }, async (req, reply) => {
     const { u, m } = await profileOwner(req, reply);
-    const bytes = req.body as Buffer;
-    if (!Buffer.isBuffer(bytes) || !bytes.length) throw new Problem(400, 'empty', 'Die Datei ist leer.');
-    if (bytes.length > PROFILE_PHOTO_MAX) throw new Problem(413, 'too-large', 'Das Foto ist größer als 2 MB.');
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw new Problem(400, 'empty', 'Die Datei ist leer.');
+    if (req.body.length > PROFILE_PHOTO_MAX) throw new Problem(413, 'too-large', 'Das Foto ist größer als 2 MB.');
     // The bytes decide, not the declared type: only real JPEG, PNG or WebP get stored and later served.
-    const type = imageTypeOf(bytes);
+    const type = imageTypeOf(req.body as Buffer);
     if (!type) throw new Problem(415, 'file-type', 'Bitte ein Foto als JPG, PNG oder WebP hochladen.');
+    // Stored without camera metadata (GPS and the like), so no copy holds it.
+    const bytes = stripPhotoMetadata(req.body as Buffer, type);
+    if (!bytes) throw new Problem(415, 'file-type', 'Das Foto lässt sich nicht lesen. Bitte als JPG, PNG oder WebP neu speichern.');
     const sha = await putBlob(bytes);
     await db.transaction().execute(async (tx) => {
       const f = await tx.insertInto('file').values({ organization_id: u.organizationId, folder_id: null, member_id: m.memberId, purpose: 'photo', sha256: sha, size_bytes: bytes.length, mime_type: type, name: `Profilfoto.${type.split('/')[1]}`, retention_class: 'document', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
