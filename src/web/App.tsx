@@ -51,7 +51,7 @@ import { Roles } from './pages/settings/Roles.tsx';
 import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
 import { Users } from './pages/settings/Users.tsx';
 import './lib/search.ts';
-import { ConnectChooser, ConnectConsent } from './components/ConnectAgent.tsx';
+import { AfterSignIn, ConnectChooser, ConnectConsent } from './components/ConnectAgent.tsx';
 import { StepUpPrompt } from './components/StepUp.tsx';
 
 /** The member portal is its own small app with its own sign-in; everything else is the admin app. */
@@ -166,6 +166,8 @@ function AdminApp() {
           <Route path="agenten" element={<Agents me={me.data} />} />
           <Route path="protokoll" element={<AuditLog />} />
         </Route>
+        {/* Right after signing in the app is still on /anmelden: go on to a pending consent or the overview. */}
+        <Route path="/anmelden" element={<AfterSignIn />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

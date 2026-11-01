@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, Navigate } from 'react-router';
 import { api, ApiError } from '../lib/api.ts';
 import { useTitle } from '../lib/useTitle.ts';
 import { AuthLayout } from './AuthLayout.tsx';
@@ -16,11 +16,32 @@ export function rememberReturn(path: string) {
   }
 }
 
+/** Where to go right after signing in: the remembered consent page (read once), else the overview. */
+export function AfterSignIn() {
+  // Read on mount, cleared after: a second render reads the same target.
+  const [to] = useState(() => peekReturn() ?? '/');
+  useEffect(() => clearReturn(), []);
+  return <Navigate to={to} replace />;
+}
+
+const clearReturn = () => {
+  try {
+    localStorage.removeItem(RETURN_KEY);
+  } catch {
+    // storage blocked: nothing to clear
+  }
+};
+
 /** The remembered consent page, once; only our own consent paths. */
 export function takeReturn(): string | null {
+  const r = peekReturn();
+  clearReturn();
+  return r;
+}
+
+function peekReturn(): string | null {
   try {
     const raw = localStorage.getItem(RETURN_KEY);
-    localStorage.removeItem(RETURN_KEY);
     const r = raw ? (JSON.parse(raw) as { path: string; at: number }) : null;
     return r && Date.now() - r.at < 600_000 && /^\/(portal\/)?verbinden\?/.test(r.path) ? r.path : null;
   } catch {
