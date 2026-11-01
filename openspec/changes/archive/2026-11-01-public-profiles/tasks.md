@@ -16,5 +16,5 @@
 
 ## 3. Import from KI Klub
 
-- [ ] 3.1 Importer (dry run first): klub_profil, klub_profil_link, photos, matched by e-mail
-- [ ] 3.2 Fixture test
+- [x] 3.1 Importer (dry run first): klub_profil, klub_profil_link, photos, matched by e-mail
+- [x] 3.2 Fixture test

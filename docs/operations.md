@@ -93,3 +93,29 @@ As operator you process the clubs' data on their behalf: conclude a data-process
    The answer counts the deleted rows per table. Issued invoices, the journal and receipts are protected by database triggers. The deletion therefore runs with triggers switched off, which needs a superuser database connection, as in the supplied Docker setup. Before committing, it checks every foreign key: if any row of another club still pointed into the deleted one, nothing is deleted. The club's files go with the next file sweep (within a day). Its rows stay in your backups until they expire (AVV section 6.2). The club's own log is deleted with it. The deletion and every export are recorded in the append-only table `operator_event`, which outlives the club. The deletion is also written to the erasure log, so if you restore an older backup that still contains the club, OpenVerein deletes it again at start-up.
 
 Per-club backups are not included yet: `ovctl backup` backs up the whole installation.
+
+## KI Klub Werder: Profile übernehmen
+
+Die Profile des KI Klub (`klub_profil`, `klub_profil_link`, Fotos als `bytea`) übernimmt ein Skript, einmalig. Es ordnet sie den Mitgliedern über die E-Mail-Adresse zu. Der Probelauf schreibt nichts, zeigt jedes Profil und endet mit einem Code; nur `--confirm <Code>` schreibt, und nur wenn sich seither nichts geändert hat.
+
+```bash
+# erst ein Probelauf gegen eine Kopie der KI-Klub-Datenbank (nie gegen die laufende)
+KIKLUB_DATABASE_URL=postgres://…/kiklub_kopie npm run import:kiklub-profiles -- [--schema public] [--club <Hostname oder ID>]
+# dann schreiben, mit dem Code aus dem Probelauf
+KIKLUB_DATABASE_URL=postgres://…/kiklub_kopie npm run import:kiklub-profiles -- --confirm <Code>
+```
+
+Die Instanz muss migriert sein, das Skript wendet keine Migrationen an. Die Adresse kommt aus der Umgebung, nicht aus der Kommandozeile (sie enthält ein Passwort).
+
+- **Profilarten:** KI-Enthusiast und KI-Profi kommen dazu, falls es sie noch nicht gibt.
+- **Freigaben:** bleiben nur, wenn das Profil im KI Klub auch öffentlich war (Modus, Freigabe und Status „aktiv“). Ruhende Mitglieder kommen ohne Freigabe.
+- **Kontakt:** Vorstand bleibt Vorstand, Mitglieder bleibt Mitglieder. „öffentlich“ wird zu Mitglieder, weil der KI Klub die Adresse nie öffentlich gezeigt hat.
+- **LinkedIn:** das Feld wird zum ersten Link.
+- **Übersprungen** werden:
+  - im KI Klub ausgetretene Mitglieder
+  - Profile ohne passendes Mitglied
+  - Adressen, die im Verein mehr als einer Person gehören (auch ehemaligen)
+  - Mitglieder, die in OpenVerein schon ein Profil haben (nichts wird überschrieben; ein zweiter Lauf importiert nichts mehr)
+  - ungültige Links und Fotos, die kein JPG, PNG oder WebP bis 2 MB sind
+- **Fotos:** öffentlich erst, wenn die Person in OpenVerein in „Fotos auf Website und in sozialen Medien“ eingewilligt hat. Das Skript nennt die Zahl der Fotos ohne Einwilligung.
+- **Protokoll:** jedes Profil und die Änderung der Profilarten stehen im Änderungsprotokoll.

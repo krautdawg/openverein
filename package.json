@@ -16,6 +16,7 @@
     "start": "node src/server/index.ts",
     "migrate": "node --env-file-if-exists=.env src/server/migrate.ts",
     "seed:demo": "node --env-file-if-exists=.env src/server/demo/seed-cli.ts",
+    "import:kiklub-profiles": "node --env-file-if-exists=.env src/server/profiles/import-kiklub-cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
