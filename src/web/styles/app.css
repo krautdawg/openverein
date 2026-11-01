@@ -766,3 +766,29 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 /* Many tabs (settings): on wide screens they wrap instead of hiding behind the edge; on phones they scroll, and a fade at the edge says so. */
 @media (min-width: 768px) { .subnav-wrap { flex-wrap: wrap; overflow-x: visible; row-gap: 0; } }
 @media (max-width: 767px) { .subnav-wrap { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); padding-right: var(--s-6); } }
+
+/* Demo start (DEMO_MODE): the ways in are rows led by a court line, like groups in the app. */
+.auth-card:has(.demo-ways) { max-width: 480px; }
+.demo-ways { list-style: none; margin: 0 0 var(--s-6); padding: 0; border-top: 1px solid var(--line); }
+.demo-ways li { border-bottom: 1px solid var(--line); }
+.demo-way { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); min-height: 64px; padding: var(--s-3) var(--s-2); margin: 0 calc(-1 * var(--s-2)); border-radius: var(--radius); color: var(--ink); text-decoration: none; }
+.demo-way:hover { background: var(--surface-sunk); }
+.demo-way > span { display: grid; gap: 2px; }
+.demo-way-title { font-weight: 600; font-size: var(--text-md); display: flex; align-items: center; gap: var(--s-2); }
+.demo-way-title::before, .demo-agent > h2:first-child::before { content: ''; display: block; width: 14px; height: 2px; margin: 0; background: var(--court, var(--court-grau)); flex: none; }
+.demo-agent { --court: var(--court-orange); }
+.demo-way-meta { color: var(--ink-2); font-size: var(--text-sm); padding-left: 22px; }
+.demo-way svg { color: var(--ink-3); flex: none; }
+.demo-way:hover svg { color: var(--ink); }
+.demo-agent h2 { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; display: flex; align-items: center; gap: var(--s-2); margin: 0 0 var(--s-1); }
+.demo-agent > p { color: var(--ink-2); font-size: var(--text-sm); margin: 0 0 var(--s-4); padding-left: 22px; }
+.demo-copy { margin: 0 0 var(--s-3) 22px; }
+.demo-copy-label { display: block; font-size: var(--text-xs); color: var(--ink-2); margin-bottom: var(--s-1); }
+.demo-copy-row { display: flex; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.demo-copy pre { flex: 1; min-width: 0; margin: 0; padding: var(--s-2) var(--s-3); font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: var(--text-xs); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.demo-copy .icon-btn { flex: none; }
+.demo-note { margin-top: var(--s-6); padding-top: var(--s-4); border-top: 1px solid var(--line); font-size: var(--text-sm); color: var(--ink-2); }
+.demo-note a { color: var(--ink); }
+.demo-copy-status { margin: var(--s-1) 0 0; font-size: var(--text-xs); color: var(--ink-2); min-height: 0; }
+.demo-copy-status:empty { display: none; }
+.demo-copy pre:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

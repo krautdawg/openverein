@@ -54,6 +54,19 @@ describe('demo mode', () => {
     }
   });
 
+  it('tells the web app about the demo (start page, reset interval) only in demo mode', async () => {
+    const off = (await ctx.app.inject({ url: '/api/v1/config' })).json();
+    expect(off).toEqual({ demo: false, demoLogin: null, demoResetHours: null });
+    config.demoMode = true;
+    try {
+      const on = (await ctx.app.inject({ url: '/api/v1/config' })).json();
+      expect(on.demo).toBe(true);
+      expect(on.demoResetHours).toBe(config.demoResetHours);
+    } finally {
+      config.demoMode = false;
+    }
+  });
+
   it('keeps the migration ledger when wiping', async () => {
     await wipe(ctx.db);
     await expect(migrate(testDbUrl, () => {})).resolves.not.toThrow();

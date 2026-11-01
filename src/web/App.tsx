@@ -51,6 +51,7 @@ import { Roles } from './pages/settings/Roles.tsx';
 import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
 import { Users } from './pages/settings/Users.tsx';
 import './lib/search.ts';
+import { DemoStart } from './pages/DemoStart.tsx';
 import { AfterSignIn, ConnectChooser, ConnectConsent } from './components/ConnectAgent.tsx';
 import { StepUpPrompt } from './components/StepUp.tsx';
 
@@ -87,6 +88,9 @@ function AdminApp() {
   if (!me.data) {
     return (
       <Routes>
+        {/* The public demo greets visitors at / with its ways in; anywhere else / goes to the sign-in. Only this
+            route waits for /config: sign-in, invitation and the OAuth chooser never depend on it. */}
+        <Route path="/" element={cfg.isPending ? null : cfg.data?.demo ? <DemoStart resetHours={cfg.data.demoResetHours} /> : <Navigate to="/anmelden" replace />} />
         <Route path="/anmelden" element={<Login />} />
         <Route path="/einladung" element={<AcceptInvite />} />
         <Route path="/abmelden" element={<Unsubscribe />} />

@@ -10,8 +10,10 @@ export const systemRoutes: FastifyPluginAsyncZod = async (app) => {
     return { ok: true };
   });
 
-  app.get('/config', { schema: { security: [], tags: ['system'], summary: 'Öffentliche Einstellungen der Instanz', response: { 200: z.object({ demo: z.boolean(), demoLogin: z.object({ email: z.string(), password: z.string() }).nullable() }) } } }, async () => ({
+  app.get('/config', { schema: { security: [], tags: ['system'], summary: 'Öffentliche Einstellungen der Instanz', response: { 200: z.object({ demo: z.boolean(), demoLogin: z.object({ email: z.string(), password: z.string() }).nullable(), demoResetHours: z.number().nullable() }) } } }, async () => ({
     demo: config.demoMode,
     demoLogin: config.demoMode ? DEMO_LOGIN : null,
+    // How often the demo starts afresh (0: never), for the demo start page.
+    demoResetHours: config.demoMode ? config.demoResetHours : null,
   }));
 };

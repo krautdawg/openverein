@@ -18,7 +18,7 @@ export function useMe() {
 }
 
 export function useInstanceConfig() {
-  return useQuery({ queryKey: ['config'], queryFn: () => api<{ demo: boolean; demoLogin: { email: string; password: string } | null }>('/config'), staleTime: Infinity });
+  return useQuery({ queryKey: ['config'], queryFn: () => api<{ demo: boolean; demoLogin: { email: string; password: string } | null; demoResetHours: number | null }>('/config'), staleTime: Infinity });
 }
 
 export function useSetMe() {
