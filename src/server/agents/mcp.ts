@@ -25,6 +25,7 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     mcp?: boolean;
     agent?: AgentRouteMeta;
+    publicCors?: boolean;
   }
 }
 const PDF_MAX = 5 * 1024 * 1024;
@@ -96,8 +97,8 @@ export function visibleTools(tools: Tool[], t: PersonalToken, actor: Actor | nul
     const writes = tool.method !== 'GET' || !!meta?.write;
     if (t.access === 'read' && writes) return false;
     const portal = tool.path.startsWith('/portal/');
-    // The club's public feed is for everyone (except binary photos, left to the website).
-    if (tool.path.startsWith('/public/')) return !tool.path.endsWith('/photo');
+    // The club's public profile feed is for everyone (the binary photo is left to the website).
+    if (tool.path.startsWith('/public/')) return tool.path === '/public/profiles';
     if (t.kind === 'member') return portal;
     if (portal || !actor) return false;
     const modules = meta?.modules ?? (MODULES.includes(tool.tag as Module) ? [tool.tag as Module] : []);
@@ -159,6 +160,8 @@ async function callTool(app: FastifyInstance, req: FastifyRequest, tool: Tool, a
     url: `/api/v1${url}${qs ? `?${qs}` : ''}`,
     remoteAddress: req.ip,
     headers: {
+      // The club behind this host (managed hosting picks the club by host name).
+      ...(req.headers.host ? { host: req.headers.host } : {}),
       authorization: req.headers.authorization!,
       [INTERNAL_HEADER]: internalSecret,
       // The agent's own key makes a retried tool call replay the first answer (no double booking).

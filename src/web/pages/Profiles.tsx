@@ -23,7 +23,9 @@ export function Profiles({ me }: { me: Me }) {
   const navigate = useNavigate();
   const status = (params.get('status') ?? 'waiting') as (typeof TABS)[number][0];
   const list = useQuery({ queryKey: ['profiles', status], queryFn: () => api<QueueItem[]>(`/profiles?status=${status}`) });
-  const back = () => navigate(`/mitglieder/profile${status === 'waiting' ? '' : `?status=${status}`}`);
+  const suffix = status === 'waiting' ? '' : `?status=${status}`;
+  const back = () => navigate(`/mitglieder/profile${suffix}`);
+  const open = (memberId: string) => navigate(`/mitglieder/profile/${memberId}${suffix}`);
   return (
     <div className="page">
       <PageHead title="Profile" intro={<>Was Mitglieder für die Website des Vereins über sich schreiben. Öffentlich wird ein Profil erst, wenn Ihr genau diese Fassung freigebt. Die Profilarten legst Du unter <Link to="/einstellungen/profile">Einstellungen → Profile</Link> fest.</>} />
@@ -42,7 +44,7 @@ export function Profiles({ me }: { me: Me }) {
               {list.data?.map((p) => {
                 const st = stateOf(p);
                 return (
-                  <tr key={p.memberId} data-href tabIndex={0} aria-selected={p.memberId === id} onClick={() => navigate(`/mitglieder/profile/${p.memberId}${status === 'waiting' ? '' : `?status=${status}`}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/mitglieder/profile/${p.memberId}`)}>
+                  <tr key={p.memberId} data-href tabIndex={0} aria-selected={p.memberId === id} onClick={() => open(p.memberId)} onKeyDown={(e) => e.key === 'Enter' && open(p.memberId)}>
                     <td><span className="name">{p.memberName}</span> <span className="meta">Nr. {p.membershipNumber}</span></td>
                     <td className="hide-sm">{p.typeLabel ?? '—'}</td>
                     <td><span className="profile-state" data-s={st.s}>{st.text}</span></td>
@@ -74,7 +76,8 @@ function ProfileSheet({ memberId, canWrite, onClose }: { memberId: string | null
       await Promise.all([qc.invalidateQueries({ queryKey: ['profiles'] }), qc.invalidateQueries({ queryKey: ['member-profile', memberId] })]);
     } catch (err) {
       setError(err instanceof ApiError ? [err.problem.title, err.problem.detail].filter(Boolean).join(' ') : 'Das hat nicht geklappt.');
-      if (err instanceof ApiError && err.problem.status === 409) void qc.invalidateQueries({ queryKey: ['member-profile', memberId] });
+      // Changed meanwhile: show the new version (and the queue) before anyone approves again.
+      if (err instanceof ApiError && err.problem.status === 409) await Promise.all([qc.invalidateQueries({ queryKey: ['member-profile', memberId] }), qc.invalidateQueries({ queryKey: ['profiles'] })]);
     } finally {
       setBusy(false);
     }

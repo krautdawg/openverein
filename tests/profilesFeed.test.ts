@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
 import { issueLoginCode } from '../src/server/routes/portal.ts';
-import { client, reset, setupClub, testApp } from './helpers.ts';
+import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 /** Change public-profiles, slice 2: the board's approval and the public feed. */
 config.filesDir = await mkdtemp(join(tmpdir(), 'ov-profiles-feed-'));
@@ -12,10 +12,12 @@ const ctx = await testApp();
 afterAll(() => ctx.close());
 
 let admin: ReturnType<typeof client>;
+let adminCookie: string;
 let org: string;
 beforeEach(async () => {
   await reset(ctx.db);
-  admin = client(ctx.app, { cookie: (await setupClub(ctx.app)).cookie });
+  adminCookie = (await setupClub(ctx.app)).cookie;
+  admin = client(ctx.app, { cookie: adminCookie });
   org = (await ctx.db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
   expect((await admin.put('/profile-types', { types: [{ key: 'enthusiast', label: 'KI-Enthusiast' }, { key: 'profi', label: 'KI-Profi' }] })).status).toBe(200);
 });
@@ -117,5 +119,51 @@ describe('approval and public feed', () => {
     const names = (r.json().result.tools as { name: string }[]).map((t) => t.name);
     expect(names).toContain('getPublicProfiles');
     expect(names).not.toContain('getPublicProfilesIdPhoto');
+  });
+
+  it('review fixes: board routes club-wide, photo of exactly the public version, types locked against approval', async () => {
+    const m = await member('fix@example.org');
+    await m.save(full);
+    // A grant limited to a group neither sees nor approves the club's profiles, nor sets the club's types.
+    const g = (await admin.post('/groups', { name: 'Tennis', shortCode: 'TEN', kind: 'division' })).body.id;
+    const scoped = client(ctx.app, { cookie: await userWithRole(ctx.app, adminCookie, 'Admin', [g], 'scoped@example.org') });
+    expect((await scoped.get('/profiles')).status).toBe(403);
+    expect((await scoped.get(`/members/${m.id}/profile`)).status).toBe(403);
+    expect((await scoped.put('/profile-types', { types: [] })).status).toBe(403);
+    // An old photo address never serves another photo.
+    await ctx.app.inject({ method: 'POST', url: `/api/v1/portal/profiles/${m.id}/photo`, headers: { cookie: m.pc, 'content-type': 'application/octet-stream', 'x-file-type': 'image/jpeg' }, payload: JPEG });
+    await admin.post(`/persons/${m.personId}/consents`, { purpose: 'photos', source: 'paper' });
+    await m.approve();
+    const url = (await feed()).json().profiles[0].photoUrl.replace(config.publicUrl, '') as string;
+    expect((await ctx.app.inject({ url })).statusCode).toBe(200);
+    expect((await ctx.app.inject({ url: url.replace(/v=[^&]+/, 'v=0000000000000000') })).statusCode).toBe(404);
+    // CORS also on errors, so a website sees the status.
+    expect((await ctx.app.inject({ url: url.replace(/v=[^&]+/, 'v=0000000000000000') })).headers['access-control-allow-origin']).toBe('*');
+    // A type that went away cannot be approved.
+    await m.save({ ...full, bio: 'Neue Fassung.' });
+    await ctx.db.updateTable('organization').set({ profile_types: JSON.stringify([{ key: 'enthusiast', label: 'KI-Enthusiast' }]) as never }).execute();
+    expect((await m.approve()).status).toBe(409);
+  });
+
+  it('review fix: the feed tool works under managed hosting (the host goes along)', async () => {
+    await reset(ctx.db);
+    config.multiTenant = true;
+    config.operatorToken = 'o'.repeat(40);
+    try {
+      const t = await ctx.app.inject({ method: 'POST', url: '/api/v1/operator/tenants', headers: { 'x-operator-token': config.operatorToken }, payload: { clubName: 'TSV A', hostname: 'verein-a.example.org', adminName: 'Ada Admin', adminEmail: 'admin@verein-a.example.org' } });
+      const a = t.json().id as string;
+      const userId = (await ctx.db.selectFrom('app_user').select('id').where('organization_id', '=', a).executeTakeFirstOrThrow()).id;
+      const { newToken } = await import('../src/server/agents/tokens.ts');
+      const { sha256 } = await import('../src/server/auth/session.ts');
+      const { prefix, token } = newToken('admin');
+      await ctx.db.insertInto('personal_token').values({ organization_id: a, kind: 'admin', user_id: userId, name: 'Agent', prefix, token_hash: sha256(token), access: 'read', expires_at: new Date(Date.now() + 86_400_000) }).execute();
+      const r = await ctx.app.inject({ method: 'POST', url: '/mcp', headers: { host: 'verein-a.example.org', 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}` }, payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'operation_aufrufen', arguments: { operation: 'getPublicProfiles', eingabe: {} } } } });
+      const res = r.json().result;
+      expect(res.isError, res.content[0].text).toBeFalsy();
+      expect(JSON.parse(res.content[0].text)).toEqual({ profiles: [] });
+    } finally {
+      config.multiTenant = false;
+      config.operatorToken = '';
+    }
   });
 });

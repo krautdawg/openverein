@@ -8,7 +8,8 @@ test('profiles: the board approves a profile and it appears in the public feed',
   // The club offers a profile type; a member writes a profile with it in the portal.
   await page.goto('/einstellungen/profile');
   await page.getByRole('button', { name: 'Art hinzufügen' }).click();
-  await page.getByLabel('Bezeichnung').last().fill('Trainer:in');
+  // Typed key by key: the row must keep focus while its key follows the label (Codex review).
+  await page.getByLabel('Bezeichnung').last().pressSequentially('Trainer:in');
   await page.getByRole('button', { name: 'Speichern' }).click();
   await expect(page.getByText('Gespeichert.')).toBeVisible();
   const email = `freigabe-${Date.now()}@example.org`;

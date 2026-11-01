@@ -5,7 +5,10 @@ import type { Me } from '../../../shared/auth.ts';
 import { api, ApiError } from '../../lib/api.ts';
 import { useTitle } from '../../lib/useTitle.ts';
 
-type Type = { key: string; label: string; fresh?: boolean };
+type Type = { key: string; label: string; fresh?: boolean; rowId?: string };
+let nextRow = 0;
+/** A stable id per row for React (the key changes while a new label is typed). */
+const rowIdOf = (t: Type) => t.rowId ?? `saved-${t.key}`;
 
 /** A key from a label: lower case, umlauts spelled out, the rest a dash (fixed once saved). */
 const keyOf = (label: string) => label.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'art';
@@ -49,7 +52,7 @@ export function ProfileTypes({ me }: { me: Me }) {
         {rows.length === 0 && <p className="muted">Noch keine Profilarten: Profile bleiben dann alle nicht öffentlich.</p>}
         <ul className="profile-types-list">
           {rows.map((t, i) => (
-            <li key={t.key + i}>
+            <li key={rowIdOf(t)}>
               <label className="sr-only" htmlFor={`type-${i}`}>Bezeichnung</label>
               <input id={`type-${i}`} className="input" value={t.label} disabled={!canWrite} maxLength={60} onChange={(e) => setDraft(rows.map((x, j) => (j === i ? { ...x, label: e.target.value, key: x.fresh ? keyOf(e.target.value) : x.key } : x)))} />
               <span className="meta">{t.key}</span>
@@ -57,7 +60,7 @@ export function ProfileTypes({ me }: { me: Me }) {
             </li>
           ))}
         </ul>
-        {canWrite && rows.length < 20 && <button type="button" className="btn btn-ghost" onClick={() => setDraft([...rows, { key: `art-${rows.length + 1}`, label: '', fresh: true }])}><Plus size={16} aria-hidden /> Art hinzufügen</button>}
+        {canWrite && rows.length < 20 && <button type="button" className="btn btn-ghost" onClick={() => setDraft([...rows, { key: `art-${rows.length + 1}`, label: '', fresh: true, rowId: `new-${nextRow++}` }])}><Plus size={16} aria-hidden /> Art hinzufügen</button>}
         {removed.length > 0 && <p className="alert alert-warn">Profile der Art {removed.map((t) => `„${t.label}“`).join(', ')} sind nach dem Speichern nicht mehr öffentlich.</p>}
         {done && <p className="profile-saved" role="status">Gespeichert.</p>}
         {canWrite && <div className="actions-row" style={{ marginTop: 0 }}><button className="btn btn-primary">Speichern</button></div>}
