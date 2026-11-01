@@ -1,9 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
 import type { Me } from '../../shared/auth.ts';
 import { AuthLayout } from '../components/AuthLayout.tsx';
-import { takeReturn } from '../components/ConnectAgent.tsx';
 import { Field } from '../components/Field.tsx';
 import { api, ApiError } from '../lib/api.ts';
 import { useInstanceConfig, useSetMe } from '../lib/session.tsx';
@@ -12,17 +10,18 @@ import { useTitle } from '../lib/useTitle.ts';
 export function Login() {
   useTitle('Anmelden');
   const setMe = useSetMe();
-  const navigate = useNavigate();
   const { data: cfg } = useInstanceConfig();
   const [busy, setBusy] = useState(false);
   // Back from the club's identity provider: a ticket for the code step, or the reason it failed (in the fragment, not the URL).
   const hash = new URLSearchParams(window.location.hash.slice(1));
   const [ticket, setTicket] = useState<string | undefined>(hash.get('ticket') ?? undefined);
   const [error, setError] = useState<string | undefined>(OIDC_ERRORS[hash.get('fehler') ?? '']);
+  // A pending consent's continuation id goes along through the identity provider.
+  const weiter = new URLSearchParams(window.location.search).get('weiter');
   const oidc = useQuery({ queryKey: ['oidc'], queryFn: () => api<{ enabled: boolean; label: string }>('/auth/oidc') });
   // The fragment is read once; it should not come back on reload.
   useEffect(() => {
-    if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+    if (window.location.hash) history.replaceState(null, '', window.location.pathname + window.location.search);
   }, []);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -32,8 +31,8 @@ export function Login() {
     setError(undefined);
     try {
       if (ticket) {
+        // The signed-in app takes over on /anmelden and goes on from there (AfterSignIn).
         setMe(await api<Me>('/auth/login/totp', { method: 'POST', body: { ticket, code: String(form.get('code') ?? '').trim().toLowerCase() } }));
-        navigate(takeReturn() ?? '/');
         return;
       }
       const r = await api<Me | { totpRequired: true; ticket: string }>('/auth/login', { method: 'POST', body: { email: form.get('email'), password: form.get('password') } });
@@ -42,7 +41,6 @@ export function Login() {
         return;
       }
       setMe(r);
-      navigate(takeReturn() ?? '/');
     } catch (err) {
       // An expired ticket means: start again with the password.
       if (err instanceof ApiError && err.problem.type.endsWith('/ticket-expired')) setTicket(undefined);
@@ -85,7 +83,7 @@ export function Login() {
       {oidc.data?.enabled && (
         <>
           <p className="meta auth-or">oder</p>
-          <a className="btn btn-block" href="/api/v1/auth/oidc/start">Mit {oidc.data.label} anmelden</a>
+          <a className="btn btn-block" href={`/api/v1/auth/oidc/start${weiter ? `?weiter=${encodeURIComponent(weiter)}` : ''}`}>Mit {oidc.data.label} anmelden</a>
         </>
       )}
     </AuthLayout>
