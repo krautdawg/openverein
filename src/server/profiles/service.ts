@@ -7,8 +7,11 @@ import type { ProfileDto, profileInput } from '../../shared/profiles.ts';
 /** Memberships whose profile can be public. */
 const CURRENT = ['active', 'resigned'] as const;
 
+/** The club's types; malformed entries (hand-edited data) are left out rather than breaking a page. */
 export async function profileTypes(db: Db, organizationId: string) {
-  return (await db.selectFrom('organization').select('profile_types').where('id', '=', organizationId).executeTakeFirstOrThrow()).profile_types;
+  const raw = (await db.selectFrom('organization').select('profile_types').where('id', '=', organizationId).executeTakeFirstOrThrow()).profile_types as unknown;
+  const list = Array.isArray(raw) ? raw : [];
+  return list.filter((t): t is { key: string; label: string } => !!t && typeof t.key === 'string' && /^[a-z0-9_-]{1,40}$/.test(t.key) && t.key !== 'none' && typeof t.label === 'string' && !!t.label).slice(0, 20);
 }
 
 export async function hasPhotoConsent(db: Db, personId: string) {
@@ -77,7 +80,9 @@ export async function saveProfile(tx: Db, organizationId: string, memberId: stri
 /** Sets or removes the photo (a member file); a new photo is a new version for the board. Returns the old file to delete. */
 export async function setPhoto(tx: Db, organizationId: string, memberId: string, fileId: string | null) {
   const p = await lockedProfile(tx, organizationId, memberId);
-  await tx.updateTable('member_profile').set({ photo_file_id: fileId, updated_at: new Date(), ...(fileId ? { approved_at: null, approved_by: null } : {}) }).where('id', '=', p.id).execute();
+  // Any photo change, removal included, is a new version.
+  const changed = p.photo_file_id !== fileId;
+  await tx.updateTable('member_profile').set({ photo_file_id: fileId, updated_at: new Date(), ...(changed ? { approved_at: null, approved_by: null } : {}) }).where('id', '=', p.id).execute();
   return p.photo_file_id;
 }
 

@@ -31,7 +31,22 @@ create table member_profile_link (
   id uuid primary key default uuidv7(),
   profile_id uuid not null references member_profile on delete cascade,
   label text not null check (length(label) between 1 and 60),
-  url text not null check (length(url) <= 500 and url ~ '^https?://'),
+  url text not null check (length(url) <= 500 and url ~* '^https?://'),
   position int not null default 0
 );
 create index member_profile_link_profile on member_profile_link (profile_id, position);
+
+-- One club throughout: the member belongs to the profile's club, and the photo is that member's photo file.
+create function ov_member_profile_owner() returns trigger language plpgsql as $$
+begin
+  if not exists (select 1 from member where id = new.member_id and organization_id = new.organization_id) then
+    raise exception 'member_profile: member % is not in organization %', new.member_id, new.organization_id using errcode = '23514';
+  end if;
+  if new.photo_file_id is not null and not exists (
+    select 1 from file where id = new.photo_file_id and organization_id = new.organization_id and member_id = new.member_id and purpose = 'photo'
+      and mime_type in ('image/jpeg', 'image/png', 'image/webp')) then
+    raise exception 'member_profile: photo % is not a photo of member %', new.photo_file_id, new.member_id using errcode = '23514';
+  end if;
+  return new;
+end $$;
+create trigger member_profile_owner before insert or update of member_id, organization_id, photo_file_id on member_profile for each row execute function ov_member_profile_owner();
