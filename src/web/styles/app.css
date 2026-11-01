@@ -792,3 +792,22 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 .demo-copy-status { margin: var(--s-1) 0 0; font-size: var(--text-xs); color: var(--ink-2); min-height: 0; }
 .demo-copy-status:empty { display: none; }
 .demo-copy pre:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* Portal profile (public-profiles): status as a court line in its state colour, photo beside its actions. */
+.profile-status { display: flex; align-items: center; gap: var(--s-2); margin: var(--s-3) 0 var(--s-5); font-size: var(--text-sm); font-weight: 600; color: var(--ink-2); }
+.profile-status::before { content: ''; width: 14px; height: 2px; background: currentColor; flex: none; }
+.profile-status[data-s='ok'] { color: var(--ok); }
+.profile-status[data-s='warn'] { color: var(--warn); }
+.profile-photo h2 { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; margin: 0 0 var(--s-3); }
+.profile-photo-row { display: flex; gap: var(--s-4); align-items: flex-start; }
+.profile-photo-row img, .profile-photo-empty { width: 96px; height: 96px; border-radius: var(--radius); object-fit: cover; flex: none; background: var(--surface-sunk); border: 1px solid var(--line); }
+.profile-photo-row .btn { margin: 0 var(--s-2) var(--s-2) 0; }
+.profile-photo-row label.btn { cursor: pointer; }
+.profile-photo-row label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.profile-form { margin-top: var(--s-5); }
+.profile-links { border: 0; padding: 0; margin: 0; display: grid; gap: var(--s-2); }
+.profile-links legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--s-2); padding: 0; }
+.profile-link-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: var(--s-2); align-items: end; }
+.profile-saved { color: var(--ok); font-weight: 600; font-size: var(--text-sm); margin: 0; }
+@media (max-width: 560px) { .profile-link-row { grid-template-columns: 1fr auto; } .profile-link-row > .field:first-child { grid-column: 1 / -1; } }
+.profile-links > .btn { justify-self: start; }

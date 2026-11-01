@@ -81,6 +81,8 @@ export async function anonymise(tx: Db, organizationId: string, personId: string
   if (members.length) await tx.deleteFrom('honour').where('member_id', 'in', members).execute();
   if (members.length) {
     await tx.updateTable('member').set({ exit_reason: null }).where('id', 'in', members).execute();
+    // The profile goes first (it points at the photo, a member file deleted below).
+    await tx.deleteFrom('member_profile').where('member_id', 'in', members).execute();
     // Deletable member files go; vouchers in retention and files on hold stay.
     const heads = await tx.selectFrom('file').select('id').where('member_id', 'in', members).where('superseded_at', 'is', null).execute();
     for (const h of heads) {

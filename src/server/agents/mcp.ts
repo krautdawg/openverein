@@ -37,7 +37,7 @@ interface OpenApiOp { operationId?: string; summary?: string; tags?: string[]; s
 export interface Tool { name: string; method: string; path: string; description: string; tag: string | null; inputSchema: { type: 'object'; properties: Record<string, object>; required: string[] }; pathParams: string[]; queryParams: string[]; hasBody: boolean }
 
 // Not for agents: sign-in and token management (people only), the operator API, uploads of raw bytes.
-const EXCLUDED = /^\/(auth\/(?!me$)|setup$|operator\/|personal-tokens|oauth\/|portal\/(auth|tokens|oauth)|collection-runs\/\{[^}]+\}\/files\/|files(\/\{[^}]+\}\/versions)?$|receipts\/files$|portal\/expenses\/files$|unsubscribe\/|forms\/|applications\/public)/;
+const EXCLUDED = /^\/(auth\/(?!me$)|setup$|operator\/|personal-tokens|oauth\/|portal\/(auth|tokens|oauth)|collection-runs\/\{[^}]+\}\/files\/|files(\/\{[^}]+\}\/versions)?$|receipts\/files$|portal\/expenses\/files$|portal\/profiles\/\{[^}]+\}\/photo$|unsubscribe\/|forms\/|applications\/public)/;
 
 /** All operations of the OpenAPI document as tools (computed once). */
 export function toolsFrom(doc: { paths: Record<string, Record<string, OpenApiOp>> }): Tool[] {

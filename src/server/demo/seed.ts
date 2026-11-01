@@ -146,6 +146,23 @@ export async function seedDemo(db: Db, opts: { reset?: boolean; members?: number
     await call('POST', '/events', { calendarId: board, title: 'Vorstandssitzung', location: 'Vereinsheim', startsAt: `${month}-10T19:30`, endsAt: `${month}-10T21:30`, recurrence: { freq: 'MONTHLY' } });
     await call('POST', '/events', { calendarId: training, title: 'Erste-Hilfe-Kurs', location: 'Vereinsheim', startsAt: `${month}-27T10:00`, endsAt: `${month}-27T16:00`, maxParticipants: 12, priceCents: 1500 });
 
+    // Profiles for the club's website: two types, four profiles (two approved and public, one waiting, one hidden).
+    const orgId = (await db.selectFrom('organization').select('id').executeTakeFirstOrThrow()).id;
+    await db.updateTable('organization').set({ profile_types: JSON.stringify([{ key: 'trainer', label: 'Trainer:in' }, { key: 'ehrenamt', label: 'Ehrenamt' }]) as never }).where('id', '=', orgId).execute();
+    const admin = (await db.selectFrom('app_user').select('id').where('organization_id', '=', orgId).executeTakeFirstOrThrow()).id;
+    const profiles = [
+      { type: 'trainer', bio: 'Trainiert seit zwölf Jahren die D-Jugend. Spielt selbst noch donnerstags in der Altherren.', place: 'Lindenhof', org: null, approved: true, visibility: 'public' as const, links: [{ label: 'Trainingszeiten', url: 'https://sv-lindenhof.example/fussball' }] },
+      { type: 'ehrenamt', bio: 'Kümmert sich um das Vereinsheim und den Grill beim Sommerfest.', place: 'Lindenhof', org: null, approved: true, visibility: 'board' as const, links: [] },
+      { type: 'trainer', bio: 'Neue Übungsleiterin für Turnen ab 60, mit Lizenz C Breitensport.', place: 'Nachbarort', org: 'Physiopraxis am Markt', approved: false, visibility: 'members' as const, links: [{ label: 'Praxis', url: 'https://physio-am-markt.example' }] },
+      { type: 'trainer', bio: 'Pausiert gerade.', place: null, org: null, approved: true, visibility: 'board' as const, links: [], hidden: true },
+    ];
+    const withEmail = await db.selectFrom('member').innerJoin('person', 'person.id', 'member.person_id').select(['member.id', 'person.first_name', 'person.last_name']).where('member.organization_id', '=', orgId).where('member.status', '=', 'active').where('person.email', 'is not', null).orderBy('member.membership_number').limit(profiles.length).execute();
+    for (const [i, m] of withEmail.entries()) {
+      const p = profiles[i]!;
+      const row = await db.insertInto('member_profile').values({ organization_id: orgId, member_id: m.id, display_name: `${m.first_name} ${m.last_name}`, bio: p.bio, place: p.place, organisation: p.org, type_key: p.type, contact_visibility: p.visibility, hidden: !!p.hidden, approved_at: p.approved ? new Date() : null, approved_by: p.approved ? admin : null }).returning('id').executeTakeFirstOrThrow();
+      for (const [j, l] of p.links.entries()) await db.insertInto('member_profile_link').values({ profile_id: row.id, label: l.label, url: l.url, position: j }).execute();
+    }
+
     await call('POST', '/folders', { name: 'Satzung und Ordnungen', shareWithMembers: true });
     await call('POST', '/folders', { name: 'Protokolle', groupIds: [vorstand] });
     await call('POST', '/application-forms', { slug: 'mitglied-werden', title: 'Mitglied werden', intro: 'Schön, dass Du zum SV Lindenhof möchtest. Dies ist eine Demo: Anträge landen im Posteingang der Demo und werden beim Zurücksetzen gelöscht.', groupIds: [fussball, turnen, tennis], feePlanIds: [adults, youth], consentText: 'Ich erkenne die Satzung an und willige in die Verarbeitung meiner Daten zur Mitgliederverwaltung ein.' });
