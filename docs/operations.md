@@ -93,3 +93,25 @@ As operator you process the clubs' data on their behalf: conclude a data-process
    The answer counts the deleted rows per table. Issued invoices, the journal and receipts are protected by database triggers. The deletion therefore runs with triggers switched off, which needs a superuser database connection, as in the supplied Docker setup. Before committing, it checks every foreign key: if any row of another club still pointed into the deleted one, nothing is deleted. The club's files go with the next file sweep (within a day). Its rows stay in your backups until they expire (AVV section 6.2). The club's own log is deleted with it. The deletion and every export are recorded in the append-only table `operator_event`, which outlives the club. The deletion is also written to the erasure log, so if you restore an older backup that still contains the club, OpenVerein deletes it again at start-up.
 
 Per-club backups are not included yet: `ovctl backup` backs up the whole installation.
+
+## KI Klub Werder: Profile übernehmen
+
+Die Profile des KI Klub (`klub_profil`, `klub_profil_link`, Fotos als `bytea`) übernimmt ein Skript. Es ordnet sie den Mitgliedern über die E-Mail-Adresse zu und schreibt erst mit `--confirm`.
+
+```bash
+# erst ein Probelauf gegen eine Kopie der KI-Klub-Datenbank (nie gegen die laufende)
+npm run import:kiklub-profiles -- --source postgres://…/kiklub_kopie [--schema public] [--club <Hostname oder ID>]
+# dann schreiben
+npm run import:kiklub-profiles -- --source postgres://…/kiklub_kopie --confirm
+```
+
+- **Profilarten:** KI-Enthusiast und KI-Profi kommen dazu, falls es sie noch nicht gibt.
+- **Freigaben:** die Freigaben aus dem KI Klub bleiben.
+- **Kontakt:** die Sichtbarkeit wird übersetzt: Vorstand, Mitglieder, öffentlich.
+- **LinkedIn:** das Feld wird zum ersten Link.
+- **Übersprungen** werden:
+  - Profile ohne passendes Mitglied
+  - Adressen mit mehreren Mitgliedschaften
+  - ungültige Links
+  - Fotos, die kein JPG, PNG oder WebP sind oder größer als 2 MB
+- **Fotos:** öffentlich erst, wenn die Person in OpenVerein in „Fotos auf Website und in sozialen Medien“ eingewilligt hat. Das Skript nennt die Zahl der Fotos ohne Einwilligung.
