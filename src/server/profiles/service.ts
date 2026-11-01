@@ -58,6 +58,8 @@ const fingerprint = (v: unknown) => createHash('sha256').update(JSON.stringify(v
  * organisation, links, type) clears it, so the profile goes back to the board. Hiding and the contact switch do not.
  */
 export async function saveProfile(tx: Db, organizationId: string, memberId: string, b: z.infer<typeof profileInput>) {
+  // Lock order: club row, then profile; a type removal cannot slip between this check and the write.
+  await tx.selectFrom('organization').select('id').where('id', '=', organizationId).forShare().execute();
   const types = await profileTypes(tx, organizationId);
   if (b.typeKey !== 'none' && !types.some((t) => t.key === b.typeKey)) throw new Problem(400, 'validation', 'Die Eingaben sind nicht gültig.', undefined, { errors: [{ field: 'typeKey', message: 'Diese Profilart gibt es im Verein nicht.' }] });
   const p = await lockedProfile(tx, organizationId, memberId);

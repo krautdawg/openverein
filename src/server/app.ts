@@ -3,6 +3,7 @@ import { registerAgentTokens } from './agents/tokens.ts';
 import { registerMcp, routeAgentMeta } from './agents/mcp.ts';
 import { registerOAuth } from './agents/oauth.ts';
 import { agentRoutes } from './routes/agents.ts';
+import { profileRoutes } from './routes/profiles.ts';
 import { demoResetting } from './demo/reset.ts';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
@@ -157,6 +158,7 @@ export async function buildApp(db: Db, opts: { logger?: boolean; serveWeb?: bool
       await api.register(groupRoutes);
       await api.register(accessRoutes);
       await api.register(agentRoutes);
+      await api.register(profileRoutes);
       await api.register(feeRoutes);
       await api.register(invoiceRoutes);
       await api.register(sepaRoutes);

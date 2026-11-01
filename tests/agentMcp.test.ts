@@ -72,7 +72,8 @@ describe('MCP', () => {
     const member = await names(await memberToken('mia@example.org'));
     expect(member).toContain('getPortalMe');
     expect(member).toContain('getPortalInvoices');
-    expect(member.every((n) => n.startsWith('getPortal'))).toBe(true);
+    // The portal, plus the club's public feed (for everyone).
+    expect(member.every((n) => n.startsWith('getPortal') || n.startsWith('getPublic'))).toBe(true);
     expect(member).not.toContain('postPortalTokens');
     // A member gets the operations as tools; a full access gets the three tools to search, describe and call them.
     expect(meta(await listed(await memberToken('mia@example.org')))).toBe(false);
