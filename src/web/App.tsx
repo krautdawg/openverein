@@ -51,6 +51,7 @@ import { Roles } from './pages/settings/Roles.tsx';
 import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
 import { Users } from './pages/settings/Users.tsx';
 import './lib/search.ts';
+import { DemoStart } from './pages/DemoStart.tsx';
 import { AfterSignIn, ConnectChooser, ConnectConsent } from './components/ConnectAgent.tsx';
 import { StepUpPrompt } from './components/StepUp.tsx';
 
@@ -85,8 +86,11 @@ function AdminApp() {
     );
   }
   if (!me.data) {
+    // The public demo greets visitors with its ways in; any other instance goes straight to the sign-in.
+    if (cfg.isPending) return null;
     return (
       <Routes>
+        {cfg.data?.demo && <Route path="/" element={<DemoStart resetHours={cfg.data.demoResetHours} />} />}
         <Route path="/anmelden" element={<Login />} />
         <Route path="/einladung" element={<AcceptInvite />} />
         <Route path="/abmelden" element={<Unsubscribe />} />
