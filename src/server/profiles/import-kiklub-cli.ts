@@ -1,21 +1,22 @@
-// Imports KI Klub Werder profiles into this instance (change public-profiles, slice 3). Dry run unless --confirm.
+// Imports KI Klub Werder profiles into this instance once (change public-profiles, slice 3). A dry run shows every
+// profile and a code; only `--confirm <code>` writes, and only if nothing changed since.
 //
-//   npm run import:kiklub-profiles -- --source postgres://…/kiklub_copy [--schema public] [--club <hostname or id>]
-//   npm run import:kiklub-profiles -- --source … --confirm
+//   KIKLUB_DATABASE_URL=postgres://…/kiklub_copy npm run import:kiklub-profiles -- [--schema public] [--club <host or id>]
+//   KIKLUB_DATABASE_URL=… npm run import:kiklub-profiles -- --confirm <code>
 //
-// Run it against a copy of the KI Klub database first. Matching is by member e-mail address.
+// Run it against a copy of the KI Klub database, on an instance whose migrations are applied (it applies none).
 import { parseArgs } from 'node:util';
 import { config } from '../config.ts';
 import { createDb } from '../db.ts';
-import { migrate } from '../migrate.ts';
-import { applyImport, planImport, readKiKlub } from './importKiKlub.ts';
+import { applyImport, planDigest, planImport, readKiKlub } from './importKiKlub.ts';
 
-const { values } = parseArgs({ options: { source: { type: 'string' }, schema: { type: 'string', default: 'public' }, club: { type: 'string' }, confirm: { type: 'boolean', default: false } } });
-if (!values.source) {
-  console.error('--source <Postgres-Adresse der KI-Klub-Datenbank> fehlt.');
+const { values } = parseArgs({ options: { source: { type: 'string' }, schema: { type: 'string', default: 'public' }, club: { type: 'string' }, confirm: { type: 'string' } } });
+// The source address from the environment (it holds a password; the command line ends up in shell history).
+const source = process.env.KIKLUB_DATABASE_URL ?? values.source;
+if (!source) {
+  console.error('KIKLUB_DATABASE_URL (Postgres-Adresse der KI-Klub-Kopie) fehlt.');
   process.exit(2);
 }
-await migrate(config.databaseUrl);
 const db = createDb(config.databaseUrl);
 try {
   let q = db.selectFrom('organization').select(['id', 'name', 'hostname']);
@@ -23,16 +24,20 @@ try {
   const orgs = await q.execute();
   if (orgs.length !== 1) throw new Error(values.club ? `Kein Verein „${values.club}“.` : 'Mehrere Vereine: bitte --club <Hostname oder ID> angeben.');
   const org = orgs[0]!;
-  const source = await readKiKlub(values.source, values.schema);
-  const result = values.confirm ? await applyImport(db, org.id, source) : { plan: await planImport(db, org.id, source), withoutConsent: 0 };
-  const plan = result.plan;
-  const count = (a: string) => plan.filter((r) => r.action === a).length;
-  console.log(`${values.confirm ? 'Importiert' : 'Probelauf (nichts geschrieben)'} für ${org.name}: ${count('create')} neu, ${count('update')} aktualisiert, ${count('skip')} übersprungen.`);
-  for (const r of plan) {
-    if (r.action === 'skip' || r.notes.length) console.log(`  ${r.action.padEnd(6)} ${r.email}${r.reason ? `: ${r.reason}` : ''}${r.notes.length ? ` (${r.notes.join('; ')})` : ''}`);
+  const rows = await readKiKlub(source, values.schema);
+  if (values.confirm) {
+    const { plan, withoutConsent } = await applyImport(db, org.id, rows, values.confirm);
+    console.log(`Importiert für ${org.name}: ${plan.filter((r) => r.action === 'create').length} Profile.`);
+    if (withoutConsent) console.log(`${withoutConsent} Foto(s) sind gespeichert, aber erst öffentlich, wenn die Person in OpenVerein in „Fotos“ eingewilligt hat.`);
+  } else {
+    const plan = await planImport(db, org.id, rows);
+    console.log(`Probelauf für ${org.name} (nichts geschrieben):`);
+    for (const r of plan) {
+      const what = r.action === 'create' ? `→ ${r.memberName}: ${r.typeKey}${r.approved ? ', freigegeben' : ', ohne Freigabe'}, Kontakt ${r.visibility}, ${r.links!.length} Link(s)${r.photo ? ', Foto' : ''}` : `übersprungen: ${r.reason}`;
+      console.log(`  ${r.email} ${what}${r.notes.length ? ` (${r.notes.join('; ')})` : ''}`);
+    }
+    console.log(`${plan.filter((r) => r.action === 'create').length} neu, ${plan.filter((r) => r.action === 'skip').length} übersprungen. Schreiben mit: --confirm ${planDigest(plan, rows)}`);
   }
-  if (!values.confirm) console.log('Mit --confirm schreiben.');
-  else if (result.withoutConsent) console.log(`${result.withoutConsent} Foto(s) sind gespeichert, aber erst öffentlich, wenn die Person in OpenVerein in „Fotos“ eingewilligt hat.`);
 } catch (err) {
   console.error((err as Error).message);
   process.exitCode = 1;

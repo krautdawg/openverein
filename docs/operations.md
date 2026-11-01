@@ -96,22 +96,26 @@ Per-club backups are not included yet: `ovctl backup` backs up the whole install
 
 ## KI Klub Werder: Profile übernehmen
 
-Die Profile des KI Klub (`klub_profil`, `klub_profil_link`, Fotos als `bytea`) übernimmt ein Skript. Es ordnet sie den Mitgliedern über die E-Mail-Adresse zu und schreibt erst mit `--confirm`.
+Die Profile des KI Klub (`klub_profil`, `klub_profil_link`, Fotos als `bytea`) übernimmt ein Skript, einmalig. Es ordnet sie den Mitgliedern über die E-Mail-Adresse zu. Der Probelauf schreibt nichts, zeigt jedes Profil und endet mit einem Code; nur `--confirm <Code>` schreibt, und nur wenn sich seither nichts geändert hat.
 
 ```bash
 # erst ein Probelauf gegen eine Kopie der KI-Klub-Datenbank (nie gegen die laufende)
-npm run import:kiklub-profiles -- --source postgres://…/kiklub_kopie [--schema public] [--club <Hostname oder ID>]
-# dann schreiben
-npm run import:kiklub-profiles -- --source postgres://…/kiklub_kopie --confirm
+KIKLUB_DATABASE_URL=postgres://…/kiklub_kopie npm run import:kiklub-profiles -- [--schema public] [--club <Hostname oder ID>]
+# dann schreiben, mit dem Code aus dem Probelauf
+KIKLUB_DATABASE_URL=postgres://…/kiklub_kopie npm run import:kiklub-profiles -- --confirm <Code>
 ```
 
+Die Instanz muss migriert sein, das Skript wendet keine Migrationen an. Die Adresse kommt aus der Umgebung, nicht aus der Kommandozeile (sie enthält ein Passwort).
+
 - **Profilarten:** KI-Enthusiast und KI-Profi kommen dazu, falls es sie noch nicht gibt.
-- **Freigaben:** die Freigaben aus dem KI Klub bleiben.
-- **Kontakt:** die Sichtbarkeit wird übersetzt: Vorstand, Mitglieder, öffentlich.
+- **Freigaben:** bleiben nur, wenn das Profil im KI Klub auch öffentlich war (Modus, Freigabe und Status „aktiv“). Ruhende Mitglieder kommen ohne Freigabe.
+- **Kontakt:** Vorstand bleibt Vorstand, Mitglieder bleibt Mitglieder. „öffentlich“ wird zu Mitglieder, weil der KI Klub die Adresse nie öffentlich gezeigt hat.
 - **LinkedIn:** das Feld wird zum ersten Link.
 - **Übersprungen** werden:
+  - im KI Klub ausgetretene Mitglieder
   - Profile ohne passendes Mitglied
-  - Adressen mit mehreren Mitgliedschaften
-  - ungültige Links
-  - Fotos, die kein JPG, PNG oder WebP sind oder größer als 2 MB
+  - Adressen, die im Verein mehr als einer Person gehören (auch ehemaligen)
+  - Mitglieder, die in OpenVerein schon ein Profil haben (nichts wird überschrieben; ein zweiter Lauf importiert nichts mehr)
+  - ungültige Links und Fotos, die kein JPG, PNG oder WebP bis 2 MB sind
 - **Fotos:** öffentlich erst, wenn die Person in OpenVerein in „Fotos auf Website und in sozialen Medien“ eingewilligt hat. Das Skript nennt die Zahl der Fotos ohne Einwilligung.
+- **Protokoll:** jedes Profil und die Änderung der Profilarten stehen im Änderungsprotokoll.
