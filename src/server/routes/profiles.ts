@@ -7,7 +7,7 @@ import { audit } from '../audit.ts';
 import { requireActor } from '../auth/session.ts';
 import { getBlob } from '../files/store.ts';
 import { notFound, Problem } from '../http/problem.ts';
-import { profileOf, profileTypes } from '../profiles/service.ts';
+import { profileOf, profileTypes, stripPhotoMetadata } from '../profiles/service.ts';
 import { requireClubWide } from '../policy.ts';
 import { baseUrlOf, tenantForRequest } from '../tenant.ts';
 
@@ -228,6 +228,9 @@ export const profileRoutes: FastifyPluginAsyncZod = async (app) => {
     const etag = `"${f.sha256}"`;
     reply.headers({ ...publicHeaders, etag, 'content-type': f.type, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'", 'cross-origin-resource-policy': 'cross-origin' });
     if (req.headers['if-none-match'] === etag) return reply.status(304).send();
-    return reply.send(await getBlob(f.sha256));
+    // Stripped again on the way out: photos stored before uploads were cleaned carry their metadata.
+    const clean = stripPhotoMetadata(await getBlob(f.sha256), f.type);
+    if (!clean) throw notFound('Foto');
+    return reply.send(clean);
   });
 };

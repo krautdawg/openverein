@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
 import { issueLoginCode } from '../src/server/routes/portal.ts';
+import { getBlob, putBlob } from '../src/server/files/store.ts';
+import { stripPhotoMetadata } from '../src/server/profiles/service.ts';
+import { HOME, JPEG, JPEG_GPS, PNG_GPS, WEBP_GPS } from './photos.ts';
 import { client, reset, setupClub, testApp, userWithRole } from './helpers.ts';
 
 /** Change public-profiles, slice 2: the board's approval and the public feed. */
@@ -22,7 +25,6 @@ beforeEach(async () => {
   expect((await admin.put('/profile-types', { types: [{ key: 'enthusiast', label: 'KI-Enthusiast' }, { key: 'profi', label: 'KI-Profi' }] })).status).toBe(200);
 });
 
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 1)]);
 const feed = (headers: Record<string, string> = {}) => ctx.app.inject({ url: '/api/v1/public/profiles', headers });
 const full = { displayName: 'Petra P.', bio: 'Baut Agenten.', place: 'Werder', organisation: null, links: [{ label: 'LinkedIn', url: 'https://linkedin.com/in/petra' }], typeKey: 'profi', contactVisibility: 'board', hidden: false };
 
@@ -165,5 +167,40 @@ describe('approval and public feed', () => {
       config.multiTenant = false;
       config.operatorToken = '';
     }
+  });
+
+  it('never publishes camera metadata: stripped on upload, and on serving photos stored before', async () => {
+    const m = await member('gps@example.org');
+    await m.save(full);
+    await admin.post(`/persons/${m.personId}/consents`, { purpose: 'photos', source: 'paper' });
+    const served = async () => {
+      await m.approve();
+      const url = (await feed()).json().profiles[0].photoUrl.replace(config.publicUrl, '') as string;
+      const r = await ctx.app.inject({ url });
+      expect(r.statusCode).toBe(200);
+      return r.rawPayload;
+    };
+    for (const [bytes, type] of [[JPEG_GPS, 'image/jpeg'], [PNG_GPS, 'image/png'], [WEBP_GPS, 'image/webp']] as const) {
+      expect(bytes.includes(HOME)).toBe(true);
+      const up = await ctx.app.inject({ method: 'POST', url: `/api/v1/portal/profiles/${m.id}/photo`, headers: { cookie: m.pc, 'content-type': 'application/octet-stream', 'x-file-type': type }, payload: bytes });
+      expect(up.statusCode, up.body).toBe(200);
+      const f = await ctx.db.selectFrom('file').innerJoin('member_profile', 'member_profile.photo_file_id', 'file.id').select('file.sha256').executeTakeFirstOrThrow();
+      const stored = await getBlob(f.sha256);
+      expect(stored.includes(HOME), type).toBe(false);
+      expect((await served()).includes(HOME), type).toBe(false);
+    }
+    // JPEG keeps the orientation (6: turned right) so the photo stays upright; WebP no longer claims EXIF or XMP.
+    const jpeg = stripPhotoMetadata(JPEG_GPS, 'image/jpeg')!;
+    expect(jpeg.includes(Buffer.from([0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6]))).toBe(true);
+    expect(jpeg.subarray(-7).equals(JPEG_GPS.subarray(-7))).toBe(true);
+    expect(stripPhotoMetadata(WEBP_GPS, 'image/webp')![20]! & 0x0c).toBe(0);
+    expect(stripPhotoMetadata(JPEG, 'image/jpeg')).toEqual(JPEG);
+    // A file that doesn't parse is refused, not stored or served raw.
+    const broken = Buffer.concat([JPEG_GPS.subarray(0, 30)]);
+    expect((await ctx.app.inject({ method: 'POST', url: `/api/v1/portal/profiles/${m.id}/photo`, headers: { cookie: m.pc, 'content-type': 'application/octet-stream', 'x-file-type': 'image/jpeg' }, payload: broken })).statusCode).toBe(415);
+    // A photo stored before uploads were cleaned is cleaned on its way out.
+    const sha = await putBlob(JPEG_GPS);
+    await ctx.db.updateTable('file').set({ sha256: sha, size_bytes: JPEG_GPS.length, mime_type: 'image/jpeg' }).where('purpose', '=', 'photo').execute();
+    expect((await served()).includes(HOME)).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ import type { Db } from '../db.ts';
 import { audit } from '../audit.ts';
 import { putBlob } from '../files/store.ts';
 import { lockErasures } from '../gdpr/service.ts';
-import { imageTypeOf } from './service.ts';
+import { imageTypeOf, stripPhotoMetadata } from './service.ts';
 
 /**
  * Import of KI Klub Werder profiles (change public-profiles, slice 3): klub_profil with its links and photo
@@ -104,7 +104,12 @@ function linksOf(p: SourceProfile, notes: string[]) {
   return ok.slice(0, 10);
 }
 
-const photoOk = (p: SourceProfile) => !!p.photo && !!imageTypeOf(p.photo) && p.photo.length <= 2 * 1024 * 1024;
+const cleanPhoto = (p: SourceProfile) => {
+  const type = p.photo && p.photo.length <= 2 * 1024 * 1024 ? imageTypeOf(p.photo) : null;
+  const bytes = type ? stripPhotoMetadata(p.photo!, type) : null;
+  return type && bytes ? { type, bytes } : null;
+};
+const photoOk = (p: SourceProfile) => !!cleanPhoto(p);
 
 /**
  * What the import would do, per KI Klub profile; writes nothing. A one-time migration: a member who already has
@@ -193,9 +198,10 @@ export async function applyImport(db: Db, organizationId: string, source: Source
         .executeTakeFirstOrThrow();
       for (const [j, l] of row.links!.entries()) await tx.insertInto('member_profile_link').values({ profile_id: created.id, label: l.label, url: l.url, position: j }).execute();
       if (row.photo) {
-        const type = imageTypeOf(p.photo!)!;
-        const sha = await putBlob(p.photo!);
-        const f = await tx.insertInto('file').values({ organization_id: organizationId, folder_id: null, member_id: row.memberId!, purpose: 'photo', sha256: sha, size_bytes: p.photo!.length, mime_type: type, name: `Profilfoto.${type.split('/')[1]}`, retention_class: 'document', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
+        // Stored without camera metadata, like an upload.
+        const { type, bytes } = cleanPhoto(p)!;
+        const sha = await putBlob(bytes);
+        const f = await tx.insertInto('file').values({ organization_id: organizationId, folder_id: null, member_id: row.memberId!, purpose: 'photo', sha256: sha, size_bytes: bytes.length, mime_type: type, name: `Profilfoto.${type.split('/')[1]}`, retention_class: 'document', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
         // The photo was part of the profile KI Klub published: it keeps the profile's approval.
         await tx.updateTable('member_profile').set({ photo_file_id: f.id }).where('id', '=', created.id).execute();
         const consent = await tx.selectFrom('consent').innerJoin('member', 'member.person_id', 'consent.person_id').select('consent.id').where('member.id', '=', row.memberId!).where('consent.purpose', '=', 'photos').where('consent.withdrawn_at', 'is', null).executeTakeFirst();

@@ -6,6 +6,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
 import { applyImport, planDigest, planImport, readKiKlub } from '../src/server/profiles/importKiKlub.ts';
 import { testDbUrl } from './global-setup.ts';
+import { HOME, WEBP_GPS as WEBP } from './photos.ts';
 import { client, reset, setupClub, testApp } from './helpers.ts';
 
 /** Change public-profiles, slice 3: KI Klub profiles imported once, from a fixture with KI Klub's own tables. */
@@ -18,7 +19,6 @@ afterAll(async () => {
 
 let admin: ReturnType<typeof client>;
 let org: string;
-const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x20, 0, 0, 0]), Buffer.from('WEBPVP8 '), Buffer.alloc(32, 7)]);
 const id = (n: number, p = '0') => `${p.repeat(8)}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 beforeEach(async () => {
@@ -97,6 +97,10 @@ describe('KI Klub profile import', () => {
       // The photo is stored but public only with the photos consent; KI Klub never showed the address publicly.
       photoUrl: null, email: null,
     }]);
+    // The imported photo is stored without its camera metadata.
+    const { getBlob } = await import('../src/server/files/store.ts');
+    const f = await ctx.db.selectFrom('file').select('sha256').where('purpose', '=', 'photo').executeTakeFirstOrThrow();
+    expect((await getBlob(f.sha256)).includes(HOME)).toBe(false);
     // Eve's own (hidden) profile is untouched.
     expect((await ctx.db.selectFrom('member_profile').select(['bio', 'hidden']).where('bio', '=', 'Eigene Fassung.').executeTakeFirstOrThrow()).hidden).toBe(true);
     expect(await ctx.db.selectFrom('audit_event').select('id').where('action', 'in', ['profile.imported', 'profile_types.updated']).execute()).toHaveLength(4);

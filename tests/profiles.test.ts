@@ -5,6 +5,7 @@ import { inflateRawSync } from 'node:zlib';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/server/config.ts';
 import { issueLoginCode } from '../src/server/routes/portal.ts';
+import { JPEG, PNG } from './photos.ts';
 import { client, reset, setupClub, testApp } from './helpers.ts';
 
 /** Change public-profiles, slice 1: the member's profile in the portal. */
@@ -23,8 +24,6 @@ beforeEach(async () => {
   await ctx.db.updateTable('organization').set({ profile_types: JSON.stringify([{ key: 'enthusiast', label: 'KI-Enthusiast' }, { key: 'profi', label: 'KI-Profi' }]) as never }).execute();
 });
 
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 1)]);
-const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 2)]);
 
 async function member(email: string) {
   const m = (await admin.post('/members', { firstName: 'Petra', lastName: 'Profil', email, joinDate: '2015-01-01' })).body as { id: string; personId: string };
