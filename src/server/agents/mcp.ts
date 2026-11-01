@@ -48,7 +48,7 @@ export function toolsFrom(doc: { paths: Record<string, Record<string, OpenApiOp>
     for (const [method, op] of Object.entries(methods)) {
       if (!op.operationId || method === 'head' || method === 'options') continue;
       // Public routes (forms, unsubscribe, health) need no agent; the portal is public in OpenAPI but a member's home.
-      if (op.security?.length === 0 && !path.startsWith('/portal/')) continue;
+      if (op.security?.length === 0 && !path.startsWith('/portal/') && !path.startsWith('/public/')) continue;
       const properties: Record<string, object> = {};
       const required: string[] = [];
       const pathParams: string[] = [];
@@ -96,6 +96,8 @@ export function visibleTools(tools: Tool[], t: PersonalToken, actor: Actor | nul
     const writes = tool.method !== 'GET' || !!meta?.write;
     if (t.access === 'read' && writes) return false;
     const portal = tool.path.startsWith('/portal/');
+    // The club's public feed is for everyone (except binary photos, left to the website).
+    if (tool.path.startsWith('/public/')) return !tool.path.endsWith('/photo');
     if (t.kind === 'member') return portal;
     if (portal || !actor) return false;
     const modules = meta?.modules ?? (MODULES.includes(tool.tag as Module) ? [tool.tag as Module] : []);

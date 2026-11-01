@@ -52,6 +52,8 @@ import { SettingsLayout } from './pages/settings/SettingsLayout.tsx';
 import { Users } from './pages/settings/Users.tsx';
 import './lib/search.ts';
 import { DemoStart } from './pages/DemoStart.tsx';
+import { Profiles } from './pages/Profiles.tsx';
+import { ProfileTypes } from './pages/settings/ProfileTypes.tsx';
 import { AfterSignIn, ConnectChooser, ConnectConsent } from './components/ConnectAgent.tsx';
 import { StepUpPrompt } from './components/StepUp.tsx';
 
@@ -107,6 +109,8 @@ function AdminApp() {
         <Route path="/mitglieder" element={<Members me={me.data} />} />
         <Route path="/mitglieder/haushalte" element={<Households me={me.data} />} />
         <Route path="/mitglieder/dubletten" element={<Duplicates me={me.data} />} />
+        <Route path="/mitglieder/profile" element={<Profiles me={me.data} />} />
+        <Route path="/mitglieder/profile/:id" element={<Profiles me={me.data} />} />
         <Route path="/mitglieder/bestandserhebung" element={<Census />} />
         <Route path="/mitglieder/ehrungen" element={<HonoursPage me={me.data} />} />
         <Route path="/mitglieder/arbeitsstunden" element={<WorkHours me={me.data} />} />
@@ -168,6 +172,7 @@ function AdminApp() {
           <Route path="rollen" element={<Roles me={me.data} />} />
           <Route path="api" element={<ApiTokens me={me.data} />} />
           <Route path="agenten" element={<Agents me={me.data} />} />
+          <Route path="profile" element={<ProfileTypes me={me.data} />} />
           <Route path="protokoll" element={<AuditLog />} />
         </Route>
         {/* Right after signing in the app is still on /anmelden: go on to a pending consent or the overview. */}

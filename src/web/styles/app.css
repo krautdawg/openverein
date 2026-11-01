@@ -811,3 +811,23 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 .profile-saved { color: var(--ok); font-weight: 600; font-size: var(--text-sm); margin: 0; }
 @media (max-width: 560px) { .profile-link-row { grid-template-columns: 1fr auto; } .profile-link-row > .field:first-child { grid-column: 1 / -1; } }
 .profile-links > .btn { justify-self: start; }
+
+/* Board: profile queue and review (public-profiles) */
+.profile-state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--ink-2); }
+.profile-state::before { content: ''; width: 14px; height: 2px; background: currentColor; flex: none; }
+.profile-state[data-s='ok'] { color: var(--ok); }
+.profile-state[data-s='warn'] { color: var(--warn); }
+.profile-review { display: grid; gap: var(--s-4); }
+.profile-review > .profile-state { margin: 0; }
+.profile-review-head { display: flex; gap: var(--s-4); align-items: center; }
+.profile-review-head img { width: 88px; height: 88px; border-radius: var(--radius); object-fit: cover; border: 1px solid var(--line); }
+.profile-review-head .profile-photo-empty { width: 88px; height: 88px; }
+.profile-review-head h3 { margin: 0 0 var(--s-1); font-size: var(--text-lg); }
+.profile-review-bio { margin: 0; white-space: pre-line; max-width: 62ch; }
+.profile-review-links { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); font-size: var(--text-sm); }
+.profile-review-links span { font-weight: 600; }
+.profile-review-links a { overflow-wrap: anywhere; color: var(--ink); }
+.profile-types-list { list-style: none; margin: 0 0 var(--s-3); padding: 0; display: grid; gap: var(--s-2); max-width: 560px; }
+.profile-types-list li { display: grid; grid-template-columns: minmax(0, 1fr) 9em auto; gap: var(--s-3); align-items: center; }
+.profile-types-list .meta { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; }
+.profile-types > .btn-ghost { justify-self: start; }

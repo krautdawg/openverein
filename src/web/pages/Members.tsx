@@ -129,6 +129,7 @@ export function Members({ me }: { me: Me }) {
           <>
             <Link className="btn btn-ghost" to="/mitglieder/haushalte">Haushalte</Link>
             <Link className="btn btn-ghost" to="/mitglieder/dubletten">Dubletten</Link>
+            <Link className="btn btn-ghost" to="/mitglieder/profile">Profile</Link>
             <Link className="btn btn-ghost" to="/mitglieder/bestandserhebung">Auswertungen</Link>
             <details className="menu">
               <summary className="btn"><Download size={16} aria-hidden /> Exportieren</summary>

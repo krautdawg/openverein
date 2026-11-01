@@ -9,10 +9,10 @@
 
 ## 2. Approval and public feed
 
-- [ ] 2.1 Admin: approval queue (approve, send back), profile in the member sheet
-- [ ] 2.2 Public feed and photo route (CORS, cache, rate limit, photos consent)
-- [ ] 2.3 Settings: profile types
-- [ ] 2.4 Tests and e2e
+- [x] 2.1 Admin: approval queue (approve, send back), profile in the member sheet
+- [x] 2.2 Public feed and photo route (CORS, cache, rate limit, photos consent)
+- [x] 2.3 Settings: profile types
+- [x] 2.4 Tests and e2e
 
 ## 3. Import from KI Klub
 
