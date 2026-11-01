@@ -46,8 +46,8 @@ beforeEach(async () => {
 });
 
 /** Starts the flow like a browser, then returns from the provider with a code for `email`. */
-async function signInVia(email: string, verified = true, tamperState = false, sub = 'sub-1') {
-  const start = await ctx.app.inject({ url: '/api/v1/auth/oidc/start' });
+async function signInVia(email: string, verified = true, tamperState = false, sub = 'sub-1', weiter?: string) {
+  const start = await ctx.app.inject({ url: `/api/v1/auth/oidc/start${weiter ? `?weiter=${weiter}` : ''}` });
   expect(start.statusCode, start.body).toBe(302);
   const to = new URL(String(start.headers.location));
   const flow = [start.headers['set-cookie']].flat().map(String).find((c) => c.startsWith('ov_oidc='))!.split(';')[0]!;
@@ -71,7 +71,7 @@ describe('sign-in through the club identity provider (OIDC)', () => {
     await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: invited.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
     const ok = await signInVia('Olli@Example.org');
     expect(ok.statusCode).toBe(302);
-    expect(ok.headers.location).toBe('/');
+    expect(ok.headers.location).toBe('/anmelden');
     const session = [ok.headers['set-cookie']].flat().map(String).find((c) => c.startsWith('ov_session='))!.split(';')[0]!;
     expect((await ctx.app.inject({ url: '/api/v1/auth/me', headers: { cookie: session } })).json().email).toBe('olli@example.org');
 
@@ -83,6 +83,8 @@ describe('sign-in through the club identity provider (OIDC)', () => {
     // With a second factor, the provider replaces only the password: a ticket for the code step.
     await enrollTotp(ctx.app, session);
     expect((await signInVia('olli@example.org')).headers.location).toMatch(/^\/anmelden#ticket=/);
+    // A pending consent comes back with the person (the app goes on there from /anmelden).
+    expect((await signInVia('olli@example.org', true, false, 'sub-1', 'abcdef123456')).headers.location).toMatch(/^\/anmelden\?weiter=abcdef123456#ticket=/);
   });
 
   it('is off and invisible until an admin sets it up', async () => {
@@ -94,11 +96,11 @@ describe('sign-in through the club identity provider (OIDC)', () => {
     expect((await admin.put('/settings/oidc', { enabled: true, issuer, clientId: 'openverein', clientSecret: 'geheim', label: 'Vereins-Google' })).status).toBe(200);
     const invited = await admin.post('/users', { name: 'Olli Oidc', email: 'olli@example.org', grants: [{ roleId: (await admin.get('/roles')).body.find((r: { name: string }) => r.name === 'Trainer:in').id, scopeGroupIds: null }] });
     await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/accept-invite', payload: { token: invited.body.inviteToken, password: 'ein-sehr-langes-passwort' } });
-    expect((await signInVia('olli@example.org', true, false, 'sub-olli')).headers.location).toBe('/');
+    expect((await signInVia('olli@example.org', true, false, 'sub-olli')).headers.location).toBe('/anmelden');
     // The provider gives the address to a new person (another subject): no access to Olli's account.
     expect((await signInVia('olli@example.org', true, false, 'sub-neu')).headers.location).toBe('/anmelden#fehler=unbekannt');
     // Olli's own identity still signs in after the provider changed the address.
-    expect((await signInVia('olli.neu@example.org', true, false, 'sub-olli')).headers.location).toBe('/');
+    expect((await signInVia('olli.neu@example.org', true, false, 'sub-olli')).headers.location).toBe('/anmelden');
   });
 
   it('Codex review G16/G17: fetches no issuer in a private network', async () => {

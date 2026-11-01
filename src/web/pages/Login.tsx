@@ -16,10 +16,12 @@ export function Login() {
   const hash = new URLSearchParams(window.location.hash.slice(1));
   const [ticket, setTicket] = useState<string | undefined>(hash.get('ticket') ?? undefined);
   const [error, setError] = useState<string | undefined>(OIDC_ERRORS[hash.get('fehler') ?? '']);
+  // A pending consent's continuation id goes along through the identity provider.
+  const weiter = new URLSearchParams(window.location.search).get('weiter');
   const oidc = useQuery({ queryKey: ['oidc'], queryFn: () => api<{ enabled: boolean; label: string }>('/auth/oidc') });
   // The fragment is read once; it should not come back on reload.
   useEffect(() => {
-    if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+    if (window.location.hash) history.replaceState(null, '', window.location.pathname + window.location.search);
   }, []);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -81,7 +83,7 @@ export function Login() {
       {oidc.data?.enabled && (
         <>
           <p className="meta auth-or">oder</p>
-          <a className="btn btn-block" href="/api/v1/auth/oidc/start">Mit {oidc.data.label} anmelden</a>
+          <a className="btn btn-block" href={`/api/v1/auth/oidc/start${weiter ? `?weiter=${encodeURIComponent(weiter)}` : ''}`}>Mit {oidc.data.label} anmelden</a>
         </>
       )}
     </AuthLayout>

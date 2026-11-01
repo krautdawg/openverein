@@ -6,6 +6,13 @@ import { ADMIN, signIn } from './helpers.ts';
 
 const MAILPIT = process.env.MAILPIT_URL ?? 'http://localhost:18025';
 const REDIRECT = 'http://127.0.0.1:53682/callback';
+test.setTimeout(90_000);
+
+/** A code of a step no earlier sign-in used (codes may not repeat): wait for the next 30-second step. */
+async function freshCode(secret: string) {
+  await new Promise((r) => setTimeout(r, (30 - ((Date.now() / 1000) % 30)) * 1000 + 300));
+  return codeAt(secret, currentStep());
+}
 
 /** A registered client and the authorize URL a KI client would open (DCR, PKCE). */
 async function startFlow(page: Page) {
@@ -43,7 +50,7 @@ test('oauth: an admin who signs in during the flow comes back to the consent and
   // The e2e admin has a second factor: the code step comes first (or, without one, the next page).
   await page.waitForFunction(() => !location.pathname.startsWith('/anmelden') || !!document.querySelector('input[autocomplete="one-time-code"]'));
   if (saved && (await page.getByLabel('Code').isVisible())) {
-    await page.getByLabel('Code').fill(codeAt(saved.secret, currentStep() + 1));
+    await page.getByLabel('Code').fill(await freshCode(saved.secret));
     await page.getByRole('button', { name: /Bestätigen|Anmelden/ }).click();
   }
   await expect(page).toHaveURL(/\/verbinden\?/);
@@ -51,6 +58,25 @@ test('oauth: an admin who signs in during the flow comes back to the consent and
   await page.getByRole('button', { name: 'Erlauben' }).click();
   await expect.poll(() => hit()?.searchParams.get('state') ?? null).toBe('st-1');
   expect(hit()!.searchParams.get('code')).toBeTruthy();
+});
+
+test('oauth: an abandoned connection does not catch a later, ordinary sign-in', async ({ browser }) => {
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(await startFlow(page));
+  await page.getByRole('link', { name: 'Ich arbeite in der Vereinsverwaltung' }).click();
+  await expect(page).toHaveURL(/\/anmelden\?weiter=/);
+  // The person gives up and later signs in from the plain sign-in page.
+  await page.goto('/anmelden');
+  await page.getByLabel('E-Mail').fill(ADMIN.email);
+  await page.getByLabel('Passwort').fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Anmelden' }).click();
+  await page.waitForFunction(() => !location.pathname.startsWith('/anmelden') || !!document.querySelector('input[autocomplete="one-time-code"]'));
+  const saved = existsSync('test-results/.e2e-admin.json') ? (JSON.parse(readFileSync('test-results/.e2e-admin.json', 'utf8')) as { secret: string }) : null;
+  if (saved && (await page.getByLabel('Code').isVisible())) {
+    await page.getByLabel('Code').fill(await freshCode(saved.secret));
+    await page.getByRole('button', { name: /Bestätigen|Anmelden/ }).click();
+  }
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test('oauth: a member who signs in to the portal during the flow comes back to the consent', async ({ browser }) => {

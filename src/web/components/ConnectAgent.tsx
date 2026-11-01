@@ -1,52 +1,59 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, Navigate } from 'react-router';
+import { Link, Navigate, useNavigate } from 'react-router';
 import { api, ApiError } from '../lib/api.ts';
 import { useTitle } from '../lib/useTitle.ts';
 import { AuthLayout } from './AuthLayout.tsx';
 
-const RETURN_KEY = 'ov-return';
+const RETURN_KEY = 'ov-returns';
+type Returns = Record<string, { path: string; at: number }>;
 
-/** Remembers the consent page across a sign-in (also a code from the mail opened in another tab), for ten minutes. */
-export function rememberReturn(path: string) {
+/** Pending consents by continuation id, young and pointing at our own consent pages only. */
+function readReturns(): Returns {
   try {
-    localStorage.setItem(RETURN_KEY, JSON.stringify({ path, at: Date.now() }));
+    const all = JSON.parse(localStorage.getItem(RETURN_KEY) ?? '{}') as Returns;
+    return Object.fromEntries(Object.entries(all).filter(([, r]) => Date.now() - r.at >= 0 && Date.now() - r.at < 600_000 && /^\/(portal\/)?verbinden\?/.test(r.path)));
+  } catch {
+    return {};
+  }
+}
+
+function writeReturns(r: Returns) {
+  try {
+    localStorage.setItem(RETURN_KEY, JSON.stringify(r));
   } catch {
     // storage blocked: the person starts the connection again after signing in
   }
 }
 
-/** Where to go right after signing in: the remembered consent page (read once), else the overview. */
+/**
+ * Remembers a consent page for the sign-in that follows, under an id that travels in that sign-in's address
+ * (`?weiter=`): only that sign-in goes on there, never a later or parallel one. Ten minutes.
+ */
+export function rememberReturn(path: string) {
+  const id = (crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 32);
+  writeReturns({ ...readReturns(), [id]: { path, at: Date.now() } });
+  return id;
+}
+
+/** The consent page of this sign-in (its `weiter` id), once. */
+export function takeReturn(id: string | null) {
+  const all = readReturns();
+  const path = id ? (all[id]?.path ?? null) : null;
+  if (id) delete all[id];
+  writeReturns(all);
+  return path;
+}
+
+const continuation = () => new URLSearchParams(location.search).get('weiter');
+
+/** Where to go right after signing in: this sign-in's consent page, else the overview. */
 export function AfterSignIn() {
-  // Read on mount, cleared after: a second render reads the same target.
-  const [to] = useState(() => peekReturn() ?? '/');
-  useEffect(() => clearReturn(), []);
+  // Read on mount and cleared after: a second render (StrictMode) reads the same target.
+  const [id] = useState(continuation);
+  const [to] = useState(() => (id && readReturns()[id]?.path) || '/');
+  useEffect(() => void takeReturn(id), [id]);
   return <Navigate to={to} replace />;
-}
-
-const clearReturn = () => {
-  try {
-    localStorage.removeItem(RETURN_KEY);
-  } catch {
-    // storage blocked: nothing to clear
-  }
-};
-
-/** The remembered consent page, once; only our own consent paths. */
-export function takeReturn(): string | null {
-  const r = peekReturn();
-  clearReturn();
-  return r;
-}
-
-function peekReturn(): string | null {
-  try {
-    const raw = localStorage.getItem(RETURN_KEY);
-    const r = raw ? (JSON.parse(raw) as { path: string; at: number }) : null;
-    return r && Date.now() - r.at < 600_000 && /^\/(portal\/)?verbinden\?/.test(r.path) ? r.path : null;
-  } catch {
-    return null;
-  }
 }
 
 interface View { clientName: string; redirectUri: string; requestedAccess: 'read' | 'write' | null; days: number[] }
@@ -55,13 +62,14 @@ interface View { clientName: string; redirectUri: string; requestedAccess: 'read
 export function ConnectChooser() {
   useTitle('KI-Client verbinden');
   const search = location.search;
+  const navigate = useNavigate();
   return (
     <AuthLayout>
       <h1>KI-Client verbinden</h1>
       <p>Ein KI-Client (zum Beispiel Claude oder ChatGPT) möchte für Dich auf OpenVerein zugreifen. Melde Dich an. Danach entscheidest Du, was er darf.</p>
       <div className="connect-choices">
-        <a className="btn btn-primary btn-block" href={`/portal/verbinden${search}`} onClick={() => rememberReturn(`/portal/verbinden${search}`)}>Ich bin Mitglied</a>
-        <Link className="btn btn-block" to="/anmelden" onClick={() => rememberReturn(`/verbinden${search}`)}>Ich arbeite in der Vereinsverwaltung</Link>
+        <a className="btn btn-primary btn-block" href={`/portal/verbinden${search}`}>Ich bin Mitglied</a>
+        <Link className="btn btn-block" to="/anmelden" onClick={(e) => { e.preventDefault(); navigate(`/anmelden?weiter=${rememberReturn(`/verbinden${search}`)}`); }}>Ich arbeite in der Vereinsverwaltung</Link>
       </div>
     </AuthLayout>
   );

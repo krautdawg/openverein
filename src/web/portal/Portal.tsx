@@ -155,7 +155,7 @@ function PortalLogin() {
     setBusy(true);
     try {
       await api('/portal/auth/verify', { method: 'POST', body: { email, code } });
-      history.replaceState(null, '', takeReturn() ?? '/portal');
+      history.replaceState(null, '', takeReturn(new URLSearchParams(location.search).get('weiter')) ?? '/portal');
       await qc.invalidateQueries({ queryKey: ['portal-me'] });
     } catch (err) {
       setError(err instanceof ApiError ? err : undefined);
@@ -553,8 +553,7 @@ function PortalAgents() {
 
 /** Opened from a KI client before signing in: keep the consent page for after the code. */
 function RememberAndSignIn() {
-  // Read now, before the redirect changes the address.
-  const [target] = useState(() => `/portal/verbinden${location.search}`);
-  useEffect(() => rememberReturn(target), [target]);
-  return <Navigate to="/portal/anmelden" replace />;
+  // Read now, before the redirect changes the address; the sign-in carries the continuation id.
+  const [to] = useState(() => `/portal/anmelden?weiter=${rememberReturn(`/portal/verbinden${location.search}`)}`);
+  return <Navigate to={to} replace />;
 }

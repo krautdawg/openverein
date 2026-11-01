@@ -21,14 +21,14 @@ const settingsDto = z.object({ enabled: z.boolean(), issuer: z.string().nullable
 
 /** The flow cookie (PKCE verifier, state, nonce) is signed, so it cannot be forged or swapped between clubs. */
 const sign = (payload: string) => createHmac('sha256', `oidc-flow:${config.dataKey}`).update(payload).digest('base64url');
-function packFlow(v: { org: string; verifier: string; state: string; nonce: string }) {
+function packFlow(v: { org: string; verifier: string; state: string; nonce: string; weiter?: string }) {
   const payload = Buffer.from(JSON.stringify({ ...v, exp: Date.now() + FLOW_MS })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
 function unpackFlow(raw: string | undefined) {
   const [payload, mac] = (raw ?? '').split('.');
   if (!payload || !mac || mac.length !== sign(payload).length || !timingSafeEqual(Buffer.from(mac), Buffer.from(sign(payload)))) return null;
-  const v = JSON.parse(Buffer.from(payload, 'base64url').toString()) as { org: string; verifier: string; state: string; nonce: string; exp: number };
+  const v = JSON.parse(Buffer.from(payload, 'base64url').toString()) as { org: string; verifier: string; state: string; nonce: string; weiter?: string; exp: number };
   return v.exp > Date.now() ? v : null;
 }
 
@@ -66,7 +66,7 @@ export const oidcRoutes: FastifyPluginAsyncZod = async (app) => {
     return { enabled: !!o?.oidc_enabled, label: o?.oidc_label || 'Vereins-Konto' };
   });
 
-  app.get('/auth/oidc/start', { schema: { tags, summary: 'Anmeldung beim Identitätsanbieter beginnen (Weiterleitung)', security: [] } }, async (req, reply) => {
+  app.get('/auth/oidc/start', { schema: { tags, summary: 'Anmeldung beim Identitätsanbieter beginnen (Weiterleitung)', security: [], querystring: z.object({ weiter: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional() }) } }, async (req, reply) => {
     const t = await tenantForRequest(db, req);
     const c = t ? await clientConfig(db, t.id) : null;
     if (!t || !c) throw notFound('Anmeldung über das Vereins-Konto');
@@ -74,13 +74,16 @@ export const oidcRoutes: FastifyPluginAsyncZod = async (app) => {
     const state = client.randomState();
     const nonce = client.randomNonce();
     const url = client.buildAuthorizationUrl(c.cfg, { redirect_uri: c.redirectUri, scope: 'openid email profile', code_challenge: await client.calculatePKCECodeChallenge(verifier), code_challenge_method: 'S256', state, nonce });
-    reply.setCookie(COOKIE, packFlow({ org: t.id, verifier, state, nonce }), { path: '/api/v1/auth/oidc', httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, maxAge: FLOW_MS / 1000 });
+    // The sign-in page's continuation (a pending consent) comes back with the person, so the app can go on there.
+    reply.setCookie(COOKIE, packFlow({ org: t.id, verifier, state, nonce, ...(req.query.weiter ? { weiter: req.query.weiter } : {}) }), { path: '/api/v1/auth/oidc', httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, maxAge: FLOW_MS / 1000 });
     return reply.redirect(url.href);
   });
 
   app.get('/auth/oidc/callback', { schema: { tags, summary: 'Rückkehr vom Identitätsanbieter', security: [] } }, async (req, reply) => {
-    const back = (reason: string) => reply.clearCookie(COOKIE, { path: '/api/v1/auth/oidc' }).redirect(`/anmelden#fehler=${reason}`);
     const flow = unpackFlow(req.cookies[COOKIE]);
+    // Every way back lands on the sign-in page with its continuation; the app goes on from there (AfterSignIn).
+    const signIn = `/anmelden${flow?.weiter ? `?weiter=${flow.weiter}` : ''}`;
+    const back = (reason: string) => reply.clearCookie(COOKIE, { path: '/api/v1/auth/oidc' }).redirect(`${signIn}#fehler=${reason}`);
     if (!flow) return back('abgelaufen');
     const c = await clientConfig(db, flow.org);
     if (!c) return back('nicht-eingerichtet');
@@ -116,14 +119,14 @@ export const oidcRoutes: FastifyPluginAsyncZod = async (app) => {
     }
     reply.clearCookie(COOKIE, { path: '/api/v1/auth/oidc' });
     // With a second factor, the provider sign-in replaces only the password; the code is still asked for.
-    if (user.totp_enabled_at && !config.demoMode) return reply.redirect(`/anmelden#ticket=${encodeURIComponent(ticketFor(user.id))}`);
+    if (user.totp_enabled_at && !config.demoMode) return reply.redirect(`${signIn}#ticket=${encodeURIComponent(ticketFor(user.id))}`);
     const token = await db.transaction().execute(async (tx) => {
       await tx.updateTable('app_user').set({ last_login_at: new Date() }).where('id', '=', user.id).execute();
       await audit(tx, user.organization_id, userActor(user), { action: 'auth.login_oidc', entityType: 'app_user', entityId: user.id });
       return insertSession(tx, user.id, req.headers['user-agent']);
     });
     setSessionCookie(reply, token);
-    return reply.redirect('/');
+    return reply.redirect(signIn);
   });
 
   // ---------- Settings ----------
