@@ -789,3 +789,6 @@ td[data-over] { color: var(--danger); font-weight: 600; }
 .demo-copy .icon-btn { flex: none; }
 .demo-note { margin-top: var(--s-6); padding-top: var(--s-4); border-top: 1px solid var(--line); font-size: var(--text-sm); color: var(--ink-2); }
 .demo-note a { color: var(--ink); }
+.demo-copy-status { margin: var(--s-1) 0 0; font-size: var(--text-xs); color: var(--ink-2); min-height: 0; }
+.demo-copy-status:empty { display: none; }
+.demo-copy pre:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

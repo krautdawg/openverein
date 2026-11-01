@@ -29,3 +29,21 @@ test('demo start: in demo mode a signed-out visitor chooses how to look around',
   await expect(page).toHaveURL(/\/anmelden$/);
   await expect(page.getByText('Demo-Zugang:')).toBeVisible();
 });
+
+test('demo start: sign-in and the OAuth chooser never wait for /config', async ({ page }) => {
+  // /config never answers: everything but / must work as before.
+  await page.route('**/api/v1/config', () => undefined);
+  await page.goto('/anmelden');
+  await expect(page.getByLabel('E-Mail')).toBeVisible();
+  await page.goto('/verbinden?client_id=x');
+  await expect(page.getByRole('heading', { name: 'KI-Client verbinden' })).toBeVisible();
+});
+
+test('demo start: a failed copy says so', async ({ page }) => {
+  await page.route('**/api/v1/config', (r) => r.fulfill({ json: { demo: true, demoLogin: null, demoResetHours: 1 } }));
+  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('denied')) } }));
+  await page.goto('/');
+  await expect(page.getByText(/jede Stunde von vorn/)).toBeVisible();
+  await page.getByRole('button', { name: /Adresse für einen eigenen Connector: kopieren/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Kopieren geht hier nicht' })).toBeVisible();
+});

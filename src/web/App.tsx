@@ -86,11 +86,11 @@ function AdminApp() {
     );
   }
   if (!me.data) {
-    // The public demo greets visitors with its ways in; any other instance goes straight to the sign-in.
-    if (cfg.isPending) return null;
     return (
       <Routes>
-        {cfg.data?.demo && <Route path="/" element={<DemoStart resetHours={cfg.data.demoResetHours} />} />}
+        {/* The public demo greets visitors at / with its ways in; anywhere else / goes to the sign-in. Only this
+            route waits for /config: sign-in, invitation and the OAuth chooser never depend on it. */}
+        <Route path="/" element={cfg.isPending ? null : cfg.data?.demo ? <DemoStart resetHours={cfg.data.demoResetHours} /> : <Navigate to="/anmelden" replace />} />
         <Route path="/anmelden" element={<Login />} />
         <Route path="/einladung" element={<AcceptInvite />} />
         <Route path="/abmelden" element={<Unsubscribe />} />

@@ -6,25 +6,27 @@ import { useTitle } from '../lib/useTitle.ts';
 
 /** A command or address to copy, with its own copy button. */
 function CopyLine({ label, text }: { label: string; text: string }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   async function copy() {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      setState('copied');
+      setTimeout(() => setState('idle'), 2000);
     } catch {
-      // no clipboard (insecure context): the text stays selectable
+      // No clipboard (plain HTTP, permission denied): say so; the text stays focusable and selectable.
+      setState('failed');
     }
   }
   return (
     <div className="demo-copy">
       <span className="demo-copy-label">{label}</span>
       <div className="demo-copy-row">
-        <pre>{text}</pre>
-        <button type="button" className="icon-btn" onClick={() => void copy()} aria-label={copied ? 'Kopiert' : `${label} kopieren`}>
-          {copied ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
+        <pre tabIndex={0} aria-label={label}>{text}</pre>
+        <button type="button" className="icon-btn" onClick={() => void copy()} aria-label={`${label}: kopieren`}>
+          {state === 'copied' ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
         </button>
       </div>
+      <p className="demo-copy-status" role="status">{state === 'copied' ? 'Kopiert.' : state === 'failed' ? 'Kopieren geht hier nicht. Markier den Text und kopier ihn selbst.' : ''}</p>
     </div>
   );
 }
@@ -72,7 +74,7 @@ export function DemoStart({ resetHours }: { resetHours: number | null }) {
 
       <p className="demo-note">
         Alle Personen, Zahlen und Vorgänge hier sind erfunden.{' '}
-        {resetHours ? `Die Demo fängt alle ${resetHours === 24 ? '24 Stunden' : `${resetHours} Stunden`} von vorn an.` : 'Gib keine echten Daten ein.'}{' '}
+        {resetHours ? `Die Demo fängt ${resetHours === 1 ? 'jede Stunde' : `alle ${resetHours} Stunden`} von vorn an.` : 'Gib keine echten Daten ein.'}{' '}
         <a href="https://github.com/krautdawg/openverein">Quellcode auf GitHub</a>
       </p>
     </AuthLayout>
