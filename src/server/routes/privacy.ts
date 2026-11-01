@@ -59,7 +59,7 @@ export const PERSON_EXPORT: Record<string, string> = {
 };
 /** Technical columns; `custom` goes out as its own section (Weitere Angaben). */
 /** Tables that link to a person or member: each is in the Art. 15 export, or listed here with the reason (a test checks it). */
-export const ART15_TABLES = ['person', 'member', 'group_membership', 'consent', 'invoice', 'sepa_mandate', 'donation', 'donation_receipt', 'participation', 'delivery', 'change_request', 'application', 'file', 'contact_log', 'offer', 'task', 'honour', 'fee_assignment', 'assessment', 'collection_item', 'allowance_payment', 'allowance_declaration', 'expense_claim', 'work_hour_entry', 'work_hour_settlement', 'inventory_loan', 'assembly_attendance', 'poll_vote', 'greeting_sent', 'household'];
+export const ART15_TABLES = ['person', 'member', 'group_membership', 'consent', 'invoice', 'sepa_mandate', 'donation', 'donation_receipt', 'participation', 'delivery', 'change_request', 'application', 'file', 'contact_log', 'offer', 'task', 'honour', 'fee_assignment', 'assessment', 'collection_item', 'allowance_payment', 'allowance_declaration', 'expense_claim', 'work_hour_entry', 'work_hour_settlement', 'inventory_loan', 'assembly_attendance', 'poll_vote', 'greeting_sent', 'household', 'member_profile'];
 export const ART15_NOT_EXPORTED: Record<string, string> = { erasure_log: 'records only that an erasure happened (ids), kept to repeat it after a restore' };
 
 export const PERSON_NOT_EXPORTED = ['id', 'organization_id', 'updated_at', 'import_run_id', 'anonymised_at', 'custom'];
@@ -174,7 +174,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
         return '(nicht lesbar)';
       }
     };
-    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours, fees, assessments, collections, allowances, declarations, claims, hours, settlements, loans, attendance, votes, greetings, households, agentTokens] = await Promise.all([
+    const [groups, consents, invoices, mandates, donations, receipts, events, mails, changes, applications, files, contacts, offers, tasks, honours, fees, assessments, collections, allowances, declarations, claims, hours, settlements, loans, attendance, votes, greetings, households, agentTokens, profiles] = await Promise.all([
       q(db.selectFrom('group_membership').innerJoin('club_group', 'club_group.id', 'group_membership.group_id').select(['club_group.name as Gruppe', 'group_membership.member_id']).where('group_membership.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('consent').selectAll().where('person_id', '=', p.id).execute()),
       q(db.selectFrom('invoice').select(['number as Nummer', 'kind as Art', 'issue_date as Datum', 'total_cents as Betrag_Cent', 'paid_cents as Bezahlt_Cent', 'status as Status']).where('recipient_person_id', '=', p.id).where('status', '<>', 'draft').execute()),
@@ -204,6 +204,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       q(db.selectFrom('poll_vote').innerJoin('poll', 'poll.id', 'poll_vote.poll_id').select(['poll.question as Umfrage', 'poll_vote.voted_at as Am']).where('poll_vote.member_id', 'in', memberIds).execute()),
       q(db.selectFrom('greeting_sent').select(['kind as Art', 'year as Jahr', 'sent_at as Gesendet']).where('person_id', '=', p.id).execute()),
       q(db.selectFrom('household').select(['name as Haushalt', 'created_at as Seit']).where('payer_person_id', '=', p.id).execute()),
+      q(db.selectFrom('member_profile').innerJoin('member', 'member.id', 'member_profile.member_id').select(['member_profile.display_name as Anzeigename', 'member_profile.bio as Text', 'member_profile.place as Ort', 'member_profile.organisation as Organisation', 'member_profile.type_key as Profilart', 'member_profile.contact_visibility as Kontakt_sichtbar_fuer', 'member_profile.hidden as Verborgen', 'member_profile.approved_at as Freigegeben', sql<string>`(select string_agg(label || ': ' || url, ' | ' order by position) from member_profile_link where profile_id = member_profile.id)`.as('Links')]).where('member.person_id', '=', p.id).execute()),
       // Agent tokens of the person's portal address, with how often each was used (the call log itself is technical).
       p.email
         ? q(db.selectFrom('personal_token').select(['name as Token', 'access as Recht', 'created_at as Erstellt', 'expires_at as Gueltig_bis', 'revoked_at as Widerrufen', sql<number>`(select count(*)::int from agent_call where token_id = personal_token.id)`.as('Aufrufe')]).where('organization_id', '=', p.organization_id).where('email', '=', p.email.toLowerCase()).execute())
@@ -236,6 +237,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       ['Glückwünsche', greetings as Row[]],
       ['Haushalte (als zahlende Person)', households as Row[]],
       ['Agenten-Tokens (Mitgliederportal)', agentTokens as Row[]],
+      ['Profil', profiles as Row[]],
       ['SEPA-Mandate', mandates.map(({ iban_encrypted, ...m }) => ({ ...m, IBAN: clear(iban_encrypted) }))],
       ['Spenden', donations as Row[]],
       ['Zuwendungsbestätigungen', receipts as Row[]],

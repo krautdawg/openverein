@@ -17,6 +17,7 @@ export interface OrganizationTable {
   id: Generated<string>;
   name: string;
   time_zone: Generated<string>;
+  profile_types: Generated<{ key: string; label: string }[]>;
   is_demo: Generated<boolean>;
   member_number_pattern: Generated<string>;
   notice_weeks: Generated<number>;
@@ -663,7 +664,7 @@ export interface FileTable {
   legal_hold: Generated<boolean>;
   previous_id: string | null;
   superseded_at: Date | null;
-  purpose: Generated<'document' | 'receipt' | 'export'>;
+  purpose: Generated<'document' | 'receipt' | 'export' | 'photo'>;
   uploaded_by: string | null;
   created_at: Generated<Date>;
   temporary_since: Generated<Date | null>;
@@ -1011,6 +1012,8 @@ export interface Database {
   oidc_identity: OidcIdentityTable;
   personal_token: PersonalTokenTable;
   agent_call: AgentCallTable;
+  member_profile: MemberProfileTable;
+  member_profile_link: MemberProfileLinkTable;
   oauth_code: { code_hash: string; organization_id: string; owner_key: string; client_fingerprint: string; payload: unknown; expires_at: Date; created_at: Generated<Date> };
   idempotency_key: IdempotencyKeyTable;
   invoice_einvoice: InvoiceEinvoiceTable;
@@ -1502,4 +1505,30 @@ export interface AgentCallTable {
   operation: string;
   channel: 'rest' | 'mcp' | 'cli';
   status: number;
+}
+
+export interface MemberProfileTable {
+  id: Generated<string>;
+  organization_id: string;
+  member_id: string;
+  display_name: string | null;
+  bio: string | null;
+  place: string | null;
+  organisation: string | null;
+  photo_file_id: string | null;
+  type_key: Generated<string>;
+  contact_visibility: Generated<'board' | 'members' | 'public'>;
+  hidden: Generated<boolean>;
+  approved_at: Date | null;
+  approved_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface MemberProfileLinkTable {
+  id: Generated<string>;
+  profile_id: string;
+  label: string;
+  url: string;
+  position: Generated<number>;
 }

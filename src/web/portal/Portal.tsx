@@ -4,6 +4,7 @@ import { Navigate, NavLink, Route, Routes, useNavigate, useParams } from 'react-
 import { Bot, FileText, Home, LogOut, Receipt, Wallet } from 'lucide-react';
 import { EXPENSE_STATUS_LABEL } from '../../shared/expenses.ts';
 import { AgentTokens } from '../components/AgentTokens.tsx';
+import { PortalProfile } from './Profile.tsx';
 import { ConnectConsent, rememberReturn, takeReturn } from '../components/ConnectAgent.tsx';
 import { MoneyField } from '../components/MoneyField.tsx';
 import { PollBars } from '../pages/Polls.tsx';
@@ -68,6 +69,7 @@ export function PortalApp() {
         <Route path="/portal/dokumente" element={<PortalDocuments />} />
         <Route path="/portal/auslagen" element={<PortalExpenses me={me.data} />} />
         <Route path="/portal/agenten" element={<PortalAgents />} />
+        <Route path="/portal/profil/:id" element={<PortalProfile />} />
         <Route path="*" element={<Navigate to="/portal" replace />} />
       </Routes>
     </PortalShell>
@@ -248,6 +250,7 @@ function MembershipCard({ m, several }: { m: PortalMember; several: boolean }) {
       {m.pending.filter((p) => p.field !== 'resignation').length > 0 && <p className="meta">Änderungen warten auf den Verein: {m.pending.filter((p) => p.field !== 'resignation').map((p) => FIELD_LABEL[p.field] ?? p.field).join(', ')}.</p>}
       <div className="actions-row">
         {(m.features.profile || m.features.bank) && <button className="btn" onClick={() => navigate(`/portal/daten/${m.memberId}`)}>Daten ändern</button>}
+        {m.features.profile && <button className="btn" onClick={() => navigate(`/portal/profil/${m.memberId}`)}>Profil</button>}
         <a className="btn btn-ghost" href={`/api/v1/portal/members/${m.memberId}/certificate.pdf`} download>Mitgliedsbescheinigung</a>
         {m.features.resignation && m.status !== 'resigned' && !pendingResignation && !confirm && !(m.managed && m.email) && <button className="btn btn-ghost" onClick={() => setConfirm(true)}>Kündigen …</button>}
       </div>

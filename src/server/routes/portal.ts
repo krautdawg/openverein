@@ -22,6 +22,9 @@ import { assertRoom, newToken, tokenList } from '../agents/tokens.ts';
 import { checkRequest, consentInput, consentView, decide, hostBase } from '../agents/oauth.ts';
 import type { ChangeField, Db } from '../db.ts';
 import { getBlob, putBlob } from '../files/store.ts';
+import { deleteChain, deletionBlocker, lockChain } from '../files/chain.ts';
+import { imageTypeOf, profileOf, saveProfile, setPhoto } from '../profiles/service.ts';
+import { PROFILE_PHOTO_MAX, PROFILE_PHOTO_TYPES, profileDto, profileInput } from '../../shared/profiles.ts';
 import { notFound, Problem } from '../http/problem.ts';
 import { epcPayload } from '../invoices/pdf.ts';
 import { storedPdf, type IssueSnapshot } from '../invoices/service.ts';
@@ -422,6 +425,80 @@ export const portalRoutes: FastifyPluginAsyncZod = async (app) => {
     reply.status(201);
     return { id: f.id };
   });
+
+  // ---------- Profile (change public-profiles) ----------
+
+  const profileOwner = async (req: FastifyRequest<{ Params: { memberId: string } }>, reply: FastifyReply) => {
+    const u = await portalUser(req, reply);
+    const m = ownMember(u, req.params.memberId);
+    requireFeature(m, 'profile');
+    // A payer manages children's profiles; an adult with their own address keeps their own (as for certificates).
+    if (m.viaHousehold && m.email) throw new Problem(403, 'own-access', 'Das Profil pflegt das Mitglied selbst.', `${m.first_name ?? 'Das Mitglied'} hat eine eigene E-Mail-Adresse und kann sich selbst im Portal anmelden.`);
+    return { u, m };
+  };
+  const memberParam = z.object({ memberId: z.uuid() });
+
+  app.get('/portal/profiles/:memberId', { schema: { tags, summary: 'Mein Profil (für die Profilseite des Vereins, nach Freigabe durch den Vorstand)', security: [], params: memberParam, response: { 200: profileDto } } }, async (req, reply) => {
+    const { u, m } = await profileOwner(req, reply);
+    return profileOf(db, u.organizationId, m.memberId);
+  });
+
+  app.put('/portal/profiles/:memberId', { schema: { tags, summary: 'Profil speichern (Änderungen am öffentlichen Inhalt braucht der Vorstand neu frei; Verbergen wirkt sofort)', security: [], params: memberParam, body: profileInput, response: { 200: profileDto } } }, async (req, reply) => {
+    const { u, m } = await profileOwner(req, reply);
+    await db.transaction().execute(async (tx) => {
+      const r = await saveProfile(tx, u.organizationId, m.memberId, req.body);
+      await audit(tx, u.organizationId, null, { action: 'profile.saved', entityType: 'member_profile', entityId: r.id, diff: { hidden: [null, req.body.hidden], typeKey: [null, req.body.typeKey], needsApproval: [null, r.changed] } });
+    });
+    return profileOf(db, u.organizationId, m.memberId);
+  });
+
+  app.post('/portal/profiles/:memberId/photo', { bodyLimit: PROFILE_PHOTO_MAX, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } }, schema: { tags, summary: 'Profilfoto hochladen (JPG, PNG oder WebP, höchstens 2 MB; öffentlich nur mit Einwilligung „Fotos“)', security: [], params: memberParam, response: { 200: profileDto } } }, async (req, reply) => {
+    const { u, m } = await profileOwner(req, reply);
+    const bytes = req.body as Buffer;
+    if (!Buffer.isBuffer(bytes) || !bytes.length) throw new Problem(400, 'empty', 'Die Datei ist leer.');
+    if (bytes.length > PROFILE_PHOTO_MAX) throw new Problem(413, 'too-large', 'Das Foto ist größer als 2 MB.');
+    // The bytes decide, not the declared type: only real JPEG, PNG or WebP get stored and later served.
+    const type = imageTypeOf(bytes);
+    if (!type) throw new Problem(415, 'file-type', 'Bitte ein Foto als JPG, PNG oder WebP hochladen.');
+    const sha = await putBlob(bytes);
+    await db.transaction().execute(async (tx) => {
+      const f = await tx.insertInto('file').values({ organization_id: u.organizationId, folder_id: null, member_id: m.memberId, purpose: 'photo', sha256: sha, size_bytes: bytes.length, mime_type: type, name: `Profilfoto.${type.split('/')[1]}`, retention_class: 'document', retain_until: null, uploaded_by: null }).returning('id').executeTakeFirstOrThrow();
+      const old = await setPhoto(tx, u.organizationId, m.memberId, f.id);
+      if (old) await dropFile(tx, old);
+      await audit(tx, u.organizationId, null, { action: 'profile.photo_set', entityType: 'file', entityId: f.id });
+    });
+    return profileOf(db, u.organizationId, m.memberId);
+  });
+
+  app.delete('/portal/profiles/:memberId/photo', { schema: { tags, summary: 'Profilfoto löschen', security: [], params: memberParam, response: { 200: profileDto } } }, async (req, reply) => {
+    const { u, m } = await profileOwner(req, reply);
+    await db.transaction().execute(async (tx) => {
+      const old = await setPhoto(tx, u.organizationId, m.memberId, null);
+      if (old) {
+        // A file under legal hold stays stored; the audit says which happened.
+        const deleted = await dropFile(tx, old);
+        await audit(tx, u.organizationId, null, { action: deleted ? 'profile.photo_deleted' : 'profile.photo_unlinked', entityType: 'file', entityId: old });
+      }
+    });
+    return profileOf(db, u.organizationId, m.memberId);
+  });
+
+  app.get('/portal/profiles/:memberId/photo', { schema: { tags, summary: 'Eigenes Profilfoto ansehen', security: [], params: memberParam } }, async (req, reply) => {
+    const { u, m } = await profileOwner(req, reply);
+    const f = await db.selectFrom('member_profile').innerJoin('file', 'file.id', 'member_profile.photo_file_id').select(['file.sha256', 'file.mime_type']).where('member_profile.member_id', '=', m.memberId).where('member_profile.organization_id', '=', u.organizationId)
+      .where('file.member_id', '=', m.memberId).where('file.purpose', '=', 'photo').executeTakeFirst();
+    // Only image types we accepted are ever served (a stored type outside the list is not trusted).
+    if (!f || !(PROFILE_PHOTO_TYPES as readonly string[]).includes(f.mime_type)) throw notFound('Foto');
+    return reply.header('content-type', f.mime_type).header('x-content-type-options', 'nosniff').header('cache-control', 'private, no-store').send(await getBlob(f.sha256));
+  });
+
+  /** A replaced or removed photo goes, unless something keeps it (legal hold); says whether it went. */
+  async function dropFile(tx: Db, fileId: string) {
+    const chain = await lockChain(tx, fileId);
+    if (!chain || deletionBlocker(chain, await orgToday(tx, chain[0]!.organization_id))) return false;
+    await deleteChain(tx, chain);
+    return true;
+  }
 
   app.post('/portal/expenses', { schema: { tags, summary: 'Auslage zur Erstattung einreichen', security: [], body: expenseClaimInput, response: { 201: z.object({ id: z.uuid() }) } } }, async (req, reply) => {
     const u = await portalUser(req, reply);
